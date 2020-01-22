@@ -21,9 +21,10 @@ import com.google.gerrit.common.data.GlobalCapability;
 import com.google.gerrit.extensions.annotations.RequiresCapability;
 import com.google.gerrit.extensions.client.EditPreferencesInfo;
 import com.google.gerrit.extensions.restapi.BadRequestException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.server.account.AccountCache;
-import com.google.gerrit.server.account.Preferences;
+import com.google.gerrit.server.account.StoredPreferences;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.config.ConfigResource;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
@@ -54,7 +55,8 @@ public class SetEditPreferences implements RestModifyView<ConfigResource, EditPr
   }
 
   @Override
-  public EditPreferencesInfo apply(ConfigResource configResource, EditPreferencesInfo input)
+  public Response<EditPreferencesInfo> apply(
+      ConfigResource configResource, EditPreferencesInfo input)
       throws BadRequestException, IOException, ConfigInvalidException {
     if (input == null) {
       throw new BadRequestException("input must be provided");
@@ -64,9 +66,9 @@ public class SetEditPreferences implements RestModifyView<ConfigResource, EditPr
     }
 
     try (MetaDataUpdate md = metaDataUpdateFactory.get().create(allUsersName)) {
-      EditPreferencesInfo updatedPrefs = Preferences.updateDefaultEditPreferences(md, input);
+      EditPreferencesInfo updatedPrefs = StoredPreferences.updateDefaultEditPreferences(md, input);
       accountCache.evictAll();
-      return updatedPrefs;
+      return Response.ok(updatedPrefs);
     }
   }
 

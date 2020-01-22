@@ -62,8 +62,8 @@ public class ElasticV7QueryProjectsTest extends AbstractQueryProjectsTest {
   protected Injector createInjector() {
     Config elasticsearchConfig = new Config(config);
     InMemoryModule.setDefaults(elasticsearchConfig);
-    String indicesPrefix = getSanitizedMethodName();
+    String indicesPrefix = testName.getSanitizedMethodName();
     ElasticTestUtils.configure(elasticsearchConfig, nodeInfo.port, indicesPrefix);
-    return Guice.createInjector(new InMemoryModule(elasticsearchConfig, notesMigration));
+    return Guice.createInjector(new InMemoryModule(elasticsearchConfig));
   }
 }

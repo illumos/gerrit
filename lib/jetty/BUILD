@@ -17,18 +17,10 @@ java_library(
 )
 
 java_library(
-    name = "servlets",
-    data = ["//lib:LICENSE-Apache2.0"],
-    visibility = ["//visibility:public"],
-    exports = ["@jetty-servlets//jar"],
-)
-
-java_library(
     name = "server",
     data = ["//lib:LICENSE-Apache2.0"],
     visibility = ["//visibility:public"],
     exports = [
-        ":continuation",
         ":http",
         "@jetty-server//jar",
     ],
@@ -39,17 +31,9 @@ java_library(
     data = ["//lib:LICENSE-Apache2.0"],
     visibility = ["//visibility:public"],
     exports = [
-        ":continuation",
         ":http",
         "@jetty-jmx//jar",
     ],
-)
-
-java_library(
-    name = "continuation",
-    data = ["//lib:LICENSE-Apache2.0"],
-    visibility = ["//visibility:public"],
-    exports = ["@jetty-continuation//jar"],
 )
 
 java_library(

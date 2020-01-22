@@ -19,13 +19,13 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.gerrit.common.data.GarbageCollectionResult;
 import com.google.gerrit.common.data.GlobalCapability;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.annotations.RequiresCapability;
 import com.google.gerrit.extensions.registration.DynamicItem;
 import com.google.gerrit.extensions.restapi.BinaryResult;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.extensions.webui.UiAction;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.config.UrlFormatter;
 import com.google.gerrit.server.git.GarbageCollection;
 import com.google.gerrit.server.git.GitRepositoryManager;
@@ -43,6 +43,7 @@ import java.io.PrintWriter;
 import java.util.Collections;
 import java.util.Optional;
 
+/** REST endpoint that executes GC on a project. */
 @RequiresCapability(GlobalCapability.RUN_GC)
 @Singleton
 public class GarbageCollect
@@ -71,12 +72,12 @@ public class GarbageCollect
   }
 
   @Override
-  public Object apply(ProjectResource rsrc, Input input) {
+  public Response<?> apply(ProjectResource rsrc, Input input) {
     Project.NameKey project = rsrc.getNameKey();
     if (input.async) {
       return applyAsync(project, input);
     }
-    return applySync(project, input);
+    return Response.ok(applySync(project, input));
   }
 
   private Response.Accepted applyAsync(Project.NameKey project, Input input) {

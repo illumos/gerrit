@@ -25,9 +25,9 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.NoHttpd;
+import com.google.gerrit.entities.Patch;
+import com.google.gerrit.entities.Patch.ChangeType;
 import com.google.gerrit.extensions.client.DiffPreferencesInfo.Whitespace;
-import com.google.gerrit.reviewdb.client.Patch;
-import com.google.gerrit.reviewdb.client.Patch.ChangeType;
 import com.google.gerrit.server.patch.IntraLineDiff;
 import com.google.gerrit.server.patch.IntraLineDiffArgs;
 import com.google.gerrit.server.patch.IntraLineDiffKey;
@@ -275,7 +275,7 @@ public class PatchListCacheIT extends AbstractDaemonTest {
     PatchListCacheImpl.LargeObjectTombstone tombstone =
         new PatchListCacheImpl.LargeObjectTombstone();
     abstractPatchListCache.put(key, tombstone);
-    assertThat(abstractPatchListCache.getIfPresent(key)).isSameAs(tombstone);
+    assertThat(abstractPatchListCache.getIfPresent(key)).isSameInstanceAs(tombstone);
   }
 
   private static void assertAdded(String expectedNewName, PatchListEntry e) {

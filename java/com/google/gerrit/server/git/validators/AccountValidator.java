@@ -18,7 +18,7 @@ import static java.util.stream.Collectors.toSet;
 
 import com.google.common.collect.ImmutableList;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.reviewdb.client.Account;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.AccountConfig;
 import com.google.gerrit.server.account.AccountProperties;
@@ -36,6 +36,11 @@ import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevWalk;
 
+/**
+ * Validator that is used to ensure that new commits on any ref in {@code refs/users} are conforming
+ * to the NoteDb format for accounts. Used when a user pushes to one of the refs in {@code
+ * refs/users} manually.
+ */
 public class AccountValidator {
 
   private final Provider<IdentifiedUser> self;
@@ -52,6 +57,10 @@ public class AccountValidator {
     this.emailValidator = emailValidator;
   }
 
+  /**
+   * Returns a list of validation messages. An empty list means that there were no issues found. If
+   * the list is non-empty, the commit will be rejected.
+   */
   public List<String> validate(
       Account.Id accountId,
       Repository allUsersRepo,
@@ -87,10 +96,10 @@ public class AccountValidator {
       messages.add("cannot deactivate own account");
     }
 
-    String newPreferredEmail = newAccount.get().getPreferredEmail();
+    String newPreferredEmail = newAccount.get().preferredEmail();
     if (newPreferredEmail != null
         && (!oldAccount.isPresent()
-            || !newPreferredEmail.equals(oldAccount.get().getPreferredEmail()))) {
+            || !newPreferredEmail.equals(oldAccount.get().preferredEmail()))) {
       if (!emailValidator.isValid(newPreferredEmail)) {
         messages.add(
             String.format(

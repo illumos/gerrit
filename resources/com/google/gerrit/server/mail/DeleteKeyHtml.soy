@@ -16,10 +16,8 @@
 
 {namespace com.google.gerrit.server.mail.template}
 
-/**
- * @param email
- */
 {template .DeleteKeyHtml}
+  {@param email: ?}
   <p>
     One or more {$email.keyType} keys have been deleted on Gerrit Code Review
     at {$email.gerritHost}:

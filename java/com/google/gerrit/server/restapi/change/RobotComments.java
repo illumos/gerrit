@@ -14,17 +14,16 @@
 
 package com.google.gerrit.server.restapi.change;
 
+import com.google.gerrit.entities.RobotComment;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.restapi.ChildCollection;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.RestView;
-import com.google.gerrit.reviewdb.client.RobotComment;
 import com.google.gerrit.server.CommentsUtil;
 import com.google.gerrit.server.change.RevisionResource;
 import com.google.gerrit.server.change.RobotCommentResource;
 import com.google.gerrit.server.notedb.ChangeNotes;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 
@@ -56,11 +55,11 @@ public class RobotComments implements ChildCollection<RevisionResource, RobotCom
 
   @Override
   public RobotCommentResource parse(RevisionResource rev, IdString id)
-      throws ResourceNotFoundException, OrmException {
+      throws ResourceNotFoundException {
     String uuid = id.get();
     ChangeNotes notes = rev.getNotes();
 
-    for (RobotComment c : commentsUtil.robotCommentsByPatchSet(notes, rev.getPatchSet().getId())) {
+    for (RobotComment c : commentsUtil.robotCommentsByPatchSet(notes, rev.getPatchSet().id())) {
       if (uuid.equals(c.key.uuid)) {
         return new RobotCommentResource(rev, c);
       }

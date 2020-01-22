@@ -17,18 +17,18 @@ package com.google.gerrit.server.query.project;
 import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
 import com.google.common.primitives.Ints;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.client.ProjectState;
 import com.google.gerrit.index.project.ProjectData;
 import com.google.gerrit.index.query.LimitPredicate;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryBuilder;
 import com.google.gerrit.index.query.QueryParseException;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.inject.Inject;
 import java.util.List;
 
 /** Parses a query string meant to be applied to project objects. */
-public class ProjectQueryBuilder extends QueryBuilder<ProjectData> {
+public class ProjectQueryBuilder extends QueryBuilder<ProjectData, ProjectQueryBuilder> {
   public static final String FIELD_LIMIT = "limit";
 
   private static final QueryBuilder.Definition<ProjectData, ProjectQueryBuilder> mydef =
@@ -36,17 +36,17 @@ public class ProjectQueryBuilder extends QueryBuilder<ProjectData> {
 
   @Inject
   ProjectQueryBuilder() {
-    super(mydef);
+    super(mydef, null);
   }
 
   @Operator
   public Predicate<ProjectData> name(String name) {
-    return ProjectPredicates.name(new Project.NameKey(name));
+    return ProjectPredicates.name(Project.nameKey(name));
   }
 
   @Operator
   public Predicate<ProjectData> parent(String parentName) {
-    return ProjectPredicates.parent(new Project.NameKey(parentName));
+    return ProjectPredicates.parent(Project.nameKey(parentName));
   }
 
   @Operator

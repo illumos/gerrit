@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-settings-view</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-menu-editor.html">
 
@@ -38,7 +40,7 @@ limitations under the License.
     let menu;
 
     function assertMenuNamesEqual(element, expected) {
-      const names = element.menuItems.map(i => { return i.name; });
+      const names = element.menuItems.map(i => i.name);
       assert.equal(names.length, expected.length);
       for (let i = 0; i < names.length; i++) {
         assert.equal(names[i], expected[i]);
@@ -51,11 +53,12 @@ limitations under the License.
       const selector = 'tr:nth-child(' + (index + 1) + ') .move' +
           direction + 'Button';
       const button =
-          element.$$('tbody').querySelector(selector).$$('paper-button');
+          element.$$('tbody').querySelector(selector)
+              .$$('paper-button');
       MockInteractions.tap(button);
     }
 
-    setup(() => {
+    setup(done => {
       element = fixture('basic');
       menu = [
         {url: '/first/url', name: 'first name', target: '_blank'},
@@ -64,6 +67,7 @@ limitations under the License.
       ];
       element.set('menuItems', menu);
       Polymer.dom.flush();
+      flush(done);
     });
 
     test('renders', () => {
@@ -144,14 +148,16 @@ limitations under the License.
 
       // Tap the delete button for the middle item.
       MockInteractions.tap(element.$$('tbody')
-          .querySelector('tr:nth-child(2) .remove-button').$$('paper-button'));
+          .querySelector('tr:nth-child(2) .remove-button')
+          .$$('paper-button'));
 
       assertMenuNamesEqual(element, ['first name', 'third name']);
 
       // Delete remaining items.
       for (let i = 0; i < 2; i++) {
         MockInteractions.tap(element.$$('tbody')
-            .querySelector('tr:first-child .remove-button').$$('paper-button'));
+            .querySelector('tr:first-child .remove-button')
+            .$$('paper-button'));
       }
       assertMenuNamesEqual(element, []);
 

@@ -17,7 +17,7 @@ package com.google.gerrit.server.restapi.project;
 import com.google.common.collect.ListMultimap;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.common.ProjectUtil;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
@@ -30,9 +30,9 @@ import com.google.gerrit.extensions.restapi.RestCollection;
 import com.google.gerrit.extensions.restapi.RestView;
 import com.google.gerrit.extensions.restapi.TopLevelResource;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.json.OutputFormat;
 import com.google.gerrit.server.CurrentUser;
-import com.google.gerrit.server.OutputFormat;
+import com.google.gerrit.server.ProjectUtil;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.permissions.ProjectPermission;
@@ -138,7 +138,7 @@ public class ProjectsCollection
       throws IOException, PermissionBackendException, ResourceConflictException {
     id = ProjectUtil.sanitizeProjectName(id);
 
-    Project.NameKey nameKey = new Project.NameKey(id);
+    Project.NameKey nameKey = Project.nameKey(id);
     ProjectState state = projectCache.checkedGet(nameKey);
     if (state == null) {
       return null;

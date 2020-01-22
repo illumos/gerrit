@@ -17,30 +17,57 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-diff-highlight',
+  /**
+   * @appliesMixin Gerrit.FireMixin
+   * @extends Polymer.Element
+   */
+  class GrDiffHighlight extends Polymer.mixinBehaviors( [
+    Gerrit.FireBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-diff-highlight'; }
 
-    properties: {
-      comments: Object,
-      loggedIn: Boolean,
-      /**
-       * querySelector can return null, so needs to be nullable.
-       *
-       * @type {?HTMLElement}
-       * */
-      _cachedDiffBuilder: Object,
-      isAttached: Boolean,
-    },
+    static get properties() {
+      return {
+      /** @type {!Array<!Gerrit.HoveredRange>} */
+        commentRanges: {
+          type: Array,
+          notify: true,
+        },
+        loggedIn: Boolean,
+        /**
+         * querySelector can return null, so needs to be nullable.
+         *
+         * @type {?HTMLElement}
+         * */
+        _cachedDiffBuilder: Object,
 
-    listeners: {
-      'comment-mouse-out': '_handleCommentMouseOut',
-      'comment-mouse-over': '_handleCommentMouseOver',
-      'create-comment': '_createComment',
-    },
+        /**
+         * Which range is currently selected by the user.
+         * Stored in order to add a range-based comment
+         * later.
+         * undefined if no range is selected.
+         *
+         * @type {{side: string, range: Gerrit.Range}|undefined}
+         */
+        selectedRange: {
+          type: Object,
+          notify: true,
+        },
+      };
+    }
 
-    observers: [
-      '_enableSelectionObserver(loggedIn, isAttached)',
-    ],
+    /** @override */
+    created() {
+      super.created();
+      this.addEventListener('comment-thread-mouseleave',
+          e => this._handleCommentThreadMouseleave(e));
+      this.addEventListener('comment-thread-mouseenter',
+          e => this._handleCommentThreadMouseenter(e));
+      this.addEventListener('create-comment-requested',
+          e => this._handleRangeCommentRequest(e));
+    }
 
     get diffBuilder() {
       if (!this._cachedDiffBuilder) {
@@ -48,59 +75,89 @@
             Polymer.dom(this).querySelector('gr-diff-builder');
       }
       return this._cachedDiffBuilder;
-    },
+    }
 
-    _enableSelectionObserver(loggedIn, isAttached) {
-      if (loggedIn && isAttached) {
-        this.listen(document, 'selectionchange', '_handleSelectionChange');
-      } else {
-        this.unlisten(document, 'selectionchange', '_handleSelectionChange');
+    /**
+     * Determines side/line/range for a DOM selection and shows a tooltip.
+     *
+     * With native shadow DOM, gr-diff-highlight cannot access a selection that
+     * references the DOM elements making up the diff because they are in the
+     * shadow DOM the gr-diff element. For this reason, we listen to the
+     * selectionchange event and retrieve the selection in gr-diff, and then
+     * call this method to process the Selection.
+     *
+     * @param {Selection} selection A DOM Selection living in the shadow DOM of
+     *     the diff element.
+     * @param {boolean} isMouseUp If true, this is called due to a mouseup
+     *     event, in which case we might want to immediately create a comment,
+     *     because isMouseUp === true combined with an existing selection must
+     *     mean that this is the end of a double-click.
+     */
+    handleSelectionChange(selection, isMouseUp) {
+      // Debounce is not just nice for waiting until the selection has settled,
+      // it is also vital for being able to click on the action box before it is
+      // removed.
+      // If you wait longer than 50 ms, then you don't properly catch a very
+      // quick 'c' press after the selection change. If you wait less than 10
+      // ms, then you will have about 50 _handleSelection calls when doing a
+      // simple drag for select.
+      this.debounce(
+          'selectionChange', () => this._handleSelection(selection, isMouseUp),
+          10);
+    }
+
+    _getThreadEl(e) {
+      const path = Polymer.dom(e).path || [];
+      for (const pathEl of path) {
+        if (pathEl.classList.contains('comment-thread')) return pathEl;
       }
-    },
+      return null;
+    }
 
-    isRangeSelected() {
-      return !!this.$$('gr-selection-action-box');
-    },
+    _handleCommentThreadMouseenter(e) {
+      const threadEl = this._getThreadEl(e);
+      const index = this._indexForThreadEl(threadEl);
 
-    _handleSelectionChange() {
-      // Can't use up or down events to handle selection started and/or ended in
-      // in comment threads or outside of diff.
-      // Debounce removeActionBox to give it a chance to react to click/tap.
-      this._removeActionBoxDebounced();
-      this.debounce('selectionChange', this._handleSelection, 200);
-    },
-
-    _handleCommentMouseOver(e) {
-      const comment = e.detail.comment;
-      if (!comment.range) { return; }
-      const lineEl = this.diffBuilder.getLineElByChild(e.target);
-      const side = this.diffBuilder.getSideByLineEl(lineEl);
-      const index = this._indexOfComment(side, comment);
       if (index !== undefined) {
-        this.set(['comments', side, index, '__hovering'], true);
+        this.set(['commentRanges', index, 'hovering'], true);
       }
-    },
+    }
 
-    _handleCommentMouseOut(e) {
-      const comment = e.detail.comment;
-      if (!comment.range) { return; }
-      const lineEl = this.diffBuilder.getLineElByChild(e.target);
-      const side = this.diffBuilder.getSideByLineEl(lineEl);
-      const index = this._indexOfComment(side, comment);
+    _handleCommentThreadMouseleave(e) {
+      const threadEl = this._getThreadEl(e);
+      const index = this._indexForThreadEl(threadEl);
+
       if (index !== undefined) {
-        this.set(['comments', side, index, '__hovering'], false);
+        this.set(['commentRanges', index, 'hovering'], false);
       }
-    },
+    }
 
-    _indexOfComment(side, comment) {
-      const idProp = comment.id ? 'id' : '__draftID';
-      for (let i = 0; i < this.comments[side].length; i++) {
-        if (comment[idProp] &&
-            this.comments[side][i][idProp] === comment[idProp]) {
-          return i;
+    _indexForThreadEl(threadEl) {
+      const side = threadEl.getAttribute('comment-side');
+      const range = JSON.parse(threadEl.getAttribute('range'));
+
+      if (!range) return undefined;
+
+      return this._indexOfCommentRange(side, range);
+    }
+
+    _indexOfCommentRange(side, range) {
+      function rangesEqual(a, b) {
+        if (!a && !b) {
+          return true;
         }
+        if (!a || !b) {
+          return false;
+        }
+        return a.start_line === b.start_line &&
+            a.start_character === b.start_character &&
+            a.end_line === b.end_line &&
+            a.end_character === b.end_character;
       }
-    },
+
+      return this.commentRanges.findIndex(commentRange =>
+        commentRange.side === side && rangesEqual(commentRange.range, range));
+    }
 
     /**
      * Get current normalized selection.
@@ -108,6 +165,7 @@
      * syntax highligh, convert native DOM Range objects to Gerrit concepts
      * (line, side, etc).
      *
+     * @param {Selection} selection
      * @return {({
      *   start: {
      *     node: Node,
@@ -123,8 +181,7 @@
      *   }
      * })|null|!Object}
      */
-    _getNormalizedRange() {
-      const selection = window.getSelection();
+    _getNormalizedRange(selection) {
       const rangeCount = selection.rangeCount;
       if (rangeCount === 0) {
         return null;
@@ -139,7 +196,7 @@
           end: endRange.end,
         };
       }
-    },
+    }
 
     /**
      * Normalize a specific DOM Range.
@@ -154,7 +211,7 @@
         end: this._normalizeSelectionSide(
             range.endContainer, range.endOffset),
       }, domRange);
-    },
+    }
 
     /**
      * Adjust triple click selection for the whole line.
@@ -195,7 +252,7 @@
         };
       }
       return range;
-    },
+    }
 
     /**
      * Convert DOM Range selection to concrete numbers (line, column, side).
@@ -237,7 +294,7 @@
         node = contentText;
         column = 0;
       } else {
-        const thread = contentTd.querySelector('gr-diff-comment-thread');
+        const thread = contentTd.querySelector('.comment-thread');
         if (thread && thread.contains(node)) {
           column = this._getLength(contentText);
           node = contentText;
@@ -252,7 +309,7 @@
         line,
         column,
       };
-    },
+    }
 
     /**
      * The only line in which add a comment tooltip is cut off is the first
@@ -268,41 +325,78 @@
       }
       actionBox.positionBelow = true;
       actionBox.placeBelow(range);
-    },
+    }
 
-    _handleSelection() {
-      const normalizedRange = this._getNormalizedRange();
-      if (!normalizedRange) {
-        return;
+    _isRangeValid(range) {
+      if (!range || !range.start || !range.end) {
+        return false;
       }
-      const domRange = window.getSelection().getRangeAt(0);
-      /** @type {?} */
-      const start = normalizedRange.start;
-      if (!start) {
-        return;
-      }
-      const end = normalizedRange.end;
-      if (!end) {
-        return;
-      }
+      const start = range.start;
+      const end = range.end;
       if (start.side !== end.side ||
           end.line < start.line ||
           (start.line === end.line && start.column === end.column)) {
+        return false;
+      }
+      return true;
+    }
+
+    _handleSelection(selection, isMouseUp) {
+      const normalizedRange = this._getNormalizedRange(selection);
+      if (!this._isRangeValid(normalizedRange)) {
+        this._removeActionBox();
         return;
       }
+      const domRange = selection.getRangeAt(0);
+      const start = normalizedRange.start;
+      const end = normalizedRange.end;
 
       // TODO (viktard): Drop empty first and last lines from selection.
 
-      const actionBox = document.createElement('gr-selection-action-box');
-      const root = Polymer.dom(this.root);
-      root.insertBefore(actionBox, root.firstElementChild);
-      actionBox.range = {
-        startLine: start.line,
-        startChar: start.column,
-        endLine: end.line,
-        endChar: end.column,
+      // If the selection is from the end of one line to the start of the next
+      // line, then this must have been a double-click, or you have started
+      // dragging. Showing the action box is bad in the former case and not very
+      // useful in the latter, so never do that.
+      // If this was a mouse-up event, we create a comment immediately if
+      // the selection is from the end of a line to the start of the next line.
+      // In a perfect world we would only do this for double-click, but it is
+      // extremely rare that a user would drag from the end of one line to the
+      // start of the next and release the mouse, so we don't bother.
+      // TODO(brohlfs): This does not work, if the double-click is before a new
+      // diff chunk (start will be equal to end), and neither before an "expand
+      // the diff context" block (end line will match the first line of the new
+      // section and thus be greater than start line + 1).
+      if (start.line === end.line - 1 && end.column === 0) {
+        // Rather than trying to find the line contents (for comparing
+        // start.column with the content length), we just check if the selection
+        // is empty to see that it's at the end of a line.
+        const content = domRange.cloneContents().querySelector('.contentText');
+        if (isMouseUp && this._getLength(content) === 0) {
+          this._fireCreateRangeComment(start.side, {
+            start_line: start.line,
+            start_character: 0,
+            end_line: start.line,
+            end_character: start.column,
+          });
+        }
+        return;
+      }
+
+      let actionBox = this.$$('gr-selection-action-box');
+      if (!actionBox) {
+        actionBox = document.createElement('gr-selection-action-box');
+        const root = Polymer.dom(this.root);
+        root.insertBefore(actionBox, root.firstElementChild);
+      }
+      this.selectedRange = {
+        range: {
+          start_line: start.line,
+          start_character: start.column,
+          end_line: end.line,
+          end_character: end.column,
+        },
+        side: start.side,
       };
-      actionBox.side = start.side;
       if (start.line === end.line) {
         this._positionActionBox(actionBox, start.line, domRange);
       } else if (start.node instanceof Text) {
@@ -317,22 +411,29 @@
       } else {
         this._positionActionBox(actionBox, start.line, start.node);
       }
-    },
+    }
 
-    _createComment(e) {
+    _fireCreateRangeComment(side, range) {
+      this.fire('create-range-comment', {side, range});
       this._removeActionBox();
-    },
+    }
 
-    _removeActionBoxDebounced() {
-      this.debounce('removeActionBox', this._removeActionBox, 10);
-    },
+    _handleRangeCommentRequest(e) {
+      e.stopPropagation();
+      if (!this.selectedRange) {
+        throw Error('Selected Range is needed for new range comment!');
+      }
+      const {side, range} = this.selectedRange;
+      this._fireCreateRangeComment(side, range);
+    }
 
     _removeActionBox() {
+      this.selectedRange = undefined;
       const actionBox = this.$$('gr-selection-action-box');
       if (actionBox) {
         Polymer.dom(this.root).removeChild(actionBox);
       }
-    },
+    }
 
     _convertOffsetToColumn(el, offset) {
       if (el instanceof Element && el.classList.contains('content')) {
@@ -348,7 +449,7 @@
         }
       }
       return offset;
-    },
+    }
 
     /**
      * Traverse Element from right to left, call callback for each node.
@@ -373,7 +474,7 @@
         }
         node = nextNode;
       }
-    },
+    }
 
     /**
      * Get length of a node. If the node is a content node, then only give the
@@ -388,6 +489,8 @@
       } else {
         return GrAnnotation.getLength(node);
       }
-    },
-  });
+    }
+  }
+
+  customElements.define(GrDiffHighlight.is, GrDiffHighlight);
 })();

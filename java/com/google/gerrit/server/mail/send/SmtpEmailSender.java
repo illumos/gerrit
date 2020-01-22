@@ -20,7 +20,7 @@ import com.google.common.io.BaseEncoding;
 import com.google.common.primitives.Ints;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.Version;
-import com.google.gerrit.common.errors.EmailException;
+import com.google.gerrit.exceptions.EmailException;
 import com.google.gerrit.mail.Address;
 import com.google.gerrit.mail.EmailHeader;
 import com.google.gerrit.server.config.ConfigUtil;
@@ -170,7 +170,7 @@ public class SmtpEmailSender implements EmailSender {
       throw new EmailException("Sending email is disabled");
     }
 
-    StringBuffer rejected = new StringBuffer();
+    StringBuilder rejected = new StringBuilder();
     try {
       final SMTPClient client = open();
       try {
@@ -207,10 +207,11 @@ public class SmtpEmailSender implements EmailSender {
              */
             throw new EmailException(
                 rejected
-                    + "Server "
-                    + smtpHost
-                    + " rejected DATA command: "
-                    + client.getReplyString());
+                    .append("Server ")
+                    .append(smtpHost)
+                    .append(" rejected DATA command: ")
+                    .append(client.getReplyString())
+                    .toString());
           }
 
           render(messageDataWriter, callerHeaders, textBody, htmlBody);

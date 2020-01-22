@@ -15,19 +15,20 @@
 package com.google.gerrit.acceptance.api.group;
 
 import static com.google.common.truth.Truth8.assertThat;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.gerrit.common.data.GroupReference;
-import com.google.gerrit.common.errors.NoSuchGroupException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.exceptions.NoSuchGroupException;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.server.ServerInitiated;
 import com.google.gerrit.server.group.db.Groups;
 import com.google.gerrit.server.group.db.GroupsUpdate;
 import com.google.gerrit.server.group.db.InternalGroupCreation;
 import com.google.gerrit.server.group.db.InternalGroupUpdate;
 import com.google.gerrit.testing.InMemoryTestEnvironment;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import java.io.IOException;
@@ -36,12 +37,9 @@ import java.util.stream.Stream;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.ExpectedException;
 
 public class GroupsUpdateIT {
   @Rule public InMemoryTestEnvironment testEnvironment = new InMemoryTestEnvironment();
-  @Rule public ExpectedException expectedException = ExpectedException.none();
-
   @Inject @ServerInitiated private Provider<GroupsUpdate> groupsUpdateProvider;
   @Inject private Groups groups;
 
@@ -56,7 +54,7 @@ public class GroupsUpdateIT {
     createGroup(groupCreation, groupUpdate);
 
     Stream<String> allGroupNames = getAllGroupNames();
-    assertThat(allGroupNames).containsAllOf("users", "verifiers");
+    assertThat(allGroupNames).containsAtLeast("users", "verifiers");
   }
 
   @Test
@@ -65,23 +63,23 @@ public class GroupsUpdateIT {
 
     InternalGroupUpdate groupUpdate =
         InternalGroupUpdate.builder()
-            .setName(new AccountGroup.NameKey("contributors"))
+            .setName(AccountGroup.nameKey("contributors"))
             .setMemberModification(
                 new CreateAnotherGroupOnceAsSideEffectOfMemberModification("verifiers"))
             .build();
-    updateGroup(new AccountGroup.UUID("users-UUID"), groupUpdate);
+    updateGroup(AccountGroup.uuid("users-UUID"), groupUpdate);
 
     Stream<String> allGroupNames = getAllGroupNames();
-    assertThat(allGroupNames).containsAllOf("contributors", "verifiers");
+    assertThat(allGroupNames).containsAtLeast("contributors", "verifiers");
   }
 
   @Test
   public void groupUpdateFailsWithExceptionForNotExistingGroup() throws Exception {
     InternalGroupUpdate groupUpdate =
         InternalGroupUpdate.builder().setDescription("A description for the group").build();
-
-    expectedException.expect(NoSuchGroupException.class);
-    updateGroup(new AccountGroup.UUID("nonexistent-group-UUID"), groupUpdate);
+    assertThrows(
+        NoSuchGroupException.class,
+        () -> updateGroup(AccountGroup.uuid("nonexistent-group-UUID"), groupUpdate));
   }
 
   private void createGroup(String groupName, String groupUuid) throws Exception {
@@ -92,7 +90,7 @@ public class GroupsUpdateIT {
   }
 
   private void createGroup(InternalGroupCreation groupCreation, InternalGroupUpdate groupUpdate)
-      throws OrmException, IOException, ConfigInvalidException {
+      throws IOException, ConfigInvalidException {
     groupsUpdateProvider.get().createGroup(groupCreation, groupUpdate);
   }
 
@@ -107,9 +105,9 @@ public class GroupsUpdateIT {
 
   private static InternalGroupCreation getGroupCreation(String groupName, String groupUuid) {
     return InternalGroupCreation.builder()
-        .setGroupUUID(new AccountGroup.UUID(groupUuid))
-        .setNameKey(new AccountGroup.NameKey(groupName))
-        .setId(new AccountGroup.Id(Math.abs(groupName.hashCode())))
+        .setGroupUUID(AccountGroup.uuid(groupUuid))
+        .setNameKey(AccountGroup.nameKey(groupName))
+        .setId(AccountGroup.id(Math.abs(groupName.hashCode())))
         .build();
   }
 
@@ -138,7 +136,7 @@ public class GroupsUpdateIT {
       InternalGroupUpdate groupUpdate = InternalGroupUpdate.builder().build();
       try {
         groupsUpdateProvider.get().createGroup(groupCreation, groupUpdate);
-      } catch (OrmException | IOException | ConfigInvalidException e) {
+      } catch (StorageException | IOException | ConfigInvalidException e) {
         throw new IllegalStateException(e);
       }
     }

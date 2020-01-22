@@ -21,8 +21,9 @@ import com.google.gerrit.acceptance.GcAssert;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.UseLocalDisk;
 import com.google.gerrit.acceptance.UseSsh;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.common.data.GarbageCollectionResult;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.git.GarbageCollection;
 import com.google.gerrit.server.git.GarbageCollectionQueue;
 import com.google.inject.Inject;
@@ -40,14 +41,15 @@ public class GarbageCollectionIT extends AbstractDaemonTest {
   @Inject private GarbageCollectionQueue gcQueue;
 
   @Inject private GcAssert gcAssert;
+  @Inject private ProjectOperations projectOperations;
 
   private Project.NameKey project2;
   private Project.NameKey project3;
 
   @Before
   public void setUp() throws Exception {
-    project2 = createProject("p2");
-    project3 = createProject("p3");
+    project2 = projectOperations.newProject().create();
+    project3 = projectOperations.newProject().create();
   }
 
   @Test

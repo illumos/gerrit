@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-reviewer-updates-parser</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <script src="../../../scripts/util.js"></script>
 <script src="gr-reviewer-updates-parser.js"></script>
@@ -251,10 +253,10 @@ limitations under the License.
 
     test('_advanceUpdates', () => {
       const T0 = util.parseDate('2017-02-17 19:04:18.000000000').getTime();
-      const tplus = delta => {
-        return new Date(T0 + delta)
-            .toISOString().replace('T', ' ').replace('Z', '000000');
-      };
+      const tplus = delta => new Date(T0 + delta)
+          .toISOString()
+          .replace('T', ' ')
+          .replace('Z', '000000');
       const change = {
         reviewer_updates: [{
           date: tplus(0),

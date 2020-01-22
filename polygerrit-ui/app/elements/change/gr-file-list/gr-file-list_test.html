@@ -19,10 +19,12 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-file-list</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
-<script src="../../../bower_components/page/page.js"></script>
+<script src="/bower_components/page/page.js"></script>
 <link rel="import" href="../../diff/gr-comment-api/gr-comment-api.html">
 <script src="../../../scripts/util.js"></script>
 
@@ -113,7 +115,7 @@ limitations under the License.
         patchNum: '2',
       };
       saveStub = sandbox.stub(element, '_saveReviewedState',
-          () => { return Promise.resolve(); });
+          () => Promise.resolve());
     });
 
     teardown(() => {
@@ -645,9 +647,10 @@ limitations under the License.
         assert.equal(element.$.fileCursor.index, 0);
         assert.equal(element.selectedIndex, 0);
 
-        sandbox.stub(element, '_addDraftAtTarget');
+        const createCommentInPlaceStub = sandbox.stub(element.$.diffCursor,
+            'createCommentInPlace');
         MockInteractions.pressAndReleaseKeyOn(element, 67, null, 'c');
-        assert.isTrue(element._addDraftAtTarget.called);
+        assert.isTrue(createCommentInPlaceStub.called);
       });
 
       test('i key shows/hides selected inline diff', () => {
@@ -683,7 +686,7 @@ limitations under the License.
       });
 
       test('r key toggles reviewed flag', () => {
-        const reducer = (accum, file) => file.isReviewed ? ++accum : accum;
+        const reducer = (accum, file) => (file.isReviewed ? ++accum : accum);
         const getNumReviewed = () => element._files.reduce(reducer, 0);
         flushAsynchronousOperations();
 
@@ -800,7 +803,7 @@ limitations under the License.
 
       flushAsynchronousOperations();
       const fileRows =
-          Polymer.dom(element.root).querySelectorAll('.row:not(.header)');
+          Polymer.dom(element.root).querySelectorAll('.row:not(.header-row)');
       const checkSelector = 'input.reviewed[type="checkbox"]';
       const commitMsg = fileRows[0].querySelector(checkSelector);
       const fileAdded = fileRows[1].querySelector(checkSelector);
@@ -815,18 +818,18 @@ limitations under the License.
       assert.isTrue(commitReviewLabel.classList.contains('isReviewed'));
       assert.equal(markReviewLabel.textContent, 'MARK UNREVIEWED');
 
-      const tapSpy = sandbox.spy(element, '_handleFileListTap');
+      const clickSpy = sandbox.spy(element, '_handleFileListClick');
       MockInteractions.tap(markReviewLabel);
       assert.isTrue(saveStub.lastCall.calledWithExactly('/COMMIT_MSG', false));
       assert.isFalse(commitReviewLabel.classList.contains('isReviewed'));
       assert.equal(markReviewLabel.textContent, 'MARK REVIEWED');
-      assert.isTrue(tapSpy.lastCall.args[0].defaultPrevented);
+      assert.isTrue(clickSpy.lastCall.args[0].defaultPrevented);
 
       MockInteractions.tap(markReviewLabel);
       assert.isTrue(saveStub.lastCall.calledWithExactly('/COMMIT_MSG', true));
       assert.isTrue(commitReviewLabel.classList.contains('isReviewed'));
       assert.equal(markReviewLabel.textContent, 'MARK UNREVIEWED');
-      assert.isTrue(tapSpy.lastCall.args[0].defaultPrevented);
+      assert.isTrue(clickSpy.lastCall.args[0].defaultPrevented);
     });
 
     test('_computeFileStatusLabel', () => {
@@ -834,7 +837,7 @@ limitations under the License.
       assert.equal(element._computeFileStatusLabel('M'), 'Modified');
     });
 
-    test('_handleFileListTap', () => {
+    test('_handleFileListClick', () => {
       element._filesByPath = {
         '/COMMIT_MSG': {},
         'f1.txt': {},
@@ -846,7 +849,7 @@ limitations under the License.
         patchNum: '2',
       };
 
-      const tapSpy = sandbox.spy(element, '_handleFileListTap');
+      const clickSpy = sandbox.spy(element, '_handleFileListClick');
       const reviewStub = sandbox.stub(element, '_reviewFile');
       const toggleExpandSpy = sandbox.spy(element, '_togglePathExpanded');
 
@@ -856,26 +859,27 @@ limitations under the License.
       // Click on the expand button, resulting in _togglePathExpanded being
       // called and not resulting in a call to _reviewFile.
       row.querySelector('div.show-hide').click();
-      assert.isTrue(tapSpy.calledOnce);
+      assert.isTrue(clickSpy.calledOnce);
       assert.isTrue(toggleExpandSpy.calledOnce);
       assert.isFalse(reviewStub.called);
 
       // Click inside the diff. This should result in no additional calls to
       // _togglePathExpanded or _reviewFile.
-      Polymer.dom(element.root).querySelector('gr-diff-host').click();
-      assert.isTrue(tapSpy.calledTwice);
+      Polymer.dom(element.root).querySelector('gr-diff-host')
+          .click();
+      assert.isTrue(clickSpy.calledTwice);
       assert.isTrue(toggleExpandSpy.calledOnce);
       assert.isFalse(reviewStub.called);
 
       // Click the reviewed checkbox, resulting in a call to _reviewFile, but
       // no additional call to _togglePathExpanded.
       row.querySelector('.markReviewed').click();
-      assert.isTrue(tapSpy.calledThrice);
+      assert.isTrue(clickSpy.calledThrice);
       assert.isTrue(toggleExpandSpy.calledOnce);
       assert.isTrue(reviewStub.calledOnce);
     });
 
-    test('_handleFileListTap editMode', () => {
+    test('_handleFileListClick editMode', () => {
       element._filesByPath = {
         '/COMMIT_MSG': {},
         'f1.txt': {},
@@ -888,12 +892,12 @@ limitations under the License.
       };
       element.editMode = true;
       flushAsynchronousOperations();
-      const tapSpy = sandbox.spy(element, '_handleFileListTap');
+      const clickSpy = sandbox.spy(element, '_handleFileListClick');
       const toggleExpandSpy = sandbox.spy(element, '_togglePathExpanded');
 
-      // Tap the edit controls. Should be ignored by _handleFileListTap.
+      // Tap the edit controls. Should be ignored by _handleFileListClick.
       MockInteractions.tap(element.$$('.editFileControls'));
-      assert.isTrue(tapSpy.calledOnce);
+      assert.isTrue(clickSpy.calledOnce);
       assert.isFalse(toggleExpandSpy.called);
     });
 
@@ -931,7 +935,7 @@ limitations under the License.
       sandbox.stub(element, '_expandedPathsChanged');
       flushAsynchronousOperations();
       const fileRows =
-          Polymer.dom(element.root).querySelectorAll('.row:not(.header)');
+          Polymer.dom(element.root).querySelectorAll('.row:not(.header-row)');
       // Because the label surrounds the input, the tap event is triggered
       // there first.
       const showHideLabel = fileRows[0].querySelector('label.show-hide');
@@ -958,7 +962,7 @@ limitations under the License.
 
       // Tap on a file to generate the diff.
       const row = Polymer.dom(element.root)
-          .querySelectorAll('.row:not(.header) label.show-hide')[0];
+          .querySelectorAll('.row:not(.header-row) label.show-hide')[0];
 
       MockInteractions.tap(row);
       flushAsynchronousOperations();
@@ -988,7 +992,7 @@ limitations under the License.
       sandbox.stub(element, '_expandedPathsChanged');
       flushAsynchronousOperations();
       const commitMsgFile = Polymer.dom(element.root)
-          .querySelectorAll('.row:not(.header) a.pathLink')[0];
+          .querySelectorAll('.row:not(.header-row) a.pathLink')[0];
 
       // Remove href attribute so the app doesn't route to a diff view
       commitMsgFile.removeAttribute('href');
@@ -1211,22 +1215,6 @@ limitations under the License.
       assert.isFalse(element.classList.contains('loading'));
     });
 
-    test('no execute _computeDiffURL before patchNum is knwon', done => {
-      const urlStub = sandbox.stub(element, '_computeDiffURL');
-      element.change = {_number: 123};
-      element.patchRange = {patchNum: undefined, basePatchNum: 'PARENT'};
-      element._filesByPath = {'foo/bar.cpp': {}};
-      element.editMode = false;
-      flush(() => {
-        assert.isFalse(urlStub.called);
-        element.set('patchRange.patchNum', 4);
-        flush(() => {
-          assert.isTrue(urlStub.called);
-          done();
-        });
-      });
-    });
-
     suite('size bars', () => {
       test('_computeSizeBarLayout', () => {
         assert.isUndefined(element._computeSizeBarLayout(null));
@@ -1372,7 +1360,7 @@ limitations under the License.
         id: '503008e2_0ab203ee',
         line: 10,
         updated: '2018-02-14 22:07:43.000000000',
-        message: 'response',
+        message: 'a comment',
         unresolved: true,
       },
       {
@@ -1381,7 +1369,7 @@ limitations under the License.
         line: 20,
         in_reply_to: 'ecf0b9fa_fe1a5f62',
         updated: '2018-02-13 22:07:43.000000000',
-        message: 'a comments',
+        message: 'response',
         unresolved: true,
       },
     ];
@@ -1416,6 +1404,7 @@ limitations under the License.
         ignore_whitespace: 'IGNORE_NONE',
       };
       diff.diff = mock.diffResponse;
+      diff.$.diff.flushDebouncer('renderDiffTable');
     };
 
     const renderAndGetNewDiffs = function(index) {
@@ -1488,9 +1477,7 @@ limitations under the License.
         basePatchNum: 'PARENT',
         patchNum: '2',
       };
-      sandbox.stub(window, 'fetch', () => {
-        return Promise.resolve();
-      });
+      sandbox.stub(window, 'fetch', () => Promise.resolve());
       flushAsynchronousOperations();
     });
 
@@ -1583,7 +1570,7 @@ limitations under the License.
         nextChunkStub = sandbox.stub(element.$.diffCursor,
             'moveToNextChunk');
         fileRows =
-            Polymer.dom(element.root).querySelectorAll('.row:not(.header)');
+            Polymer.dom(element.root).querySelectorAll('.row:not(.header-row)');
       });
 
       test('n key with some files expanded and no shift key', () => {
@@ -1712,15 +1699,49 @@ limitations under the License.
 
       // Commit message should not have edit controls.
       const editControls =
-          Polymer.dom(element.root).querySelectorAll('.row:not(.header)')
+          Array.from(
+              Polymer.dom(element.root)
+                  .querySelectorAll('.row:not(.header-row)'))
               .map(row => row.querySelector('gr-edit-file-controls'));
       assert.isTrue(editControls[0].classList.contains('invisible'));
     });
 
     test('reloadCommentsForThreadWithRootId', () => {
+      // Expand the commit message diff
+      MockInteractions.keyUpOn(element, 73, 'shift', 'i');
+      const diffs = renderAndGetNewDiffs(0);
+      flushAsynchronousOperations();
+
+      // Two comment threads should be generated by renderAndGetNewDiffs
+      const threadEls = diffs[0].getThreadEls();
+      assert.equal(threadEls.length, 2);
+      const threadElsByRootId = new Map(
+          threadEls.map(threadEl => [threadEl.rootId, threadEl]));
+
+      const thread1 = threadElsByRootId.get('503008e2_0ab203ee');
+      assert.equal(thread1.comments.length, 1);
+      assert.equal(thread1.comments[0].message, 'a comment');
+      assert.equal(thread1.comments[0].line, 10);
+
+      const thread2 = threadElsByRootId.get('ecf0b9fa_fe1a5f62');
+      assert.equal(thread2.comments.length, 2);
+      assert.isTrue(thread2.comments[0].unresolved);
+      assert.equal(thread2.comments[0].message, 'another comment');
+      assert.equal(thread2.comments[0].line, 20);
+
       const commentStub =
           sandbox.stub(element.changeComments, 'getCommentsForThread');
       const commentStubRes1 = [
+        {
+          patch_set: 2,
+          id: '503008e2_0ab203ee',
+          line: 20,
+          updated: '2018-02-08 18:49:18.000000000',
+          message: 'edited text',
+          unresolved: false,
+        },
+      ];
+      const commentStubRes2 = [
         {
           patch_set: 2,
           id: 'ecf0b9fa_fe1a5f62',
@@ -1733,6 +1754,7 @@ limitations under the License.
           patch_set: 2,
           id: '503008e2_0ab203ee',
           line: 10,
+          in_reply_to: 'ecf0b9fa_fe1a5f62',
           updated: '2018-02-14 22:07:43.000000000',
           message: 'response',
           unresolved: true,
@@ -1741,57 +1763,35 @@ limitations under the License.
           patch_set: 2,
           id: '503008e2_0ab203ef',
           line: 20,
-          in_reply_to: 'ecf0b9fa_fe1a5f62',
+          in_reply_to: '503008e2_0ab203ee',
           updated: '2018-02-15 22:07:43.000000000',
           message: 'a third comment in the thread',
           unresolved: true,
         },
       ];
-      const commentStubRes2 = [
-        {
-          patch_set: 2,
-          id: 'ecf0b9fa_fe1a5f62',
-          line: 20,
-          updated: '2018-02-08 18:49:18.000000000',
-          message: 'edited text',
-          unresolved: false,
-        },
-      ];
-      commentStub.withArgs('cc788d2c_cb1d728c').returns(
+      commentStub.withArgs('503008e2_0ab203ee').returns(
           commentStubRes1);
       commentStub.withArgs('ecf0b9fa_fe1a5f62').returns(
           commentStubRes2);
-      // Expand the commit message diff
-      MockInteractions.keyUpOn(element, 73, 'shift', 'i');
-      const diffs = renderAndGetNewDiffs(0);
-      flushAsynchronousOperations();
-
-      // Two comment threads sould be generated
-      const commentThreadEls = diffs[0].getThreadEls();
-      assert(commentThreadEls[0].comments.length, 2);
-      assert(commentThreadEls[1].comments.length, 1);
-      assert.isTrue(commentThreadEls[1].comments[0].unresolved);
-      assert.equal(commentThreadEls[1].comments[0].message, 'another comment');
-
-      // Reload comments from the first comment thread, which should have a new
-      // reply.
-      element.reloadCommentsForThreadWithRootId('cc788d2c_cb1d728c',
-          '/COMMIT_MSG');
-      assert(commentThreadEls[0].comments.length, 3);
-
 
       // Reload comments from the first comment thread, which should have a
       // an updated message and a toggled resolve state.
+      element.reloadCommentsForThreadWithRootId('503008e2_0ab203ee',
+          '/COMMIT_MSG');
+      assert.equal(thread1.comments.length, 1);
+      assert.isFalse(thread1.comments[0].unresolved);
+      assert.equal(thread1.comments[0].message, 'edited text');
+
+      // Reload comments from the second comment thread, which should have a new
+      // reply.
       element.reloadCommentsForThreadWithRootId('ecf0b9fa_fe1a5f62',
           '/COMMIT_MSG');
-      assert(commentThreadEls[1].comments.length, 1);
-      assert.isFalse(commentThreadEls[1].comments[0].unresolved);
-      assert.equal(commentThreadEls[1].comments[0].message, 'edited text');
+      assert.equal(thread2.comments.length, 3);
 
       const commentStubCount = commentStub.callCount;
       const getThreadsSpy = sandbox.spy(diffs[0], 'getThreadEls');
 
-      // Should not be getting threadss when the file is not expanded.
+      // Should not be getting threads when the file is not expanded.
       element.reloadCommentsForThreadWithRootId('ecf0b9fa_fe1a5f62',
           'other/file');
       assert.isFalse(getThreadsSpy.called);

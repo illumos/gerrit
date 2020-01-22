@@ -14,38 +14,32 @@
 
 package com.google.gerrit.server.restapi.change;
 
+import com.google.gerrit.entities.Comment;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.restapi.ChildCollection;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.RestView;
-import com.google.gerrit.reviewdb.client.Comment;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.CommentsUtil;
 import com.google.gerrit.server.change.CommentResource;
 import com.google.gerrit.server.change.RevisionResource;
 import com.google.gerrit.server.notedb.ChangeNotes;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 
 @Singleton
 public class Comments implements ChildCollection<RevisionResource, CommentResource> {
   private final DynamicMap<RestView<CommentResource>> views;
   private final ListRevisionComments list;
-  private final Provider<ReviewDb> dbProvider;
   private final CommentsUtil commentsUtil;
 
   @Inject
   Comments(
       DynamicMap<RestView<CommentResource>> views,
       ListRevisionComments list,
-      Provider<ReviewDb> dbProvider,
       CommentsUtil commentsUtil) {
     this.views = views;
     this.list = list;
-    this.dbProvider = dbProvider;
     this.commentsUtil = commentsUtil;
   }
 
@@ -60,13 +54,11 @@ public class Comments implements ChildCollection<RevisionResource, CommentResour
   }
 
   @Override
-  public CommentResource parse(RevisionResource rev, IdString id)
-      throws ResourceNotFoundException, OrmException {
+  public CommentResource parse(RevisionResource rev, IdString id) throws ResourceNotFoundException {
     String uuid = id.get();
     ChangeNotes notes = rev.getNotes();
 
-    for (Comment c :
-        commentsUtil.publishedByPatchSet(dbProvider.get(), notes, rev.getPatchSet().getId())) {
+    for (Comment c : commentsUtil.publishedByPatchSet(notes, rev.getPatchSet().id())) {
       if (uuid.equals(c.key.uuid)) {
         return new CommentResource(rev, c);
       }

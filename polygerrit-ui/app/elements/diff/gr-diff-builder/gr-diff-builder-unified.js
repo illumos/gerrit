@@ -20,10 +20,8 @@
   // Prevent redefinition.
   if (window.GrDiffBuilderUnified) { return; }
 
-  function GrDiffBuilderUnified(diff, comments, createThreadGroupFn, prefs,
-      outputEl, layers) {
-    GrDiffBuilder.call(this, diff, comments, createThreadGroupFn, prefs,
-        outputEl, layers);
+  function GrDiffBuilderUnified(diff, prefs, outputEl, layers) {
+    GrDiffBuilder.call(this, diff, prefs, outputEl, layers);
   }
   GrDiffBuilderUnified.prototype = Object.create(GrDiffBuilder.prototype);
   GrDiffBuilderUnified.prototype.constructor = GrDiffBuilderUnified;
@@ -37,9 +35,18 @@
     if (group.dueToRebase) {
       sectionEl.classList.add('dueToRebase');
     }
+    if (group.ignoredWhitespaceOnly) {
+      sectionEl.classList.add('ignoredWhitespaceOnly');
+    }
 
     for (let i = 0; i < group.lines.length; ++i) {
-      sectionEl.appendChild(this._createRow(sectionEl, group.lines[i]));
+      const line = group.lines[i];
+      // If only whitespace has changed and the settings ask for whitespace to
+      // be ignored, only render the right-side line in unified diff mode.
+      if (group.ignoredWhitespaceOnly && line.type == GrDiffLine.Type.REMOVE) {
+        continue;
+      }
+      sectionEl.appendChild(this._createRow(sectionEl, line));
     }
     return sectionEl;
   };
@@ -70,28 +77,24 @@
 
   GrDiffBuilderUnified.prototype._createRow = function(section, line) {
     const row = this._createElement('tr', line.type);
-    row.appendChild(this._createBlameCell(line));
-
-    let lineEl = this._createLineEl(line, line.beforeNumber,
-        GrDiffLine.Type.REMOVE);
-    lineEl.classList.add('left');
-    row.appendChild(lineEl);
-    lineEl = this._createLineEl(line, line.afterNumber,
-        GrDiffLine.Type.ADD);
-    lineEl.classList.add('right');
-    row.appendChild(lineEl);
     row.classList.add('diff-row', 'unified');
     row.tabIndex = -1;
+    row.appendChild(this._createBlameCell(line));
+
+    let lineNumberEl = this._createLineEl(line, line.beforeNumber,
+        GrDiffLine.Type.REMOVE);
+    lineNumberEl.classList.add('left');
+    row.appendChild(lineNumberEl);
+    lineNumberEl = this._createLineEl(line, line.afterNumber,
+        GrDiffLine.Type.ADD);
+    lineNumberEl.classList.add('right');
+    row.appendChild(lineNumberEl);
 
     const action = this._createContextControl(section, line);
     if (action) {
       row.appendChild(action);
     } else {
-      const textEl = this._createTextEl(line);
-      const threadGroupEl = this._commentThreadGroupForLine(line);
-      if (threadGroupEl) {
-        textEl.appendChild(threadGroupEl);
-      }
+      const textEl = this._createTextEl(lineNumberEl, line);
       row.appendChild(textEl);
     }
     return row;

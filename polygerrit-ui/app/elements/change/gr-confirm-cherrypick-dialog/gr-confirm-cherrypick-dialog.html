@@ -15,8 +15,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/iron-autogrow-textarea/iron-autogrow-textarea.html">
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/iron-autogrow-textarea/iron-autogrow-textarea.html">
+<link rel="import" href="/bower_components/iron-input/iron-input.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../styles/shared-styles.html">
 <link rel="import" href="../../shared/gr-autocomplete/gr-autocomplete.html">
 <link rel="import" href="../../shared/gr-dialog/gr-dialog.html">
@@ -43,20 +45,13 @@ limitations under the License.
       .main label,
       .main input[type="text"] {
         display: block;
-        font: inherit;
-        width: 100%;
-      }
-      .main .message {
-        border: groove;
         width: 100%;
       }
       iron-autogrow-textarea {
-        padding: 0;
-
-        --iron-autogrow-textarea: {
-          font-family: var(--monospace-font-family);
-          width: 72ch;
-        };
+        font-family: var(--monospace-font-family);
+        font-size: var(--font-size-mono);
+        line-height: var(--line-height-mono);
+        width: 73ch; /* Add a char to account for the border. */
       }
     </style>
     <gr-dialog
@@ -77,12 +72,17 @@ limitations under the License.
         <label for="baseInput">
           Provide base commit sha1 for cherry-pick
         </label>
-        <input
-            is="iron-input"
-            id="baseCommitInput"
+        <iron-input
             maxlength="40"
             placeholder="(optional)"
             bind-value="{{baseCommit}}">
+          <input
+              is="iron-input"
+              id="baseCommitInput"
+              maxlength="40"
+              placeholder="(optional)"
+              bind-value="{{baseCommit}}">
+        </iron-input>
         <label for="messageInput">
           Cherry Pick Commit Message
         </label>

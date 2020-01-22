@@ -16,10 +16,11 @@ package com.google.gerrit.server.submit;
 
 import static java.util.stream.Collectors.toSet;
 
-import com.google.gerrit.reviewdb.client.PatchSet;
+import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Provider;
 import java.util.List;
 import java.util.Optional;
@@ -48,7 +49,8 @@ public enum CommitMergeStatus {
           + "Please rebase the change locally and upload the rebased commit for review."),
 
   SKIPPED_IDENTICAL_TREE(
-      "Marking change merged without cherry-picking to branch, as the resulting commit would be empty."),
+      "Marking change merged without cherry-picking to branch, as the resulting commit would be"
+          + " empty."),
 
   MISSING_DEPENDENCY("Depends on change that was not submitted."),
 
@@ -88,35 +90,35 @@ public enum CommitMergeStatus {
   }
 
   public static String createMissingDependencyMessage(
-      Provider<InternalChangeQuery> queryProvider, String commit, String otherCommit)
-      throws OrmException {
+      @Nullable CurrentUser caller,
+      Provider<InternalChangeQuery> queryProvider,
+      String commit,
+      String otherCommit) {
     List<ChangeData> changes = queryProvider.get().enforceVisibility(true).byCommit(otherCommit);
 
     if (changes.isEmpty()) {
       return String.format(
           "Commit %s depends on commit %s which cannot be merged."
-              + " Is the change of this commit not visible or was it deleted?",
-          commit, otherCommit);
+              + " Is the change of this commit not visible to '%s' or was it deleted?",
+          commit, otherCommit, caller != null ? caller.getLoggableName() : "<user-not-available>");
     } else if (changes.size() == 1) {
       ChangeData cd = changes.get(0);
-      if (cd.currentPatchSet().getRevision().get().equals(otherCommit)) {
+      if (cd.currentPatchSet().commitId().name().equals(otherCommit)) {
         return String.format(
             "Commit %s depends on commit %s of change %d which cannot be merged.",
             commit, otherCommit, cd.getId().get());
       }
       Optional<PatchSet> patchSet =
-          cd.patchSets().stream()
-              .filter(ps -> ps.getRevision().get().equals(otherCommit))
-              .findAny();
+          cd.patchSets().stream().filter(ps -> ps.commitId().name().equals(otherCommit)).findAny();
       if (patchSet.isPresent()) {
         return String.format(
             "Commit %s depends on commit %s, which is outdated patch set %d of change %d."
                 + " The latest patch set is %d.",
             commit,
             otherCommit,
-            patchSet.get().getId().get(),
+            patchSet.get().id().get(),
             cd.getId().get(),
-            cd.currentPatchSet().getId().get());
+            cd.currentPatchSet().id().get());
       }
       // should not happen, fall-back to default message
       return String.format(

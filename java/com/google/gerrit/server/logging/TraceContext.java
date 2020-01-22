@@ -19,6 +19,7 @@ import static java.util.Objects.requireNonNull;
 import com.google.common.base.Stopwatch;
 import com.google.common.base.Strings;
 import com.google.common.collect.HashBasedTable;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Table;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
@@ -155,116 +156,66 @@ public class TraceContext implements AutoCloseable {
   /**
    * Opens a new timer that logs the time for an operation if request tracing is enabled.
    *
-   * <p>If request tracing is not enabled this is a no-op.
-   *
-   * @param message the message
+   * @param operation the name of operation the is being performed
    * @return the trace timer
    */
-  public static TraceTimer newTimer(String message) {
-    return new TraceTimer(message);
+  public static TraceTimer newTimer(String operation) {
+    return new TraceTimer(requireNonNull(operation, "operation is required"));
   }
 
   /**
    * Opens a new timer that logs the time for an operation if request tracing is enabled.
    *
-   * <p>If request tracing is not enabled this is a no-op.
-   *
-   * @param format the message format string
-   * @param arg argument for the message
+   * @param operation the name of operation the is being performed
+   * @param metadata metadata
    * @return the trace timer
    */
-  public static TraceTimer newTimer(String format, Object arg) {
-    return new TraceTimer(format, arg);
-  }
-
-  /**
-   * Opens a new timer that logs the time for an operation if request tracing is enabled.
-   *
-   * <p>If request tracing is not enabled this is a no-op.
-   *
-   * @param format the message format string
-   * @param arg1 first argument for the message
-   * @param arg2 second argument for the message
-   * @return the trace timer
-   */
-  public static TraceTimer newTimer(String format, Object arg1, Object arg2) {
-    return new TraceTimer(format, arg1, arg2);
-  }
-
-  /**
-   * Opens a new timer that logs the time for an operation if request tracing is enabled.
-   *
-   * <p>If request tracing is not enabled this is a no-op.
-   *
-   * @param format the message format string
-   * @param arg1 first argument for the message
-   * @param arg2 second argument for the message
-   * @param arg3 third argument for the message
-   * @return the trace timer
-   */
-  public static TraceTimer newTimer(String format, Object arg1, Object arg2, Object arg3) {
-    return new TraceTimer(format, arg1, arg2, arg3);
-  }
-
-  /**
-   * Opens a new timer that logs the time for an operation if request tracing is enabled.
-   *
-   * <p>If request tracing is not enabled this is a no-op.
-   *
-   * @param format the message format string
-   * @param arg1 first argument for the message
-   * @param arg2 second argument for the message
-   * @param arg3 third argument for the message
-   * @param arg4 fourth argument for the message
-   * @return the trace timer
-   */
-  public static TraceTimer newTimer(
-      String format, Object arg1, Object arg2, Object arg3, Object arg4) {
-    return new TraceTimer(format, arg1, arg2, arg3, arg4);
+  public static TraceTimer newTimer(String operation, Metadata metadata) {
+    return new TraceTimer(
+        requireNonNull(operation, "operation is required"),
+        requireNonNull(metadata, "metadata is required"));
   }
 
   public static class TraceTimer implements AutoCloseable {
     private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
-    private final Consumer<Long> logFn;
+    private final Consumer<Long> doneLogFn;
     private final Stopwatch stopwatch;
 
-    private TraceTimer(String message) {
-      this(elapsedMs -> logger.atFine().log(message + " (%d ms)", elapsedMs));
-    }
-
-    private TraceTimer(String format, @Nullable Object arg) {
-      this(elapsedMs -> logger.atFine().log(format + " (%d ms)", arg, elapsedMs));
-    }
-
-    private TraceTimer(String format, @Nullable Object arg1, @Nullable Object arg2) {
-      this(elapsedMs -> logger.atFine().log(format + " (%d ms)", arg1, arg2, elapsedMs));
-    }
-
-    private TraceTimer(
-        String format, @Nullable Object arg1, @Nullable Object arg2, @Nullable Object arg3) {
-      this(elapsedMs -> logger.atFine().log(format + " (%d ms)", arg1, arg2, arg3, elapsedMs));
-    }
-
-    private TraceTimer(
-        String format,
-        @Nullable Object arg1,
-        @Nullable Object arg2,
-        @Nullable Object arg3,
-        @Nullable Object arg4) {
+    private TraceTimer(String operation) {
       this(
-          elapsedMs -> logger.atFine().log(format + " (%d ms)", arg1, arg2, arg3, arg4, elapsedMs));
+          () -> logger.atFine().log("Starting timer for %s", operation),
+          elapsedMs -> {
+            LoggingContext.getInstance()
+                .addPerformanceLogRecord(() -> PerformanceLogRecord.create(operation, elapsedMs));
+            logger.atFine().log("%s done (%d ms)", operation, elapsedMs);
+          });
     }
 
-    private TraceTimer(Consumer<Long> logFn) {
-      this.logFn = logFn;
+    private TraceTimer(String operation, Metadata metadata) {
+      this(
+          () ->
+              logger.atFine().log(
+                  "Starting timer for %s (%s)", operation, metadata.toStringForLoggingLazy()),
+          elapsedMs -> {
+            LoggingContext.getInstance()
+                .addPerformanceLogRecord(
+                    () -> PerformanceLogRecord.create(operation, elapsedMs, metadata));
+            logger.atFine().log(
+                "%s (%s) done (%d ms)", operation, metadata.toStringForLoggingLazy(), elapsedMs);
+          });
+    }
+
+    private TraceTimer(Runnable startLogFn, Consumer<Long> doneLogFn) {
+      startLogFn.run();
+      this.doneLogFn = doneLogFn;
       this.stopwatch = Stopwatch.createStarted();
     }
 
     @Override
     public void close() {
       stopwatch.stop();
-      logFn.accept(stopwatch.elapsed(TimeUnit.MILLISECONDS));
+      doneLogFn.accept(stopwatch.elapsed(TimeUnit.MILLISECONDS));
     }
   }
 
@@ -286,6 +237,12 @@ public class TraceContext implements AutoCloseable {
     return this;
   }
 
+  public ImmutableMap<String, String> getTags() {
+    ImmutableMap.Builder<String, String> tagMap = ImmutableMap.builder();
+    tags.cellSet().forEach(c -> tagMap.put(c.getRowKey(), c.getColumnKey()));
+    return tagMap.build();
+  }
+
   public TraceContext addPluginTag(String pluginName) {
     return addTag(PLUGIN_TAG, pluginName);
   }
@@ -297,6 +254,15 @@ public class TraceContext implements AutoCloseable {
 
     stopForceLoggingOnClose = !LoggingContext.getInstance().forceLogging(true);
     return this;
+  }
+
+  public boolean isTracing() {
+    return LoggingContext.getInstance().isLoggingForced();
+  }
+
+  public Optional<String> getTraceId() {
+    return LoggingContext.getInstance().getTagsAsMap().get(RequestId.Type.TRACE_ID.name()).stream()
+        .findFirst();
   }
 
   @Override

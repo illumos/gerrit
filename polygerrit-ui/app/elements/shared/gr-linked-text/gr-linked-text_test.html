@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-linked-text</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <script src="../../../scripts/util.js"></script>
 
@@ -310,28 +312,6 @@ limitations under the License.
       element.content = 'some text';
       assert.isTrue(contentStub.called);
       assert.isTrue(contentConfigStub.called);
-    });
-  });
-
-  suite('gr-linked-text with null config', () => {
-    let element;
-    let sandbox;
-
-    setup(() => {
-      element = fixture('basic');
-      sandbox = sinon.sandbox.create();
-    });
-
-    teardown(() => {
-      sandbox.restore();
-    });
-
-    test('_contentOrConfigChanged not called without config', () => {
-      const contentStub = sandbox.stub(element, '_contentChanged');
-      const contentConfigStub = sandbox.stub(element, '_contentOrConfigChanged');
-      element.content = 'some text';
-      assert.isTrue(contentStub.called);
-      assert.isFalse(contentConfigStub.called);
     });
   });
 </script>

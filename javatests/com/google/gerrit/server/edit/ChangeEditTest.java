@@ -16,18 +16,18 @@ package com.google.gerrit.server.edit;
 
 import static org.junit.Assert.assertEquals;
 
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.RefNames;
 import org.junit.Test;
 
 public class ChangeEditTest {
   @Test
   public void changeEditRef() throws Exception {
-    Account.Id accountId = new Account.Id(1000042);
-    Change.Id changeId = new Change.Id(56414);
-    PatchSet.Id psId = new PatchSet.Id(changeId, 50);
+    Account.Id accountId = Account.id(1000042);
+    Change.Id changeId = Change.id(56414);
+    PatchSet.Id psId = PatchSet.id(changeId, 50);
     String refName = RefNames.refsEdit(accountId, changeId, psId);
     assertEquals("refs/users/42/1000042/edit-56414/50", refName);
   }

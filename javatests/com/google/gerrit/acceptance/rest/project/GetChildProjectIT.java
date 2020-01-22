@@ -14,17 +14,22 @@
 
 package com.google.gerrit.acceptance.rest.project;
 
+import static com.google.common.truth.Truth.assertThat;
 import static com.google.gerrit.acceptance.rest.project.ProjectAssert.assertProjectInfo;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.NoHttpd;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.common.ProjectInfo;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.inject.Inject;
 import org.junit.Test;
 
 @NoHttpd
 public class GetChildProjectIT extends AbstractDaemonTest {
+  @Inject private ProjectOperations projectOperations;
 
   @Test
   public void getNonExistingChildProject_NotFound() throws Exception {
@@ -33,15 +38,15 @@ public class GetChildProjectIT extends AbstractDaemonTest {
 
   @Test
   public void getNonChildProject_NotFound() throws Exception {
-    Project.NameKey p1 = createProject("p1");
-    Project.NameKey p2 = createProject("p2");
+    Project.NameKey p1 = projectOperations.newProject().create();
+    Project.NameKey p2 = projectOperations.newProject().create();
 
     assertChildNotFound(p1, p2.get());
   }
 
   @Test
   public void getChildProject() throws Exception {
-    Project.NameKey child = createProject("p1");
+    Project.NameKey child = projectOperations.newProject().create();
     ProjectInfo childInfo = gApi.projects().name(allProjects.get()).child(child.get()).get();
 
     assertProjectInfo(projectCache.get(child).getProject(), childInfo);
@@ -49,16 +54,16 @@ public class GetChildProjectIT extends AbstractDaemonTest {
 
   @Test
   public void getGrandChildProject_NotFound() throws Exception {
-    Project.NameKey child = createProject("p1");
-    Project.NameKey grandChild = createProject("p1.1", child);
+    Project.NameKey child = projectOperations.newProject().create();
+    Project.NameKey grandChild = projectOperations.newProject().parent(child).create();
 
     assertChildNotFound(allProjects, grandChild.get());
   }
 
   @Test
   public void getGrandChildProjectWithRecursiveFlag() throws Exception {
-    Project.NameKey child = createProject("p1");
-    Project.NameKey grandChild = createProject("p1.1", child);
+    Project.NameKey child = projectOperations.newProject().create();
+    Project.NameKey grandChild = projectOperations.newProject().parent(child).create();
 
     ProjectInfo grandChildInfo =
         gApi.projects().name(allProjects.get()).child(grandChild.get()).get(true);
@@ -66,8 +71,10 @@ public class GetChildProjectIT extends AbstractDaemonTest {
   }
 
   private void assertChildNotFound(Project.NameKey parent, String child) throws Exception {
-    exception.expect(ResourceNotFoundException.class);
-    exception.expectMessage(child);
-    gApi.projects().name(parent.get()).child(child).get();
+    ResourceNotFoundException thrown =
+        assertThrows(
+            ResourceNotFoundException.class,
+            () -> gApi.projects().name(parent.get()).child(child).get());
+    assertThat(thrown).hasMessageThat().contains(child);
   }
 }

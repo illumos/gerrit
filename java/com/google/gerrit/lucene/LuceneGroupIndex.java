@@ -17,6 +17,9 @@ package com.google.gerrit.lucene;
 import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.gerrit.server.index.group.GroupField.UUID;
 
+import com.google.common.collect.ImmutableSet;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.index.FieldDef;
 import com.google.gerrit.index.QueryOptions;
 import com.google.gerrit.index.Schema;
@@ -24,7 +27,6 @@ import com.google.gerrit.index.Schema.Values;
 import com.google.gerrit.index.query.DataSource;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryParseException;
-import com.google.gerrit.reviewdb.client.AccountGroup;
 import com.google.gerrit.server.account.GroupCache;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.SitePaths;
@@ -89,6 +91,7 @@ public class LuceneGroupIndex extends AbstractLuceneIndex<AccountGroup.UUID, Int
         sitePaths,
         dir(schema, cfg, sitePaths),
         GROUPS,
+        ImmutableSet.of(),
         null,
         new GerritIndexWriterConfig(cfg, GROUPS),
         new SearcherFactory());
@@ -110,20 +113,20 @@ public class LuceneGroupIndex extends AbstractLuceneIndex<AccountGroup.UUID, Int
   }
 
   @Override
-  public void replace(InternalGroup group) throws IOException {
+  public void replace(InternalGroup group) {
     try {
       replace(idTerm(group), toDocument(group)).get();
     } catch (ExecutionException | InterruptedException e) {
-      throw new IOException(e);
+      throw new StorageException(e);
     }
   }
 
   @Override
-  public void delete(AccountGroup.UUID key) throws IOException {
+  public void delete(AccountGroup.UUID key) {
     try {
       delete(idTerm(key)).get();
     } catch (ExecutionException | InterruptedException e) {
-      throw new IOException(e);
+      throw new StorageException(e);
     }
   }
 
@@ -138,7 +141,7 @@ public class LuceneGroupIndex extends AbstractLuceneIndex<AccountGroup.UUID, Int
 
   @Override
   protected InternalGroup fromDocument(Document doc) {
-    AccountGroup.UUID uuid = new AccountGroup.UUID(doc.getField(UUID.getName()).stringValue());
+    AccountGroup.UUID uuid = AccountGroup.uuid(doc.getField(UUID.getName()).stringValue());
     // Use the GroupCache rather than depending on any stored fields in the
     // document (of which there shouldn't be any).
     return groupCache.get().get(uuid).orElse(null);

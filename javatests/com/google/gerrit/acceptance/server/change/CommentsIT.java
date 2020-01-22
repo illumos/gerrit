@@ -16,21 +16,24 @@ package com.google.gerrit.acceptance.server.change;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth8.assertThat;
-import static com.google.common.truth.TruthJUnit.assume;
 import static com.google.gerrit.acceptance.PushOneCommit.FILE_NAME;
 import static com.google.gerrit.acceptance.PushOneCommit.SUBJECT;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static java.util.stream.Collectors.groupingBy;
 import static java.util.stream.Collectors.toList;
 
-import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
-import com.google.gerrit.acceptance.AcceptanceTestRequestScope;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.PushOneCommit;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Patch;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.changes.DeleteCommentInput;
 import com.google.gerrit.extensions.api.changes.DraftInput;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
@@ -45,9 +48,6 @@ import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.TopLevelResource;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Patch;
-import com.google.gerrit.reviewdb.client.RefNames;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.change.RevisionResource;
 import com.google.gerrit.server.notedb.ChangeNoteUtil;
@@ -61,11 +61,11 @@ import com.google.inject.Provider;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -79,20 +79,18 @@ import org.junit.Test;
 
 @NoHttpd
 public class CommentsIT extends AbstractDaemonTest {
-
-  @Inject private Provider<ChangesCollection> changes;
-
-  @Inject private Provider<PostReview> postReview;
-
-  @Inject private FakeEmailSender email;
-
   @Inject private ChangeNoteUtil noteUtil;
+  @Inject private FakeEmailSender email;
+  @Inject private Provider<ChangesCollection> changes;
+  @Inject private Provider<PostReview> postReview;
+  @Inject private RequestScopeOperations requestScopeOperations;
+  @Inject ProjectOperations projectOperations;
 
   private final Integer[] lines = {0, 1};
 
   @Before
   public void setUp() {
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
   }
 
   @Test
@@ -100,8 +98,9 @@ public class CommentsIT extends AbstractDaemonTest {
     PushOneCommit.Result r = createChange();
     String changeId = r.getChangeId();
     String revId = r.getCommit().getName();
-    exception.expect(ResourceNotFoundException.class);
-    getPublishedComment(changeId, revId, "non-existing");
+    assertThrows(
+        ResourceNotFoundException.class,
+        () -> getPublishedComment(changeId, revId, "non-existing"));
   }
 
   @Test
@@ -142,12 +141,11 @@ public class CommentsIT extends AbstractDaemonTest {
       addDraft(changeId, revId, c4);
       Map<String, List<CommentInfo>> result = getDraftComments(changeId, revId);
       assertThat(result).hasSize(1);
-      assertThat(Lists.transform(result.get(path), infoToDraft(path)))
-          .containsExactly(c1, c2, c3, c4);
+      assertThat(result.get(path).stream().map(infoToDraft(path))).containsExactly(c1, c2, c3, c4);
 
       List<CommentInfo> list = getDraftCommentsAsList(changeId);
       assertThat(list).hasSize(4);
-      assertThat(Lists.transform(list, infoToDraft(path))).containsExactly(c1, c2, c3, c4);
+      assertThat(list.stream().map(infoToDraft(path))).containsExactly(c1, c2, c3, c4);
     }
   }
 
@@ -157,7 +155,7 @@ public class CommentsIT extends AbstractDaemonTest {
       String file = "file";
       String contents = "contents " + line;
       PushOneCommit push =
-          pushFactory.create(db, admin.getIdent(), testRepo, "first subject", file, contents);
+          pushFactory.create(admin.newIdent(), testRepo, "first subject", file, contents);
       PushOneCommit.Result r = push.to("refs/for/master");
       String changeId = r.getChangeId();
       String revId = r.getCommit().getName();
@@ -181,7 +179,7 @@ public class CommentsIT extends AbstractDaemonTest {
       String file = "file";
       String contents = "contents " + line;
       PushOneCommit push =
-          pushFactory.create(db, admin.getIdent(), testRepo, "first subject", file, contents);
+          pushFactory.create(admin.newIdent(), testRepo, "first subject", file, contents);
       PushOneCommit.Result r = push.to("refs/for/master");
       String changeId = r.getChangeId();
       String revId = r.getCommit().getName();
@@ -213,7 +211,7 @@ public class CommentsIT extends AbstractDaemonTest {
       String file = "file";
       String contents = "contents " + line;
       PushOneCommit push =
-          pushFactory.create(db, admin.getIdent(), testRepo, "first subject", file, contents);
+          pushFactory.create(admin.newIdent(), testRepo, "first subject", file, contents);
       PushOneCommit.Result r = push.to("refs/for/master");
       String changeId = r.getChangeId();
       String revId = r.getCommit().getName();
@@ -248,11 +246,10 @@ public class CommentsIT extends AbstractDaemonTest {
       revision(r).review(input);
       Map<String, List<CommentInfo>> result = getPublishedComments(changeId, revId);
       assertThat(result).isNotEmpty();
-      assertThat(Lists.transform(result.get(file), infoToInput(file)))
-          .containsExactly(c1, c2, c3, c4);
+      assertThat(result.get(file).stream().map(infoToInput(file))).containsExactly(c1, c2, c3, c4);
 
       List<CommentInfo> list = getPublishedCommentsAsList(changeId);
-      assertThat(Lists.transform(list, infoToInput(file))).containsExactly(c1, c2, c3, c4);
+      assertThat(list.stream().map(infoToInput(file))).containsExactly(c1, c2, c3, c4);
     }
 
     // for the commit message comments on the auto-merge are not possible
@@ -270,10 +267,10 @@ public class CommentsIT extends AbstractDaemonTest {
       revision(r).review(input);
       Map<String, List<CommentInfo>> result = getPublishedComments(changeId, revId);
       assertThat(result).isNotEmpty();
-      assertThat(Lists.transform(result.get(file), infoToInput(file))).containsExactly(c1, c2, c3);
+      assertThat(result.get(file).stream().map(infoToInput(file))).containsExactly(c1, c2, c3);
 
       List<CommentInfo> list = getPublishedCommentsAsList(changeId);
-      assertThat(Lists.transform(list, infoToInput(file))).containsExactly(c1, c2, c3);
+      assertThat(list.stream().map(infoToInput(file))).containsExactly(c1, c2, c3);
     }
   }
 
@@ -284,16 +281,47 @@ public class CommentsIT extends AbstractDaemonTest {
     CommentInput c = newComment(Patch.COMMIT_MSG, Side.PARENT, 0, "comment on auto-merge", false);
     input.comments = new HashMap<>();
     input.comments.put(Patch.COMMIT_MSG, ImmutableList.of(c));
-    exception.expect(BadRequestException.class);
-    exception.expectMessage("cannot comment on " + Patch.COMMIT_MSG + " on auto-merge");
-    revision(r).review(input);
+    BadRequestException thrown =
+        assertThrows(BadRequestException.class, () -> revision(r).review(input));
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains("cannot comment on " + Patch.COMMIT_MSG + " on auto-merge");
+  }
+
+  @Test
+  public void postCommentsReplacingDrafts() throws Exception {
+    String file = "file";
+    PushOneCommit push =
+        pushFactory.create(admin.newIdent(), testRepo, "first subject", file, "contents");
+    PushOneCommit.Result r = push.to("refs/for/master");
+    String changeId = r.getChangeId();
+    String revId = r.getCommit().getName();
+
+    DraftInput draft = newDraft(file, Side.REVISION, 0, "comment");
+    addDraft(changeId, revId, draft);
+    Map<String, List<CommentInfo>> drafts = getDraftComments(changeId, revId);
+    CommentInfo draftInfo = Iterables.getOnlyElement(drafts.get(draft.path));
+
+    ReviewInput reviewInput = new ReviewInput();
+    reviewInput.drafts = DraftHandling.KEEP;
+    reviewInput.message = "foo";
+    CommentInput comment = newComment(file, Side.REVISION, 0, "comment", false);
+    // Replace the existing draft.
+    comment.id = draftInfo.id;
+    reviewInput.comments = new HashMap<>();
+    reviewInput.comments.put(comment.path, ImmutableList.of(comment));
+    revision(r).review(reviewInput);
+
+    // DraftHandling.KEEP is ignored on publishing a comment.
+    drafts = getDraftComments(changeId, revId);
+    assertThat(drafts).isEmpty();
   }
 
   @Test
   public void postCommentsUnreachableData() throws Exception {
     String file = "file";
     PushOneCommit push =
-        pushFactory.create(db, admin.getIdent(), testRepo, "first subject", file, "l1\nl2\n");
+        pushFactory.create(admin.newIdent(), testRepo, "first subject", file, "l1\nl2\n");
 
     String dest = "refs/for/master";
     PushOneCommit.Result r1 = push.to(dest);
@@ -304,7 +332,7 @@ public class CommentsIT extends AbstractDaemonTest {
     PushOneCommit.Result r2 = amendChange(r1.getChangeId());
     r2.assertOkStatus();
 
-    String draftRefName = RefNames.refsDraftComments(r1.getChange().getId(), admin.getId());
+    String draftRefName = RefNames.refsDraftComments(r1.getChange().getId(), admin.id());
 
     DraftInput draft = newDraft(file, Side.REVISION, 1, "comment");
     addDraft(changeId, "1", draft);
@@ -332,7 +360,7 @@ public class CommentsIT extends AbstractDaemonTest {
   public void listComments() throws Exception {
     String file = "file";
     PushOneCommit push =
-        pushFactory.create(db, admin.getIdent(), testRepo, "first subject", file, "contents");
+        pushFactory.create(admin.newIdent(), testRepo, "first subject", file, "contents");
     PushOneCommit.Result r = push.to("refs/for/master");
     String changeId = r.getChangeId();
     String revId = r.getCommit().getName();
@@ -352,12 +380,11 @@ public class CommentsIT extends AbstractDaemonTest {
     Map<String, List<CommentInfo>> result = getPublishedComments(changeId, revId);
     assertThat(result).isNotEmpty();
     List<CommentInfo> actualComments = result.get(file);
-    assertThat(Lists.transform(actualComments, infoToInput(file)))
+    assertThat(actualComments.stream().map(infoToInput(file)))
         .containsExactlyElementsIn(expectedComments);
 
     List<CommentInfo> list = getPublishedCommentsAsList(changeId);
-    assertThat(Lists.transform(list, infoToInput(file)))
-        .containsExactlyElementsIn(expectedComments);
+    assertThat(list.stream().map(infoToInput(file))).containsExactlyElementsIn(expectedComments);
   }
 
   @Test
@@ -403,7 +430,7 @@ public class CommentsIT extends AbstractDaemonTest {
     Map<String, List<CommentInfo>> result = getDraftComments(changeId, revId);
     assertThat(result).isNotEmpty();
     List<CommentInfo> actualComments = result.get(file);
-    assertThat(Lists.transform(actualComments, infoToDraft(file)))
+    assertThat(actualComments.stream().map(infoToDraft(file)))
         .containsExactlyElementsIn(expectedDrafts);
   }
 
@@ -446,7 +473,7 @@ public class CommentsIT extends AbstractDaemonTest {
       String file = "file";
       String contents = "contents " + line;
       PushOneCommit push =
-          pushFactory.create(db, admin.getIdent(), testRepo, "first subject", file, contents);
+          pushFactory.create(admin.newIdent(), testRepo, "first subject", file, contents);
       PushOneCommit.Result r = push.to("refs/for/master");
       String changeId = r.getChangeId();
       String revId = r.getCommit().getName();
@@ -460,7 +487,7 @@ public class CommentsIT extends AbstractDaemonTest {
       ChangeResource changeRsrc =
           changes.get().parse(TopLevelResource.INSTANCE, IdString.fromDecoded(changeId));
       RevisionResource revRsrc = revisions.parse(changeRsrc, IdString.fromDecoded(revId));
-      postReview.get().apply(batchUpdateFactory, revRsrc, input, timestamp);
+      postReview.get().apply(revRsrc, input, timestamp);
       Map<String, List<CommentInfo>> result = getPublishedComments(changeId, revId);
       assertThat(result).isNotEmpty();
       CommentInfo actual = Iterables.getOnlyElement(result.get(comment.path));
@@ -489,7 +516,7 @@ public class CommentsIT extends AbstractDaemonTest {
 
     PushOneCommit.Result r2 =
         pushFactory
-            .create(db, admin.getIdent(), testRepo, SUBJECT, FILE_NAME, "content")
+            .create(admin.newIdent(), testRepo, SUBJECT, FILE_NAME, "content")
             .to("refs/for/master");
     changeId = r2.getChangeId();
     revId = r2.getCommit().getName();
@@ -504,11 +531,10 @@ public class CommentsIT extends AbstractDaemonTest {
 
     PushOneCommit.Result r2 =
         pushFactory
-            .create(
-                db, admin.getIdent(), testRepo, SUBJECT, FILE_NAME, "new content", r1.getChangeId())
+            .create(admin.newIdent(), testRepo, SUBJECT, FILE_NAME, "new content", r1.getChangeId())
             .to("refs/for/master");
 
-    setApiUser(admin);
+    requestScopeOperations.setApiUser(admin.id());
     addDraft(
         r1.getChangeId(),
         r1.getCommit().getName(),
@@ -518,13 +544,13 @@ public class CommentsIT extends AbstractDaemonTest {
         r2.getCommit().getName(),
         newDraft(FILE_NAME, Side.REVISION, 1, "typo: content"));
 
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     addDraft(
         r2.getChangeId(),
         r2.getCommit().getName(),
         newDraft(FILE_NAME, Side.REVISION, 1, "+1, please fix"));
 
-    setApiUser(admin);
+    requestScopeOperations.setApiUser(admin.id());
     Map<String, List<CommentInfo>> actual = gApi.changes().id(r1.getChangeId()).drafts();
     assertThat(actual.keySet()).containsExactly(FILE_NAME);
     List<CommentInfo> comments = actual.get(FILE_NAME);
@@ -551,8 +577,7 @@ public class CommentsIT extends AbstractDaemonTest {
 
     PushOneCommit.Result r2 =
         pushFactory
-            .create(
-                db, admin.getIdent(), testRepo, SUBJECT, FILE_NAME, "new cntent", r1.getChangeId())
+            .create(admin.newIdent(), testRepo, SUBJECT, FILE_NAME, "new cntent", r1.getChangeId())
             .to("refs/for/master");
 
     addComment(r1, "nit: trailing whitespace");
@@ -565,14 +590,14 @@ public class CommentsIT extends AbstractDaemonTest {
     assertThat(comments).hasSize(2);
 
     CommentInfo c1 = comments.get(0);
-    assertThat(c1.author._accountId).isEqualTo(user.getId().get());
+    assertThat(c1.author._accountId).isEqualTo(user.id().get());
     assertThat(c1.patchSet).isEqualTo(1);
     assertThat(c1.message).isEqualTo("nit: trailing whitespace");
     assertThat(c1.side).isNull();
     assertThat(c1.line).isEqualTo(1);
 
     CommentInfo c2 = comments.get(1);
-    assertThat(c2.author._accountId).isEqualTo(user.getId().get());
+    assertThat(c2.author._accountId).isEqualTo(user.id().get());
     assertThat(c2.patchSet).isEqualTo(2);
     assertThat(c2.message).isEqualTo("typo: content");
     assertThat(c2.side).isNull();
@@ -597,19 +622,18 @@ public class CommentsIT extends AbstractDaemonTest {
     String changeId = result.getChangeId();
 
     pushFactory
-        .create(db, admin.getIdent(), testRepo, SUBJECT, FILE_NAME, "initial content\n", changeId)
+        .create(admin.newIdent(), testRepo, SUBJECT, FILE_NAME, "initial content\n", changeId)
         .to("refs/heads/master");
 
     PushOneCommit.Result r1 =
         pushFactory
-            .create(db, admin.getIdent(), testRepo, SUBJECT, FILE_NAME, "old boring content\n")
+            .create(admin.newIdent(), testRepo, SUBJECT, FILE_NAME, "old boring content\n")
             .to("refs/for/master");
 
     PushOneCommit.Result r2 =
         pushFactory
             .create(
-                db,
-                admin.getIdent(),
+                admin.newIdent(),
                 testRepo,
                 SUBJECT,
                 FILE_NAME,
@@ -649,11 +673,11 @@ public class CommentsIT extends AbstractDaemonTest {
         other.getCommit().getName(),
         newDraft(FILE_NAME, Side.REVISION, 1, "unrelated comment"));
 
-    setApiUser(admin);
+    requestScopeOperations.setApiUser(admin.id());
     // Drafts by other users aren't returned.
     addDraft(
         r2.getChangeId(), r2.getCommit().getName(), newDraft(FILE_NAME, Side.REVISION, 2, "oops"));
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
 
     ReviewInput reviewInput = new ReviewInput();
     reviewInput.drafts = DraftHandling.PUBLISH_ALL_REVISIONS;
@@ -803,7 +827,7 @@ public class CommentsIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void queryChangesWithUnresolvedCommentCount() throws Exception {
+  public void queryChangesWithCommentCount() throws Exception {
     // PS1 has three comments in three different threads, PS2 has one comment in one thread.
     PushOneCommit.Result result = createChange("change 1", FILE_NAME, "content 1");
     String changeId1 = result.getChangeId();
@@ -832,16 +856,16 @@ public class CommentsIT extends AbstractDaemonTest {
     assertThat(comments.get(FILE_NAME)).hasSize(1);
     addComment(result, "comment 2", false, true, comments.get(FILE_NAME).get(0).id);
 
-    AcceptanceTestRequestScope.Context ctx = disableDb();
-    try {
+    try (AutoCloseable ignored = disableNoteDb()) {
       ChangeInfo changeInfo1 = Iterables.getOnlyElement(query(changeId1));
       ChangeInfo changeInfo2 = Iterables.getOnlyElement(query(changeId2));
       ChangeInfo changeInfo3 = Iterables.getOnlyElement(query(changeId3));
       assertThat(changeInfo1.unresolvedCommentCount).isEqualTo(2);
+      assertThat(changeInfo1.totalCommentCount).isEqualTo(4);
       assertThat(changeInfo2.unresolvedCommentCount).isEqualTo(0);
+      assertThat(changeInfo2.totalCommentCount).isEqualTo(2);
       assertThat(changeInfo3.unresolvedCommentCount).isEqualTo(1);
-    } finally {
-      enableDb(ctx);
+      assertThat(changeInfo3.totalCommentCount).isEqualTo(2);
     }
   }
 
@@ -859,9 +883,10 @@ public class CommentsIT extends AbstractDaemonTest {
     String uuid = commentsMap.get(targetComment.path).get(0).id;
     DeleteCommentInput input = new DeleteCommentInput("contains confidential information");
 
-    setApiUser(user);
-    exception.expect(AuthException.class);
-    gApi.changes().id(result.getChangeId()).current().comment(uuid).delete(input);
+    requestScopeOperations.setApiUser(user.id());
+    assertThrows(
+        AuthException.class,
+        () -> gApi.changes().id(result.getChangeId()).current().comment(uuid).delete(input));
   }
 
   @Test
@@ -930,12 +955,9 @@ public class CommentsIT extends AbstractDaemonTest {
     // PS4 has comments [c7, c8].
     assertThat(getRevisionComments(changeId, ps4)).hasSize(2);
 
-    setApiUser(admin);
+    requestScopeOperations.setApiUser(admin.id());
     for (int i = 0; i < commentsBeforeDelete.size(); i++) {
-      List<RevCommit> commitsBeforeDelete = new ArrayList<>();
-      if (notesMigration.commitChangeWrites()) {
-        commitsBeforeDelete = getChangeMetaCommitsInReverseOrder(id);
-      }
+      List<RevCommit> commitsBeforeDelete = getChangeMetaCommitsInReverseOrder(id);
 
       CommentInfo comment = commentsBeforeDelete.get(i);
       String uuid = comment.id;
@@ -948,15 +970,13 @@ public class CommentsIT extends AbstractDaemonTest {
           gApi.changes().id(changeId).revision(patchSet).comment(uuid).delete(input);
 
       String expectedMsg =
-          String.format("Comment removed by: %s; Reason: %s", admin.fullName, input.reason);
+          String.format("Comment removed by: %s; Reason: %s", admin.fullName(), input.reason);
       assertThat(updatedComment.message).isEqualTo(expectedMsg);
       oldComment.message = expectedMsg;
       assertThat(updatedComment).isEqualTo(oldComment);
 
       // Check the NoteDb state after the deletion.
-      if (notesMigration.commitChangeWrites()) {
-        assertMetaBranchCommitsAfterRewriting(commitsBeforeDelete, id, uuid, expectedMsg);
-      }
+      assertMetaBranchCommitsAfterRewriting(commitsBeforeDelete, id, uuid, expectedMsg);
 
       comment.message = expectedMsg;
       commentsBeforeDelete.set(i, comment);
@@ -1003,12 +1023,9 @@ public class CommentsIT extends AbstractDaemonTest {
     String uuid = targetComment.get().id;
     CommentInfo oldComment = gApi.changes().id(changeId).revision(ps1).comment(uuid).get();
 
-    List<RevCommit> commitsBeforeDelete = new ArrayList<>();
-    if (notesMigration.commitChangeWrites()) {
-      commitsBeforeDelete = getChangeMetaCommitsInReverseOrder(id);
-    }
+    List<RevCommit> commitsBeforeDelete = getChangeMetaCommitsInReverseOrder(id);
 
-    setApiUser(admin);
+    requestScopeOperations.setApiUser(admin.id());
     for (int i = 0; i < 3; i++) {
       DeleteCommentInput input = new DeleteCommentInput("delete comment 2, iteration: " + i);
       gApi.changes().id(changeId).revision(ps1).comment(uuid).delete(input);
@@ -1017,30 +1034,14 @@ public class CommentsIT extends AbstractDaemonTest {
     CommentInfo updatedComment = gApi.changes().id(changeId).revision(ps1).comment(uuid).get();
     String expectedMsg =
         String.format(
-            "Comment removed by: %s; Reason: %s", admin.fullName, "delete comment 2, iteration: 2");
+            "Comment removed by: %s; Reason: %s",
+            admin.fullName(), "delete comment 2, iteration: 2");
     assertThat(updatedComment.message).isEqualTo(expectedMsg);
     oldComment.message = expectedMsg;
     assertThat(updatedComment).isEqualTo(oldComment);
 
-    if (notesMigration.commitChangeWrites()) {
-      assertMetaBranchCommitsAfterRewriting(commitsBeforeDelete, id, uuid, expectedMsg);
-    }
+    assertMetaBranchCommitsAfterRewriting(commitsBeforeDelete, id, uuid, expectedMsg);
     assertThat(getChangeSortedComments(id.get())).hasSize(3);
-  }
-
-  @Test
-  public void jsonCommentHasLegacyFormatFalse() throws Exception {
-    assume().that(notesMigration.readChanges()).isTrue();
-    PushOneCommit.Result result = createChange();
-    Change.Id changeId = result.getChange().getId();
-    addComment(result.getChangeId(), "comment");
-
-    Collection<com.google.gerrit.reviewdb.client.Comment> comments =
-        notesFactory.createChecked(db, project, changeId).getComments().values();
-    assertThat(comments).hasSize(1);
-    com.google.gerrit.reviewdb.client.Comment comment = comments.iterator().next();
-    assertThat(comment.message).isEqualTo("comment");
-    assertThat(comment.legacyFormat).isFalse();
   }
 
   private List<CommentInfo> getRevisionComments(String changeId, String revId) throws Exception {
@@ -1083,17 +1084,16 @@ public class CommentsIT extends AbstractDaemonTest {
         RevCommit commitBefore = beforeDelete.get(i);
         RevCommit commitAfter = afterDelete.get(i);
 
-        Map<String, com.google.gerrit.reviewdb.client.Comment> commentMapBefore =
+        Map<String, com.google.gerrit.entities.Comment> commentMapBefore =
             DeleteCommentRewriter.getPublishedComments(
-                noteUtil, changeId, reader, NoteMap.read(reader, commitBefore));
-        Map<String, com.google.gerrit.reviewdb.client.Comment> commentMapAfter =
+                noteUtil, reader, NoteMap.read(reader, commitBefore));
+        Map<String, com.google.gerrit.entities.Comment> commentMapAfter =
             DeleteCommentRewriter.getPublishedComments(
-                noteUtil, changeId, reader, NoteMap.read(reader, commitAfter));
+                noteUtil, reader, NoteMap.read(reader, commitAfter));
 
         if (commentMapBefore.containsKey(targetCommentUuid)) {
           assertThat(commentMapAfter).containsKey(targetCommentUuid);
-          com.google.gerrit.reviewdb.client.Comment comment =
-              commentMapAfter.get(targetCommentUuid);
+          com.google.gerrit.entities.Comment comment = commentMapAfter.get(targetCommentUuid);
           assertThat(comment.message).isEqualTo(expectedMessage);
           comment.message = commentMapBefore.get(targetCommentUuid).message;
           commentMapAfter.put(targetCommentUuid, comment);

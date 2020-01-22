@@ -15,30 +15,24 @@
 package com.google.gerrit.acceptance.rest.change;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.TruthJUnit.assume;
 import static com.google.gerrit.acceptance.GitUtil.pushHead;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 
-import com.google.common.collect.Iterables;
 import com.google.gerrit.acceptance.GitUtil;
 import com.google.gerrit.acceptance.PushOneCommit;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.common.data.Permission;
-import com.google.gerrit.extensions.client.ChangeStatus;
+import com.google.gerrit.entities.Change;
 import com.google.gerrit.extensions.client.SubmitType;
 import com.google.gerrit.extensions.common.ActionInfo;
-import com.google.gerrit.extensions.common.ChangeInfo;
-import com.google.gerrit.extensions.restapi.ResourceConflictException;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.server.change.TestSubmitInput;
+import com.google.inject.Inject;
 import java.util.Map;
-import org.eclipse.jgit.lib.ObjectId;
-import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
-import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.transport.PushResult;
 import org.junit.Test;
 
 public class SubmitByFastForwardIT extends AbstractSubmit {
+  @Inject private ProjectOperations projectOperations;
 
   @Override
   protected SubmitType getSubmitType() {
@@ -46,11 +40,11 @@ public class SubmitByFastForwardIT extends AbstractSubmit {
   }
 
   @Test
-  public void submitWithFastForward() throws Exception {
-    RevCommit initialHead = getRemoteHead();
+  public void submitWithFastForward() throws Throwable {
+    RevCommit initialHead = projectOperations.project(project).getHead("master");
     PushOneCommit.Result change = createChange();
     submit(change.getChangeId());
-    RevCommit updatedHead = getRemoteHead();
+    RevCommit updatedHead = projectOperations.project(project).getHead("master");
     assertThat(updatedHead.getId()).isEqualTo(change.getCommit());
     assertThat(updatedHead.getParent(0)).isEqualTo(initialHead);
     assertSubmitter(change.getChangeId(), 1);
@@ -60,8 +54,8 @@ public class SubmitByFastForwardIT extends AbstractSubmit {
   }
 
   @Test
-  public void submitMultipleChangesWithFastForward() throws Exception {
-    RevCommit initialHead = getRemoteHead();
+  public void submitMultipleChangesWithFastForward() throws Throwable {
+    RevCommit initialHead = projectOperations.project(project).getHead("master");
 
     PushOneCommit.Result change = createChange();
     PushOneCommit.Result change2 = createChange();
@@ -74,14 +68,14 @@ public class SubmitByFastForwardIT extends AbstractSubmit {
     approve(id2);
     submit(id3);
 
-    RevCommit updatedHead = getRemoteHead();
+    RevCommit updatedHead = projectOperations.project(project).getHead("master");
     assertThat(updatedHead.getId()).isEqualTo(change3.getCommit());
     assertThat(updatedHead.getParent(0).getId()).isEqualTo(change2.getCommit());
     assertSubmitter(change.getChangeId(), 1);
     assertSubmitter(change2.getChangeId(), 1);
     assertSubmitter(change3.getChangeId(), 1);
-    assertPersonEquals(admin.getIdent(), updatedHead.getAuthorIdent());
-    assertPersonEquals(admin.getIdent(), updatedHead.getCommitterIdent());
+    assertPersonEquals(admin.newIdent(), updatedHead.getAuthorIdent());
+    assertPersonEquals(admin.newIdent(), updatedHead.getCommitterIdent());
     assertSubmittedTogether(id1, id3, id2, id1);
     assertSubmittedTogether(id2, id3, id2, id1);
     assertSubmittedTogether(id3, id3, id2, id1);
@@ -92,12 +86,12 @@ public class SubmitByFastForwardIT extends AbstractSubmit {
   }
 
   @Test
-  public void submitTwoChangesWithFastForward_missingDependency() throws Exception {
-    RevCommit initialHead = getRemoteHead();
+  public void submitTwoChangesWithFastForward_missingDependency() throws Throwable {
+    RevCommit initialHead = projectOperations.project(project).getHead("master");
     PushOneCommit.Result change1 = createChange();
     PushOneCommit.Result change2 = createChange();
 
-    Change.Id id1 = change1.getPatchSetId().getParentKey();
+    Change.Id id1 = change1.getPatchSetId().changeId();
     submitWithConflict(
         change2.getChangeId(),
         "Failed to submit 2 changes due to the following problems:\n"
@@ -105,19 +99,19 @@ public class SubmitByFastForwardIT extends AbstractSubmit {
             + id1
             + ": needs Code-Review");
 
-    RevCommit updatedHead = getRemoteHead();
+    RevCommit updatedHead = projectOperations.project(project).getHead("master");
     assertThat(updatedHead.getId()).isEqualTo(initialHead.getId());
     assertRefUpdatedEvents();
     assertChangeMergedEvents();
   }
 
   @Test
-  public void submitFastForwardNotPossible_Conflict() throws Exception {
-    RevCommit initialHead = getRemoteHead();
+  public void submitFastForwardNotPossible_Conflict() throws Throwable {
+    RevCommit initialHead = projectOperations.project(project).getHead("master");
     PushOneCommit.Result change = createChange("Change 1", "a.txt", "content");
     submit(change.getChangeId());
 
-    RevCommit headAfterFirstSubmit = getRemoteHead();
+    RevCommit headAfterFirstSubmit = projectOperations.project(project).getHead("master");
     testRepo.reset(initialHead);
     PushOneCommit.Result change2 = createChange("Change 2", "b.txt", "other content");
 
@@ -138,7 +132,8 @@ public class SubmitByFastForwardIT extends AbstractSubmit {
             + ": Project policy requires "
             + "all submissions to be a fast-forward. Please rebase the change "
             + "locally and upload again for review.");
-    assertThat(getRemoteHead()).isEqualTo(headAfterFirstSubmit);
+    assertThat(projectOperations.project(project).getHead("master"))
+        .isEqualTo(headAfterFirstSubmit);
     assertSubmitter(change.getChangeId(), 1);
 
     assertRefUpdatedEvents(initialHead, headAfterFirstSubmit);
@@ -146,57 +141,15 @@ public class SubmitByFastForwardIT extends AbstractSubmit {
   }
 
   @Test
-  public void repairChangeStateAfterFailure() throws Exception {
-    // In NoteDb-only mode, repo and meta updates are atomic (at least in InMemoryRepository).
-    assume().that(notesMigration.disableChangeReviewDb()).isFalse();
+  public void submitSameCommitsAsInExperimentalBranch() throws Throwable {
+    RevCommit initialHead = projectOperations.project(project).getHead("master");
 
-    PushOneCommit.Result change = createChange("Change 1", "a.txt", "content");
-    Change.Id id = change.getChange().getId();
-    TestSubmitInput failInput = new TestSubmitInput();
-    failInput.failAfterRefUpdates = true;
-    submit(
-        change.getChangeId(),
-        failInput,
-        ResourceConflictException.class,
-        "Failing after ref updates");
-
-    // Bad: ref advanced but change wasn't updated.
-    PatchSet.Id psId = new PatchSet.Id(id, 1);
-    ChangeInfo info = gApi.changes().id(id.get()).get();
-    assertThat(info.status).isEqualTo(ChangeStatus.NEW);
-    assertThat(info.revisions.get(info.currentRevision)._number).isEqualTo(1);
-
-    ObjectId rev;
-    try (Repository repo = repoManager.openRepository(project);
-        RevWalk rw = new RevWalk(repo)) {
-      rev = repo.exactRef(psId.toRefName()).getObjectId();
-      assertThat(rev).isNotNull();
-      assertThat(repo.exactRef("refs/heads/master").getObjectId()).isEqualTo(rev);
-    }
-
-    submit(change.getChangeId());
-
-    // Change status was updated, and branch tip stayed the same.
-    info = gApi.changes().id(id.get()).get();
-    assertThat(info.status).isEqualTo(ChangeStatus.MERGED);
-    assertThat(info.revisions.get(info.currentRevision)._number).isEqualTo(1);
-    assertThat(Iterables.getLast(info.messages).message)
-        .isEqualTo("Change has been successfully merged by Administrator");
-
-    try (Repository repo = repoManager.openRepository(project)) {
-      assertThat(repo.exactRef("refs/heads/master").getObjectId()).isEqualTo(rev);
-    }
-
-    assertRefUpdatedEvents();
-    assertChangeMergedEvents(change.getChangeId(), getRemoteHead().name());
-  }
-
-  @Test
-  public void submitSameCommitsAsInExperimentalBranch() throws Exception {
-    RevCommit initialHead = getRemoteHead();
-
-    grant(project, "refs/heads/*", Permission.CREATE);
-    grant(project, "refs/heads/experimental", Permission.PUSH);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.CREATE).ref("refs/heads/*").group(adminGroupUuid()))
+        .add(allow(Permission.PUSH).ref("refs/heads/experimental").group(adminGroupUuid()))
+        .update();
 
     RevCommit c1 = commitBuilder().add("b.txt", "1").message("commit at tip").create();
     String id1 = GitUtil.getChangeId(testRepo, c1).get();
@@ -209,9 +162,9 @@ public class SubmitByFastForwardIT extends AbstractSubmit {
         .isEqualTo(c1.getId());
 
     submit(id1);
-    RevCommit headAfterSubmit = getRemoteHead();
+    RevCommit headAfterSubmit = projectOperations.project(project).getHead("master");
 
-    assertThat(getRemoteHead().getId()).isEqualTo(c1.getId());
+    assertThat(projectOperations.project(project).getHead("master").getId()).isEqualTo(c1.getId());
     assertSubmitter(id1, 1);
 
     assertRefUpdatedEvents(initialHead, headAfterSubmit);

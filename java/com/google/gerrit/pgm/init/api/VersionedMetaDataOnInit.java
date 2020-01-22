@@ -14,7 +14,7 @@
 
 package com.google.gerrit.pgm.init.api;
 
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.GerritPersonIdentProvider;
 import com.google.gerrit.server.config.SitePaths;
 import com.google.gerrit.server.git.meta.VersionedMetaData;
@@ -58,7 +58,7 @@ public abstract class VersionedMetaDataOnInit extends VersionedMetaData {
     File path = getPath();
     if (path != null) {
       try (Repository repo = new FileRepository(path)) {
-        load(new Project.NameKey(project), repo);
+        load(Project.nameKey(project), repo);
       }
     }
     return this;

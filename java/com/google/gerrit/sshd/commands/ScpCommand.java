@@ -27,7 +27,6 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.server.AccessPath;
 import com.google.gerrit.server.tools.ToolsCatalog;
-import com.google.gerrit.server.tools.ToolsCatalog.Entry;
 import com.google.gerrit.sshd.BaseCommand;
 import com.google.inject.Inject;
 import java.io.ByteArrayOutputStream;
@@ -35,6 +34,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import org.apache.sshd.server.Environment;
+import org.apache.sshd.server.channel.ChannelSession;
 
 final class ScpCommand extends BaseCommand {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
@@ -82,7 +82,7 @@ final class ScpCommand extends BaseCommand {
   }
 
   @Override
-  public void start(Environment env) {
+  public void start(ChannelSession channel, Environment env) {
     startThread(this::runImp, AccessPath.SSH_COMMAND);
   }
 
@@ -104,14 +104,14 @@ final class ScpCommand extends BaseCommand {
           root = "";
         }
 
-        final Entry ent = toc.get(root);
+        final ToolsCatalog.Entry ent = toc.get(root);
         if (ent == null) {
           throw new IOException(root + " not found");
 
-        } else if (Entry.Type.FILE == ent.getType()) {
+        } else if (ToolsCatalog.Entry.Type.FILE == ent.getType()) {
           readFile(ent);
 
-        } else if (Entry.Type.DIR == ent.getType()) {
+        } else if (ToolsCatalog.Entry.Type.DIR == ent.getType()) {
           if (!opt_r) {
             throw new IOException(root + " not a regular file");
           }
@@ -156,7 +156,7 @@ final class ScpCommand extends BaseCommand {
     }
   }
 
-  private void readFile(Entry ent) throws IOException {
+  private void readFile(ToolsCatalog.Entry ent) throws IOException {
     byte[] data = ent.getBytes();
     if (data == null) {
       throw new FileNotFoundException(ent.getPath());
@@ -170,12 +170,12 @@ final class ScpCommand extends BaseCommand {
     readAck();
   }
 
-  private void readDir(Entry dir) throws IOException {
+  private void readDir(ToolsCatalog.Entry dir) throws IOException {
     header(dir, 0);
     readAck();
 
-    for (Entry e : dir.getChildren()) {
-      if (Entry.Type.DIR == e.getType()) {
+    for (ToolsCatalog.Entry e : dir.getChildren()) {
+      if (ToolsCatalog.Entry.Type.DIR == e.getType()) {
         readDir(e);
       } else {
         readFile(e);
@@ -187,7 +187,8 @@ final class ScpCommand extends BaseCommand {
     readAck();
   }
 
-  private void header(Entry dir, int len) throws IOException, UnsupportedEncodingException {
+  private void header(ToolsCatalog.Entry dir, int len)
+      throws IOException, UnsupportedEncodingException {
     final StringBuilder buf = new StringBuilder();
     switch (dir.getType()) {
       case DIR:

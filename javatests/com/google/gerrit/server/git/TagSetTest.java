@@ -17,14 +17,14 @@ package com.google.gerrit.server.git;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.common.truth.extensions.proto.ProtoTruth.assertThat;
+import static com.google.gerrit.proto.testing.SerializedClassSubject.assertThatSerializedClass;
 import static com.google.gerrit.server.cache.testing.CacheSerializerTestUtil.byteString;
-import static com.google.gerrit.server.cache.testing.SerializedClassSubject.assertThatSerializedClass;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Streams;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.cache.proto.Cache.TagSetHolderProto.TagSetProto;
 import com.google.gerrit.server.cache.proto.Cache.TagSetHolderProto.TagSetProto.CachedRefProto;
 import com.google.gerrit.server.cache.proto.Cache.TagSetHolderProto.TagSetProto.TagProto;
@@ -59,7 +59,7 @@ public class TagSetTest {
     tags.add(
         new Tag(
             ObjectId.fromString("dddddddddddddddddddddddddddddddddddddddd"), newBitSet(2, 4, 6)));
-    TagSet tagSet = new TagSet(new Project.NameKey("project"), refs, tags);
+    TagSet tagSet = new TagSet(Project.nameKey("project"), refs, tags);
 
     TagSetProto proto = tagSet.toProto();
     assertThat(proto)
@@ -155,22 +155,24 @@ public class TagSetTest {
 
     Map<String, CachedRef> aRefs = a.getRefsForTesting();
     Map<String, CachedRef> bRefs = b.getRefsForTesting();
-    assertThat(ImmutableSortedSet.copyOf(aRefs.keySet()))
-        .named("ref name set")
+    assertWithMessage("ref name set")
+        .that(ImmutableSortedSet.copyOf(aRefs.keySet()))
         .isEqualTo(ImmutableSortedSet.copyOf(bRefs.keySet()));
     for (String name : aRefs.keySet()) {
       CachedRef aRef = aRefs.get(name);
       CachedRef bRef = bRefs.get(name);
-      assertThat(aRef.get()).named("value of ref %s", name).isEqualTo(bRef.get());
-      assertThat(aRef.flag).named("flag of ref %s", name).isEqualTo(bRef.flag);
+      assertWithMessage("value of ref %s", name).that(aRef.get()).isEqualTo(bRef.get());
+      assertWithMessage("flag of ref %s", name).that(aRef.flag).isEqualTo(bRef.flag);
     }
 
     ObjectIdOwnerMap<Tag> aTags = a.getTagsForTesting();
     ObjectIdOwnerMap<Tag> bTags = b.getTagsForTesting();
-    assertThat(getTagIds(aTags)).named("tag ID set").isEqualTo(getTagIds(bTags));
+    assertWithMessage("tag ID set").that(getTagIds(aTags)).isEqualTo(getTagIds(bTags));
     for (Tag aTag : aTags) {
       Tag bTag = bTags.get(aTag);
-      assertThat(aTag.refFlags).named("flags for tag %s", aTag.name()).isEqualTo(bTag.refFlags);
+      assertWithMessage("flags for tag %s", aTag.name())
+          .that(aTag.refFlags)
+          .isEqualTo(bTag.refFlags);
     }
   }
 

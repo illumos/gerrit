@@ -14,7 +14,7 @@
 
 package com.google.gerrit.server.restapi.project;
 
-import static com.google.gerrit.reviewdb.client.RefNames.isConfigRef;
+import static com.google.gerrit.entities.RefNames.isConfigRef;
 
 import com.google.gerrit.extensions.common.Input;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
@@ -24,7 +24,6 @@ import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.RefUtil;
 import com.google.gerrit.server.project.TagResource;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.io.IOException;
@@ -41,7 +40,7 @@ public class DeleteTag implements RestModifyView<TagResource, Input> {
 
   @Override
   public Response<?> apply(TagResource resource, Input input)
-      throws OrmException, RestApiException, IOException, PermissionBackendException {
+      throws RestApiException, IOException, PermissionBackendException {
     String tag = RefUtil.normalizeTagRef(resource.getTagInfo().ref);
 
     if (isConfigRef(tag)) {

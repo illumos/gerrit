@@ -14,14 +14,18 @@
 
 package com.google.gerrit.index.project;
 
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.index.Index;
-import com.google.gerrit.index.IndexedQuery;
 import com.google.gerrit.index.QueryOptions;
 import com.google.gerrit.index.query.DataSource;
+import com.google.gerrit.index.query.IndexedQuery;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryParseException;
-import com.google.gerrit.reviewdb.client.Project;
 
+/**
+ * Wrapper around {@link Predicate}s that are returned by the {@link
+ * com.google.gerrit.index.IndexRewriter}. See {@link IndexedQuery}.
+ */
 public class IndexedProjectQuery extends IndexedQuery<Project.NameKey, ProjectData>
     implements DataSource<ProjectData> {
 

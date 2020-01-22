@@ -22,82 +22,103 @@
     KEEP_VISIBLE: 'keep-visible',
   };
 
-  Polymer({
-    is: 'gr-cursor-manager',
+  /** @extends Polymer.Element */
+  class GrCursorManager extends Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element)) {
+    static get is() { return 'gr-cursor-manager'; }
 
-    properties: {
-      stops: {
-        type: Array,
-        value() {
-          return [];
+    static get properties() {
+      return {
+        stops: {
+          type: Array,
+          value() {
+            return [];
+          },
+          observer: '_updateIndex',
         },
-        observer: '_updateIndex',
-      },
-      /**
-       * @type {?Object}
-       */
-      target: {
-        type: Object,
-        notify: true,
-        observer: '_scrollToTarget',
-      },
-      /**
-       * The height of content intended to be included with the target.
-       *
-       * @type {?number}
-       */
-      _targetHeight: Number,
+        /**
+         * @type {?Object}
+         */
+        target: {
+          type: Object,
+          notify: true,
+          observer: '_scrollToTarget',
+        },
+        /**
+         * The height of content intended to be included with the target.
+         *
+         * @type {?number}
+         */
+        _targetHeight: Number,
 
-      /**
-       * The index of the current target (if any). -1 otherwise.
-       */
-      index: {
-        type: Number,
-        value: -1,
-        notify: true,
-      },
+        /**
+         * The index of the current target (if any). -1 otherwise.
+         */
+        index: {
+          type: Number,
+          value: -1,
+          notify: true,
+        },
 
-      /**
-       * The class to apply to the current target. Use null for no class.
-       */
-      cursorTargetClass: {
-        type: String,
-        value: null,
-      },
+        /**
+         * The class to apply to the current target. Use null for no class.
+         */
+        cursorTargetClass: {
+          type: String,
+          value: null,
+        },
 
-      /**
-       * The scroll behavior for the cursor. Values are 'never' and
-       * 'keep-visible'. 'keep-visible' will only scroll if the cursor is beyond
-       * the viewport.
-       * TODO (beckysiegel) figure out why it can be undefined
-       *
-       * @type {string|undefined}
-       */
-      scrollBehavior: {
-        type: String,
-        value: ScrollBehavior.NEVER,
-      },
+        /**
+         * The scroll behavior for the cursor. Values are 'never' and
+         * 'keep-visible'. 'keep-visible' will only scroll if the cursor is beyond
+         * the viewport.
+         * TODO (beckysiegel) figure out why it can be undefined
+         *
+         * @type {string|undefined}
+         */
+        scrollBehavior: {
+          type: String,
+          value: ScrollBehavior.NEVER,
+        },
 
-      /**
-       * When true, will call element.focus() during scrolling.
-       */
-      focusOnMove: {
-        type: Boolean,
-        value: false,
-      },
-    },
+        /**
+         * When true, will call element.focus() during scrolling.
+         */
+        focusOnMove: {
+          type: Boolean,
+          value: false,
+        },
+      };
+    }
 
+    /** @override */
     detached() {
+      super.detached();
       this.unsetCursor();
-    },
+    }
 
-    next(opt_condition, opt_getTargetHeight) {
-      this._moveCursor(1, opt_condition, opt_getTargetHeight);
-    },
+    /**
+     * Move the cursor forward. Clipped to the ends of the stop list.
+     *
+     * @param {!Function=} opt_condition Optional stop condition. If a condition
+     *    is passed the cursor will continue to move in the specified direction
+     *    until the condition is met.
+     * @param {!Function=} opt_getTargetHeight Optional function to calculate the
+     *    height of the target's 'section'. The height of the target itself is
+     *    sometimes different, used by the diff cursor.
+     * @param {boolean=} opt_clipToTop When none of the next indices match, move
+     *     back to first instead of to last.
+     * @private
+     */
+
+    next(opt_condition, opt_getTargetHeight, opt_clipToTop) {
+      this._moveCursor(1, opt_condition, opt_getTargetHeight, opt_clipToTop);
+    }
 
     previous(opt_condition) {
       this._moveCursor(-1, opt_condition);
-    },
+    }
 
     /**
      * Set the cursor to an arbitrary element.
@@ -119,36 +140,36 @@
       this._decorateTarget();
 
       if (opt_noScroll) { this.scrollBehavior = behavior; }
-    },
+    }
 
     unsetCursor() {
       this._unDecorateTarget();
       this.index = -1;
       this.target = null;
       this._targetHeight = null;
-    },
+    }
 
     isAtStart() {
       return this.index === 0;
-    },
+    }
 
     isAtEnd() {
       return this.index === this.stops.length - 1;
-    },
+    }
 
     moveToStart() {
       if (this.stops.length) {
         this.setCursor(this.stops[0]);
       }
-    },
+    }
 
     setCursorAtIndex(index, opt_noScroll) {
       this.setCursor(this.stops[index], opt_noScroll);
-    },
+    }
 
     /**
-     * Move the cursor forward or backward by delta. Noop if moving past either
-     * end of the stop list.
+     * Move the cursor forward or backward by delta. Clipped to the beginning or
+     * end of stop list.
      *
      * @param {number} delta either -1 or 1.
      * @param {!Function=} opt_condition Optional stop condition. If a condition
@@ -157,9 +178,11 @@
      * @param {!Function=} opt_getTargetHeight Optional function to calculate the
      *    height of the target's 'section'. The height of the target itself is
      *    sometimes different, used by the diff cursor.
+     * @param {boolean=} opt_clipToTop When none of the next indices match, move
+     *     back to first instead of to last.
      * @private
      */
-    _moveCursor(delta, opt_condition, opt_getTargetHeight) {
+    _moveCursor(delta, opt_condition, opt_getTargetHeight, opt_clipToTop) {
       if (!this.stops.length) {
         this.unsetCursor();
         return;
@@ -167,7 +190,7 @@
 
       this._unDecorateTarget();
 
-      const newIndex = this._getNextindex(delta, opt_condition);
+      const newIndex = this._getNextindex(delta, opt_condition, opt_clipToTop);
 
       let newTarget = null;
       if (newIndex !== -1) {
@@ -188,29 +211,31 @@
       if (this.focusOnMove) { this.target.focus(); }
 
       this._decorateTarget();
-    },
+    }
 
     _decorateTarget() {
       if (this.target && this.cursorTargetClass) {
         this.target.classList.add(this.cursorTargetClass);
       }
-    },
+    }
 
     _unDecorateTarget() {
       if (this.target && this.cursorTargetClass) {
         this.target.classList.remove(this.cursorTargetClass);
       }
-    },
+    }
 
     /**
      * Get the next stop index indicated by the delta direction.
      *
      * @param {number} delta either -1 or 1.
      * @param {!Function=} opt_condition Optional stop condition.
+     * @param {boolean=} opt_clipToTop When none of the next indices match, move
+     *     back to first instead of to last.
      * @return {number} the new index.
      * @private
      */
-    _getNextindex(delta, opt_condition) {
+    _getNextindex(delta, opt_condition, opt_clipToTop) {
       if (!this.stops.length || this.index === -1) {
         return -1;
       }
@@ -226,16 +251,16 @@
 
       // If we failed to satisfy the condition:
       if (opt_condition && !opt_condition(this.stops[newIndex])) {
-        if (delta > 0) {
-          return this.stops.length - 1;
-        } else if (delta < 0) {
+        if (delta < 0 || opt_clipToTop) {
           return 0;
+        } else if (delta > 0) {
+          return this.stops.length - 1;
         }
         return this.index;
       }
 
       return newIndex;
-    },
+    }
 
     _updateIndex() {
       if (!this.target) {
@@ -249,7 +274,7 @@
       } else {
         this.index = newIndex;
       }
-    },
+    }
 
     /**
      * Calculate where the element is relative to the window.
@@ -265,7 +290,7 @@
         top += offsetParent.offsetTop;
       }
       return top;
-    },
+    }
 
     /**
      * @return {boolean}
@@ -275,12 +300,12 @@
       return this.scrollBehavior === ScrollBehavior.KEEP_VISIBLE &&
           top > dims.pageYOffset &&
           top < dims.pageYOffset + dims.innerHeight;
-    },
+    }
 
     _calculateScrollToValue(top, target) {
       const dims = this._getWindowDims();
       return top - (dims.innerHeight / 3) + (target.offsetHeight / 2);
-    },
+    }
 
     _scrollToTarget() {
       if (!this.target || this.scrollBehavior === ScrollBehavior.NEVER) {
@@ -308,7 +333,7 @@
       // element appears to be below the center of the window even when it
       // isn't.
       window.scrollTo(dims.scrollX, scrollToValue);
-    },
+    }
 
     _getWindowDims() {
       return {
@@ -317,6 +342,8 @@
         innerHeight: window.innerHeight,
         pageYOffset: window.pageYOffset,
       };
-    },
-  });
+    }
+  }
+
+  customElements.define(GrCursorManager.is, GrCursorManager);
 })();

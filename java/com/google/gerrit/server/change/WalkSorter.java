@@ -24,11 +24,11 @@ import com.google.common.collect.ListMultimap;
 import com.google.common.collect.MultimapBuilder;
 import com.google.common.collect.Ordering;
 import com.google.common.flogger.FluentLogger;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import java.io.IOException;
 import java.util.ArrayDeque;
@@ -41,7 +41,6 @@ import java.util.Map;
 import java.util.Set;
 import org.eclipse.jgit.errors.IncorrectObjectTypeException;
 import org.eclipse.jgit.errors.MissingObjectException;
-import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevFlag;
@@ -73,7 +72,7 @@ public class WalkSorter {
                 }
                 try {
                   return in.get(0).data().change().getProject();
-                } catch (OrmException e) {
+                } catch (StorageException e) {
                   throw new IllegalStateException(e);
                 }
               });
@@ -98,7 +97,7 @@ public class WalkSorter {
     return this;
   }
 
-  public Iterable<PatchSetData> sort(Iterable<ChangeData> in) throws OrmException, IOException {
+  public Iterable<PatchSetData> sort(Iterable<ChangeData> in) throws IOException {
     ListMultimap<Project.NameKey, ChangeData> byProject =
         MultimapBuilder.hashKeys().arrayListValues().build();
     for (ChangeData cd : in) {
@@ -114,7 +113,7 @@ public class WalkSorter {
   }
 
   private List<PatchSetData> sortProject(Project.NameKey project, Collection<ChangeData> in)
-      throws OrmException, IOException {
+      throws IOException {
     try (Repository repo = repoManager.openRepository(project);
         RevWalk rw = new RevWalk(repo)) {
       rw.setRetainBody(retainBody);
@@ -217,33 +216,32 @@ public class WalkSorter {
   }
 
   private ListMultimap<RevCommit, PatchSetData> byCommit(RevWalk rw, Collection<ChangeData> in)
-      throws OrmException, IOException {
+      throws IOException {
     ListMultimap<RevCommit, PatchSetData> byCommit =
         MultimapBuilder.hashKeys(in.size()).arrayListValues(1).build();
     for (ChangeData cd : in) {
       PatchSet maxPs = null;
       for (PatchSet ps : cd.patchSets()) {
-        if (shouldInclude(ps) && (maxPs == null || ps.getId().get() > maxPs.getId().get())) {
+        if (shouldInclude(ps) && (maxPs == null || ps.id().get() > maxPs.id().get())) {
           maxPs = ps;
         }
       }
       if (maxPs == null) {
         continue; // No patch sets matched.
       }
-      ObjectId id = ObjectId.fromString(maxPs.getRevision().get());
       try {
-        RevCommit c = rw.parseCommit(id);
+        RevCommit c = rw.parseCommit(maxPs.commitId());
         byCommit.put(c, PatchSetData.create(cd, maxPs, c));
       } catch (MissingObjectException | IncorrectObjectTypeException e) {
         logger.atWarning().withCause(e).log(
-            "missing commit %s for patch set %s", id.name(), maxPs.getId());
+            "missing commit %s for patch set %s", maxPs.commitId().name(), maxPs.id());
       }
     }
     return byCommit;
   }
 
   private boolean shouldInclude(PatchSet ps) {
-    return includePatchSets.isEmpty() || includePatchSets.contains(ps.getId());
+    return includePatchSets.isEmpty() || includePatchSets.contains(ps.id());
   }
 
   private static void markStart(RevWalk rw, Iterable<RevCommit> commits) throws IOException {

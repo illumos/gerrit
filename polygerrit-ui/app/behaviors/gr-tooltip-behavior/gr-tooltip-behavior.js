@@ -49,6 +49,7 @@
       },
     },
 
+    /** @override */
     detached() {
       this._handleHideTooltip();
     },
@@ -89,7 +90,7 @@
       this._tooltip = tooltip;
       this.listen(window, 'scroll', '_handleWindowScroll');
       this.listen(this, 'mouseleave', '_handleHideTooltip');
-      this.listen(this, 'tap', '_handleHideTooltip');
+      this.listen(this, 'click', '_handleHideTooltip');
     },
 
     _handleHideTooltip(e) {
@@ -101,7 +102,7 @@
 
       this.unlisten(window, 'scroll', '_handleWindowScroll');
       this.unlisten(this, 'mouseleave', '_handleHideTooltip');
-      this.unlisten(this, 'tap', '_handleHideTooltip');
+      this.unlisten(this, 'click', '_handleHideTooltip');
       this.setAttribute('title', this._titleText);
       if (this._tooltip && this._tooltip.parentNode) {
         this._tooltip.parentNode.removeChild(this._tooltip);
@@ -146,4 +147,28 @@
       }
     },
   };
+
+  // eslint-disable-next-line no-unused-vars
+  function defineEmptyMixin() {
+    // This is a temporary function.
+    // Polymer linter doesn't process correctly the following code:
+    // class MyElement extends Polymer.mixinBehaviors([legacyBehaviors], ...) {...}
+    // To workaround this issue, the mock mixin is declared in this method.
+    // In the following changes, legacy behaviors will be converted to mixins.
+
+    /**
+     * @polymer
+     * @mixinFunction
+     */
+    Gerrit.TooltipMixin = base =>
+      class extends base {
+        static get properties() {
+          return {
+            hasTooltip: {
+              type: Boolean,
+            },
+          };
+        }
+      };
+  }
 })(window);

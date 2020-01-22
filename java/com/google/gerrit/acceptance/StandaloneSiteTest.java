@@ -14,28 +14,34 @@
 
 package com.google.gerrit.acceptance;
 
-import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.stream.Collectors.joining;
 import static org.junit.Assert.fail;
 
+import com.google.common.base.Joiner;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Streams;
+import com.google.common.io.ByteStreams;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.extensions.api.GerritApi;
 import com.google.gerrit.extensions.api.groups.GroupInput;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.launcher.GerritLauncher;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.config.SitePaths;
 import com.google.gerrit.server.util.ManualRequestContext;
 import com.google.gerrit.server.util.OneOffRequestContext;
 import com.google.gerrit.server.util.RequestContext;
+import com.google.gerrit.server.util.git.DelegateSystemReader;
 import com.google.gerrit.testing.ConfigSuite;
 import com.google.inject.Injector;
 import com.google.inject.Module;
-import com.google.inject.Provider;
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.util.Arrays;
 import java.util.Collections;
 import org.eclipse.jgit.lib.Config;
@@ -60,10 +66,10 @@ public abstract class StandaloneSiteTest {
     private ServerContext(GerritServer server) throws Exception {
       this.server = server;
       Injector i = server.getTestInjector();
-      if (adminId == null) {
-        adminId = i.getInstance(AccountCreator.class).admin().getId();
+      if (admin == null) {
+        admin = i.getInstance(AccountCreator.class).admin();
       }
-      ctx = i.getInstance(OneOffRequestContext.class).openAs(adminId);
+      ctx = i.getInstance(OneOffRequestContext.class).openAs(admin.id());
       GerritApi gApi = i.getInstance(GerritApi.class);
 
       try {
@@ -80,11 +86,6 @@ public abstract class StandaloneSiteTest {
     @Override
     public CurrentUser getUser() {
       return ctx.getUser();
-    }
-
-    @Override
-    public Provider<ReviewDb> getReviewDbProvider() {
-      return ctx.getReviewDbProvider();
     }
 
     public Injector getInjector() {
@@ -107,10 +108,8 @@ public abstract class StandaloneSiteTest {
   private final TemporaryFolder tempSiteDir = new TemporaryFolder();
 
   private final TestRule testRunner =
-      new TestRule() {
-        @Override
-        public Statement apply(Statement base, Description description) {
-          return new Statement() {
+      (base, description) ->
+          new Statement() {
             @Override
             public void evaluate() throws Throwable {
               try {
@@ -121,13 +120,11 @@ public abstract class StandaloneSiteTest {
               }
             }
           };
-        }
-      };
 
   @Rule public RuleChain ruleChain = RuleChain.outerRule(tempSiteDir).around(testRunner);
 
   protected SitePaths sitePaths;
-  protected Account.Id adminId;
+  protected TestAccount admin;
 
   private GerritServer.Description serverDesc;
   private SystemReader oldSystemReader;
@@ -145,20 +142,10 @@ public abstract class StandaloneSiteTest {
   private static SystemReader setFakeSystemReader(File tempDir) {
     SystemReader oldSystemReader = SystemReader.getInstance();
     SystemReader.setInstance(
-        new SystemReader() {
+        new DelegateSystemReader(oldSystemReader) {
           @Override
-          public String getHostname() {
-            return oldSystemReader.getHostname();
-          }
-
-          @Override
-          public String getenv(String variable) {
-            return oldSystemReader.getenv(variable);
-          }
-
-          @Override
-          public String getProperty(String key) {
-            return oldSystemReader.getProperty(key);
+          public FileBasedConfig openJGitConfig(Config parent, FS fs) {
+            return new FileBasedConfig(parent, new File(tempDir, "jgit.config"), FS.detect());
           }
 
           @Override
@@ -169,16 +156,6 @@ public abstract class StandaloneSiteTest {
           @Override
           public FileBasedConfig openSystemConfig(Config parent, FS fs) {
             return new FileBasedConfig(parent, new File(tempDir, "system.config"), FS.detect());
-          }
-
-          @Override
-          public long getCurrentTime() {
-            return oldSystemReader.getCurrentTime();
-          }
-
-          @Override
-          public int getTimezone(long when) {
-            return oldSystemReader.getTimezone(when);
           }
         });
     return oldSystemReader;
@@ -209,20 +186,49 @@ public abstract class StandaloneSiteTest {
   private GerritServer startImpl(@Nullable Module testSysModule, String... additionalArgs)
       throws Exception {
     return GerritServer.start(
-        serverDesc, baseConfig, sitePaths.site_path, testSysModule, null, null, additionalArgs);
+        serverDesc, baseConfig, sitePaths.site_path, testSysModule, null, additionalArgs);
   }
 
   protected static void runGerrit(String... args) throws Exception {
     // Use invokeProgram with the current classloader, rather than mainImpl, which would create a
     // new classloader. This is necessary so that static state, particularly the SystemReader, is
     // shared with the test method.
-    assertThat(GerritLauncher.invokeProgram(StandaloneSiteTest.class.getClassLoader(), args))
-        .named("gerrit.war " + Arrays.stream(args).collect(joining(" ")))
+    assertWithMessage("gerrit.war " + Arrays.stream(args).collect(joining(" ")))
+        .that(GerritLauncher.invokeProgram(StandaloneSiteTest.class.getClassLoader(), args))
         .isEqualTo(0);
   }
 
   @SafeVarargs
   protected static void runGerrit(Iterable<String>... multiArgs) throws Exception {
     runGerrit(Arrays.stream(multiArgs).flatMap(Streams::stream).toArray(String[]::new));
+  }
+
+  protected static String execute(
+      ImmutableList<String> cmd, File dir, ImmutableMap<String, String> env) throws IOException {
+    ProcessBuilder pb = new ProcessBuilder(cmd);
+    pb.directory(dir).redirectErrorStream(true);
+    pb.environment().putAll(env);
+    Process p = pb.start();
+    byte[] out;
+    try (InputStream in = p.getInputStream()) {
+      out = ByteStreams.toByteArray(in);
+    } finally {
+      p.getOutputStream().close();
+    }
+
+    int status;
+    try {
+      status = p.waitFor();
+    } catch (InterruptedException e) {
+      throw new InterruptedIOException(
+          "interrupted waiting for: " + Joiner.on(' ').join(pb.command()));
+    }
+
+    String result = new String(out, UTF_8);
+    if (status != 0) {
+      throw new IOException(result);
+    }
+
+    return result.trim();
   }
 }

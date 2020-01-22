@@ -16,6 +16,7 @@ package com.google.gerrit.server.restapi.change;
 
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.MultimapBuilder;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.common.BlameInfo;
 import com.google.gerrit.extensions.common.RangeInfo;
 import com.google.gerrit.extensions.restapi.CacheControl;
@@ -23,7 +24,6 @@ import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestReadView;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.change.FileResource;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.git.GitRepositoryManager;
@@ -32,7 +32,6 @@ import com.google.gerrit.server.patch.AutoMerger;
 import com.google.gerrit.server.project.InvalidChangeOperationException;
 import com.google.gitiles.blame.cache.BlameCache;
 import com.google.gitiles.blame.cache.Region;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -77,9 +76,14 @@ public class GetBlame implements RestReadView<FileResource> {
     this.autoMerger = autoMerger;
   }
 
+  public GetBlame setBase(boolean base) {
+    this.base = base;
+    return this;
+  }
+
   @Override
   public Response<List<BlameInfo>> apply(FileResource resource)
-      throws RestApiException, OrmException, IOException, InvalidChangeOperationException {
+      throws RestApiException, IOException, InvalidChangeOperationException {
     Project.NameKey project = resource.getRevision().getChange().getProject();
     try (Repository repository = repoManager.openRepository(project);
         ObjectInserter ins = repository.newObjectInserter();
@@ -88,7 +92,7 @@ public class GetBlame implements RestReadView<FileResource> {
       String refName =
           resource.getRevision().getEdit().isPresent()
               ? resource.getRevision().getEdit().get().getRefName()
-              : resource.getRevision().getPatchSet().getRefName();
+              : resource.getRevision().getPatchSet().refName();
 
       Ref ref = repository.findRef(refName);
       if (ref == null) {
@@ -98,7 +102,7 @@ public class GetBlame implements RestReadView<FileResource> {
       RevCommit revCommit = revWalk.parseCommit(objectId);
       RevCommit[] parents = revCommit.getParents();
 
-      String path = resource.getPatchKey().getFileName();
+      String path = resource.getPatchKey().fileName();
 
       List<BlameInfo> result;
       if (!base) {

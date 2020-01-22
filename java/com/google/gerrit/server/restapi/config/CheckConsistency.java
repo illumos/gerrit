@@ -20,6 +20,7 @@ import com.google.gerrit.extensions.api.config.ConsistencyCheckInfo.CheckAccount
 import com.google.gerrit.extensions.api.config.ConsistencyCheckInfo.CheckGroupsResultInfo;
 import com.google.gerrit.extensions.api.config.ConsistencyCheckInput;
 import com.google.gerrit.extensions.restapi.BadRequestException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.server.account.AccountsConsistencyChecker;
@@ -29,7 +30,6 @@ import com.google.gerrit.server.group.db.GroupsConsistencyChecker;
 import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.io.IOException;
@@ -55,9 +55,8 @@ public class CheckConsistency implements RestModifyView<ConfigResource, Consiste
   }
 
   @Override
-  public ConsistencyCheckInfo apply(ConfigResource resource, ConsistencyCheckInput input)
-      throws RestApiException, IOException, OrmException, PermissionBackendException,
-          ConfigInvalidException {
+  public Response<ConsistencyCheckInfo> apply(ConfigResource resource, ConsistencyCheckInput input)
+      throws RestApiException, IOException, PermissionBackendException, ConfigInvalidException {
     permissionBackend.currentUser().check(GlobalPermission.ACCESS_DATABASE);
 
     if (input == null
@@ -82,6 +81,6 @@ public class CheckConsistency implements RestModifyView<ConfigResource, Consiste
           new CheckGroupsResultInfo(groupsConsistencyChecker.check());
     }
 
-    return consistencyCheckInfo;
+    return Response.ok(consistencyCheckInfo);
   }
 }

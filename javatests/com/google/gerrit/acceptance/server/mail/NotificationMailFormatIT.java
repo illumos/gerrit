@@ -18,24 +18,27 @@ import static com.google.common.truth.Truth.assertThat;
 
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.PushOneCommit;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo.EmailFormat;
 import com.google.gerrit.testing.FakeEmailSender;
+import com.google.inject.Inject;
 import org.junit.Test;
 
 public class NotificationMailFormatIT extends AbstractDaemonTest {
+  @Inject private RequestScopeOperations requestScopeOperations;
 
   @Test
   public void userReceivesPlaintextEmail() throws Exception {
     // Set user preference to receive only plaintext content
     GeneralPreferencesInfo i = new GeneralPreferencesInfo();
     i.emailFormat = EmailFormat.PLAINTEXT;
-    gApi.accounts().id(admin.getId().toString()).setPreferences(i);
+    gApi.accounts().id(admin.id().toString()).setPreferences(i);
 
     // Create change as admin and review as user
     PushOneCommit.Result r = createChange();
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     gApi.changes().id(r.getChangeId()).current().review(ReviewInput.recommend());
 
     // Check that admin has received only plaintext content
@@ -43,20 +46,20 @@ public class NotificationMailFormatIT extends AbstractDaemonTest {
     FakeEmailSender.Message m = sender.getMessages().get(0);
     assertThat(m.body()).isNotNull();
     assertThat(m.htmlBody()).isNull();
-    assertMailReplyTo(m, admin.email);
-    assertMailReplyTo(m, user.email);
+    assertMailReplyTo(m, admin.email());
+    assertMailReplyTo(m, user.email());
 
     // Reset user preference
-    setApiUser(admin);
+    requestScopeOperations.setApiUser(admin.id());
     i.emailFormat = EmailFormat.HTML_PLAINTEXT;
-    gApi.accounts().id(admin.getId().toString()).setPreferences(i);
+    gApi.accounts().id(admin.id().toString()).setPreferences(i);
   }
 
   @Test
   public void userReceivesHtmlAndPlaintextEmail() throws Exception {
     // Create change as admin and review as user
     PushOneCommit.Result r = createChange();
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     gApi.changes().id(r.getChangeId()).current().review(ReviewInput.recommend());
 
     // Check that admin has received both HTML and plaintext content
@@ -64,7 +67,7 @@ public class NotificationMailFormatIT extends AbstractDaemonTest {
     FakeEmailSender.Message m = sender.getMessages().get(0);
     assertThat(m.body()).isNotNull();
     assertThat(m.htmlBody()).isNotNull();
-    assertMailReplyTo(m, admin.email);
-    assertMailReplyTo(m, user.email);
+    assertMailReplyTo(m, admin.email());
+    assertMailReplyTo(m, user.email());
   }
 }

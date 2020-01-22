@@ -16,17 +16,18 @@ package com.google.gerrit.server.git;
 
 import static com.google.common.base.Preconditions.checkState;
 
+import com.google.gerrit.entities.Change;
 import com.google.gerrit.extensions.registration.DynamicItem;
-import com.google.gerrit.reviewdb.client.Change;
 import com.google.gerrit.server.config.UrlFormatter;
 import com.google.inject.Inject;
 import java.util.Optional;
 
-/** Print a change description for use in git command-line progress. */
+/** Default formatter for change descriptions for use in git command-line progress. */
 public class DefaultChangeReportFormatter implements ChangeReportFormatter {
   private static final int SUBJECT_MAX_LENGTH = 80;
   private static final String SUBJECT_CROP_APPENDIX = "...";
   private static final int SUBJECT_CROP_RANGE = 10;
+  private static final String NEW_CHANGE_INDICATOR = " [NEW]";
 
   protected final DynamicItem<UrlFormatter> urlFormatter;
 
@@ -37,7 +38,7 @@ public class DefaultChangeReportFormatter implements ChangeReportFormatter {
 
   @Override
   public String newChange(ChangeReportFormatter.Input input) {
-    return formatChangeUrl(input);
+    return formatChangeUrl(input) + NEW_CHANGE_INDICATOR;
   }
 
   @Override

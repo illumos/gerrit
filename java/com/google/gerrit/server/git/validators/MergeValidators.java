@@ -17,16 +17,16 @@ package com.google.gerrit.server.git.validators;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.projects.ProjectConfigEntryType;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.registration.Extension;
 import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.AccountProperties;
 import com.google.gerrit.server.config.AllProjectsName;
@@ -44,9 +44,7 @@ import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectConfig;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import java.io.IOException;
 import java.util.List;
 import org.eclipse.jgit.errors.ConfigInvalidException;
@@ -54,6 +52,15 @@ import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevWalk;
 
+/**
+ * Collection of validators that run inside Gerrit before a change is submitted. The main purpose is
+ * to ensure that NoteDb data is mutated in a controlled way.
+ *
+ * <p>The difference between this and {@link OnSubmitValidators} is that this validates the original
+ * commit. Depending on the {@link com.google.gerrit.server.submit.SubmitStrategy} that the project
+ * chooses, the resulting commit in the repo might differ from this original commit. In case you
+ * want to validate the resulting commit, use {@link OnSubmitValidators}
+ */
 public class MergeValidators {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
@@ -78,11 +85,15 @@ public class MergeValidators {
     this.groupValidatorFactory = groupValidatorFactory;
   }
 
+  /**
+   * Runs all validators and throws a {@link MergeValidationException} for the first validator that
+   * failed. Only the first violation is propagated and processing is stopped thereafter.
+   */
   public void validatePreMerge(
       Repository repo,
       CodeReviewCommit commit,
       ProjectState destProject,
-      Branch.NameKey destBranch,
+      BranchNameKey destBranch,
       PatchSet.Id patchSetId,
       IdentifiedUser caller)
       throws MergeValidationException {
@@ -98,6 +109,7 @@ public class MergeValidators {
     }
   }
 
+  /** Validator for any commits to {@code refs/meta/config}. */
   public static class ProjectConfigValidator implements MergeValidationListener {
     private static final String INVALID_CONFIG =
         "Change contains an invalid project configuration.";
@@ -127,6 +139,7 @@ public class MergeValidators {
     private final ProjectCache projectCache;
     private final PermissionBackend permissionBackend;
     private final DynamicMap<ProjectConfigEntry> pluginConfigEntries;
+    private final ProjectConfig.Factory projectConfigFactory;
     private final boolean allowProjectOwnersToChangeParent;
 
     public interface Factory {
@@ -140,12 +153,14 @@ public class MergeValidators {
         ProjectCache projectCache,
         PermissionBackend permissionBackend,
         DynamicMap<ProjectConfigEntry> pluginConfigEntries,
+        ProjectConfig.Factory projectConfigFactory,
         @GerritServerConfig Config config) {
       this.allProjectsName = allProjectsName;
       this.allUsersName = allUsersName;
       this.projectCache = projectCache;
       this.permissionBackend = permissionBackend;
       this.pluginConfigEntries = pluginConfigEntries;
+      this.projectConfigFactory = projectConfigFactory;
       this.allowProjectOwnersToChangeParent =
           config.getBoolean("receive", "allowProjectOwnersToChangeParent", false);
     }
@@ -155,14 +170,14 @@ public class MergeValidators {
         final Repository repo,
         final CodeReviewCommit commit,
         final ProjectState destProject,
-        final Branch.NameKey destBranch,
+        final BranchNameKey destBranch,
         final PatchSet.Id patchSetId,
         IdentifiedUser caller)
         throws MergeValidationException {
-      if (RefNames.REFS_CONFIG.equals(destBranch.get())) {
+      if (RefNames.REFS_CONFIG.equals(destBranch.branch())) {
         final Project.NameKey newParent;
         try {
-          ProjectConfig cfg = new ProjectConfig(destProject.getNameKey());
+          ProjectConfig cfg = projectConfigFactory.create(destProject.getNameKey());
           cfg.load(destProject.getNameKey(), repo, commit);
           newParent = cfg.getProject().getParent(allProjectsName);
           final Project.NameKey oldParent = destProject.getProject().getParent(allProjectsName);
@@ -236,7 +251,7 @@ public class MergeValidators {
     }
   }
 
-  /** Execute merge validation plug-ins */
+  /** Validator that calls to plugins that provide additional validators. */
   public static class PluginMergeValidationListener implements MergeValidationListener {
     private final PluginSetContext<MergeValidationListener> mergeValidationListeners;
 
@@ -250,7 +265,7 @@ public class MergeValidators {
         Repository repo,
         CodeReviewCommit commit,
         ProjectState destProject,
-        Branch.NameKey destBranch,
+        BranchNameKey destBranch,
         PatchSet.Id patchSetId,
         IdentifiedUser caller)
         throws MergeValidationException {
@@ -265,18 +280,15 @@ public class MergeValidators {
       AccountMergeValidator create();
     }
 
-    private final Provider<ReviewDb> dbProvider;
     private final AllUsersName allUsersName;
     private final ChangeData.Factory changeDataFactory;
     private final AccountValidator accountValidator;
 
     @Inject
     public AccountMergeValidator(
-        Provider<ReviewDb> dbProvider,
         AllUsersName allUsersName,
         ChangeData.Factory changeDataFactory,
         AccountValidator accountValidator) {
-      this.dbProvider = dbProvider;
       this.allUsersName = allUsersName;
       this.changeDataFactory = changeDataFactory;
       this.accountValidator = accountValidator;
@@ -287,23 +299,22 @@ public class MergeValidators {
         Repository repo,
         CodeReviewCommit commit,
         ProjectState destProject,
-        Branch.NameKey destBranch,
+        BranchNameKey destBranch,
         PatchSet.Id patchSetId,
         IdentifiedUser caller)
         throws MergeValidationException {
-      Account.Id accountId = Account.Id.fromRef(destBranch.get());
+      Account.Id accountId = Account.Id.fromRef(destBranch.branch());
       if (!allUsersName.equals(destProject.getNameKey()) || accountId == null) {
         return;
       }
 
       ChangeData cd =
-          changeDataFactory.create(
-              dbProvider.get(), destProject.getProject().getNameKey(), patchSetId.getParentKey());
+          changeDataFactory.create(destProject.getProject().getNameKey(), patchSetId.changeId());
       try {
         if (!cd.currentFilePaths().contains(AccountProperties.ACCOUNT_CONFIG)) {
           return;
         }
-      } catch (IOException | OrmException e) {
+      } catch (StorageException e) {
         logger.atSevere().withCause(e).log("Cannot validate account update");
         throw new MergeValidationException("account validation unavailable");
       }
@@ -321,6 +332,7 @@ public class MergeValidators {
     }
   }
 
+  /** Validator to ensure that group refs are not mutated. */
   public static class GroupMergeValidator implements MergeValidationListener {
     public interface Factory {
       GroupMergeValidator create();
@@ -338,13 +350,13 @@ public class MergeValidators {
         Repository repo,
         CodeReviewCommit commit,
         ProjectState destProject,
-        Branch.NameKey destBranch,
+        BranchNameKey destBranch,
         PatchSet.Id patchSetId,
         IdentifiedUser caller)
         throws MergeValidationException {
       // Groups are stored inside the 'All-Users' repository.
       if (!allUsersName.equals(destProject.getNameKey())
-          || !RefNames.isGroupRef(destBranch.get())) {
+          || !RefNames.isGroupRef(destBranch.branch())) {
         return;
       }
 

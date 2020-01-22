@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-diff-processor test</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-diff-processor.html">
 
@@ -60,7 +62,7 @@ limitations under the License.
         element.context = 4;
       });
 
-      test('process loaded content', done => {
+      test('process loaded content', () => {
         const content = [
           {
             ab: [
@@ -86,7 +88,7 @@ limitations under the License.
           },
         ];
 
-        element.process(content).then(() => {
+        return element.process(content).then(() => {
           const groups = element.groups;
 
           assert.equal(groups.length, 4);
@@ -139,31 +141,15 @@ limitations under the License.
             'everyone pretend to shower.',
             'Fry: Same as every day. Got it.',
           ]);
-
-          done();
         });
       });
 
-      test('insert context groups', done => {
+      test('first group is for file', () => {
         const content = [
-          {ab: []},
-          {a: ['all work and no play make andybons a dull boy']},
-          {ab: []},
-          {b: ['elgoog elgoog elgoog']},
-          {ab: []},
+          {b: ['foo']},
         ];
-        for (let i = 0; i < 100; i++) {
-          content[0].ab.push('all work and no play make jack a dull boy');
-          content[4].ab.push('all work and no play make jill a dull girl');
-        }
-        for (let i = 0; i < 5; i++) {
-          content[2].ab.push('no tv and no beer make homer go crazy');
-        }
 
-        const context = 10;
-        element.context = context;
-
-        element.process(content).then(() => {
+        return element.process(content).then(() => {
           const groups = element.groups;
 
           assert.equal(groups[0].type, GrDiffGroup.Type.BOTH);
@@ -171,107 +157,278 @@ limitations under the License.
           assert.equal(groups[0].lines[0].text, '');
           assert.equal(groups[0].lines[0].beforeNumber, GrDiffLine.FILE);
           assert.equal(groups[0].lines[0].afterNumber, GrDiffLine.FILE);
-
-          assert.equal(groups[1].type, GrDiffGroup.Type.CONTEXT_CONTROL);
-          assert.instanceOf(groups[1].lines[0].contextGroup, GrDiffGroup);
-          assert.equal(groups[1].lines[0].contextGroup.lines.length, 90);
-          for (const l of groups[1].lines[0].contextGroup.lines) {
-            assert.equal(l.text, content[0].ab[0]);
-          }
-
-          assert.equal(groups[2].type, GrDiffGroup.Type.BOTH);
-          assert.equal(groups[2].lines.length, context);
-          for (const l of groups[2].lines) {
-            assert.equal(l.text, content[0].ab[0]);
-          }
-
-          assert.equal(groups[3].type, GrDiffGroup.Type.DELTA);
-          assert.equal(groups[3].lines.length, 1);
-          assert.equal(groups[3].removes.length, 1);
-          assert.equal(groups[3].removes[0].text,
-              'all work and no play make andybons a dull boy');
-
-          assert.equal(groups[4].type, GrDiffGroup.Type.BOTH);
-          assert.equal(groups[4].lines.length, 5);
-          for (const l of groups[4].lines) {
-            assert.equal(l.text, content[2].ab[0]);
-          }
-
-          assert.equal(groups[5].type, GrDiffGroup.Type.DELTA);
-          assert.equal(groups[5].lines.length, 1);
-          assert.equal(groups[5].adds.length, 1);
-          assert.equal(groups[5].adds[0].text, 'elgoog elgoog elgoog');
-
-          assert.equal(groups[6].type, GrDiffGroup.Type.BOTH);
-          assert.equal(groups[6].lines.length, context);
-          for (const l of groups[6].lines) {
-            assert.equal(l.text, content[4].ab[0]);
-          }
-
-          assert.equal(groups[7].type, GrDiffGroup.Type.CONTEXT_CONTROL);
-          assert.instanceOf(groups[7].lines[0].contextGroup, GrDiffGroup);
-          assert.equal(groups[7].lines[0].contextGroup.lines.length, 90);
-          for (const l of groups[7].lines[0].contextGroup.lines) {
-            assert.equal(l.text, content[4].ab[0]);
-          }
-
-          done();
         });
       });
 
-      test('insert context groups', done => {
-        const content = [
-          {a: ['all work and no play make andybons a dull boy']},
-          {ab: []},
-          {b: ['elgoog elgoog elgoog']},
-        ];
-        for (let i = 0; i < 50; i++) {
-          content[1].ab.push('no tv and no beer make homer go crazy');
-        }
+      suite('context groups', () => {
+        test('at the beginning, larger than context', () => {
+          element.context = 10;
+          const content = [
+            {ab: new Array(100)
+                .fill('all work and no play make jack a dull boy')},
+            {a: ['all work and no play make andybons a dull boy']},
+          ];
 
-        const context = 10;
-        element.context = context;
+          return element.process(content).then(() => {
+            const groups = element.groups;
 
-        element.process(content).then(() => {
-          const groups = element.groups;
+            // group[0] is the file group
 
-          assert.equal(groups[0].type, GrDiffGroup.Type.BOTH);
-          assert.equal(groups[0].lines.length, 1);
-          assert.equal(groups[0].lines[0].text, '');
-          assert.equal(groups[0].lines[0].beforeNumber, GrDiffLine.FILE);
-          assert.equal(groups[0].lines[0].afterNumber, GrDiffLine.FILE);
+            assert.equal(groups[1].type, GrDiffGroup.Type.CONTEXT_CONTROL);
+            assert.instanceOf(groups[1].lines[0].contextGroups[0], GrDiffGroup);
+            assert.equal(groups[1].lines[0].contextGroups[0].lines.length, 90);
+            for (const l of groups[1].lines[0].contextGroups[0].lines) {
+              assert.equal(l.text, 'all work and no play make jack a dull boy');
+            }
 
-          assert.equal(groups[1].type, GrDiffGroup.Type.DELTA);
-          assert.equal(groups[1].lines.length, 1);
-          assert.equal(groups[1].removes.length, 1);
-          assert.equal(groups[1].removes[0].text,
-              'all work and no play make andybons a dull boy');
+            assert.equal(groups[2].type, GrDiffGroup.Type.BOTH);
+            assert.equal(groups[2].lines.length, 10);
+            for (const l of groups[2].lines) {
+              assert.equal(l.text, 'all work and no play make jack a dull boy');
+            }
+          });
+        });
 
-          assert.equal(groups[2].type, GrDiffGroup.Type.BOTH);
-          assert.equal(groups[2].lines.length, context);
-          for (const l of groups[2].lines) {
-            assert.equal(l.text, content[1].ab[0]);
-          }
+        test('at the beginning, smaller than context', () => {
+          element.context = 10;
+          const content = [
+            {ab: new Array(5)
+                .fill('all work and no play make jack a dull boy')},
+            {a: ['all work and no play make andybons a dull boy']},
+          ];
 
-          assert.equal(groups[3].type, GrDiffGroup.Type.CONTEXT_CONTROL);
-          assert.instanceOf(groups[3].lines[0].contextGroup, GrDiffGroup);
-          assert.equal(groups[3].lines[0].contextGroup.lines.length, 30);
-          for (const l of groups[3].lines[0].contextGroup.lines) {
-            assert.equal(l.text, content[1].ab[0]);
-          }
+          return element.process(content).then(() => {
+            const groups = element.groups;
 
-          assert.equal(groups[4].type, GrDiffGroup.Type.BOTH);
-          assert.equal(groups[4].lines.length, context);
-          for (const l of groups[4].lines) {
-            assert.equal(l.text, content[1].ab[0]);
-          }
+            // group[0] is the file group
 
-          assert.equal(groups[5].type, GrDiffGroup.Type.DELTA);
-          assert.equal(groups[5].lines.length, 1);
-          assert.equal(groups[5].adds.length, 1);
-          assert.equal(groups[5].adds[0].text, 'elgoog elgoog elgoog');
+            assert.equal(groups[1].type, GrDiffGroup.Type.BOTH);
+            assert.equal(groups[1].lines.length, 5);
+            for (const l of groups[1].lines) {
+              assert.equal(l.text, 'all work and no play make jack a dull boy');
+            }
+          });
+        });
 
-          done();
+        test('at the end, larger than context', () => {
+          element.context = 10;
+          const content = [
+            {a: ['all work and no play make andybons a dull boy']},
+            {ab: new Array(100)
+                .fill('all work and no play make jill a dull girl')},
+          ];
+
+          return element.process(content).then(() => {
+            const groups = element.groups;
+
+            // group[0] is the file group
+            // group[1] is the "a" group
+
+            assert.equal(groups[2].type, GrDiffGroup.Type.BOTH);
+            assert.equal(groups[2].lines.length, 10);
+            for (const l of groups[2].lines) {
+              assert.equal(
+                  l.text, 'all work and no play make jill a dull girl');
+            }
+
+            assert.equal(groups[3].type, GrDiffGroup.Type.CONTEXT_CONTROL);
+            assert.instanceOf(groups[3].lines[0].contextGroups[0], GrDiffGroup);
+            assert.equal(groups[3].lines[0].contextGroups[0].lines.length, 90);
+            for (const l of groups[3].lines[0].contextGroups[0].lines) {
+              assert.equal(
+                  l.text, 'all work and no play make jill a dull girl');
+            }
+          });
+        });
+
+        test('at the end, smaller than context', () => {
+          element.context = 10;
+          const content = [
+            {a: ['all work and no play make andybons a dull boy']},
+            {ab: new Array(5)
+                .fill('all work and no play make jill a dull girl')},
+          ];
+
+          return element.process(content).then(() => {
+            const groups = element.groups;
+
+            // group[0] is the file group
+            // group[1] is the "a" group
+
+            assert.equal(groups[2].type, GrDiffGroup.Type.BOTH);
+            assert.equal(groups[2].lines.length, 5);
+            for (const l of groups[2].lines) {
+              assert.equal(
+                  l.text, 'all work and no play make jill a dull girl');
+            }
+          });
+        });
+
+        test('for interleaved ab and common: true chunks', () => {
+          element.context = 10;
+          const content = [
+            {a: ['all work and no play make andybons a dull boy']},
+            {ab: new Array(3)
+                .fill('all work and no play make jill a dull girl')},
+            {
+              a: new Array(3).fill(
+                  'all work and no play make jill a dull girl'),
+              b: new Array(3).fill(
+                  '  all work and no play make jill a dull girl'),
+              common: true,
+            },
+            {ab: new Array(3)
+                .fill('all work and no play make jill a dull girl')},
+            {
+              a: new Array(3).fill(
+                  'all work and no play make jill a dull girl'),
+              b: new Array(3).fill(
+                  '  all work and no play make jill a dull girl'),
+              common: true,
+            },
+            {ab: new Array(3)
+                .fill('all work and no play make jill a dull girl')},
+          ];
+
+          return element.process(content).then(() => {
+            const groups = element.groups;
+
+            // group[0] is the file group
+            // group[1] is the "a" group
+
+            // The first three interleaved chunks are completely shown because
+            // they are part of the context (3 * 3 <= 10)
+
+            assert.equal(groups[2].type, GrDiffGroup.Type.BOTH);
+            assert.equal(groups[2].lines.length, 3);
+            for (const l of groups[2].lines) {
+              assert.equal(
+                  l.text, 'all work and no play make jill a dull girl');
+            }
+
+            assert.equal(groups[3].type, GrDiffGroup.Type.DELTA);
+            assert.equal(groups[3].lines.length, 6);
+            assert.equal(groups[3].adds.length, 3);
+            assert.equal(groups[3].removes.length, 3);
+            for (const l of groups[3].removes) {
+              assert.equal(
+                  l.text, 'all work and no play make jill a dull girl');
+            }
+            for (const l of groups[3].adds) {
+              assert.equal(
+                  l.text, '  all work and no play make jill a dull girl');
+            }
+
+            assert.equal(groups[4].type, GrDiffGroup.Type.BOTH);
+            assert.equal(groups[4].lines.length, 3);
+            for (const l of groups[4].lines) {
+              assert.equal(
+                  l.text, 'all work and no play make jill a dull girl');
+            }
+
+            // The next chunk is partially shown, so it results in two groups
+
+            assert.equal(groups[5].type, GrDiffGroup.Type.DELTA);
+            assert.equal(groups[5].lines.length, 2);
+            assert.equal(groups[5].adds.length, 1);
+            assert.equal(groups[5].removes.length, 1);
+            for (const l of groups[5].removes) {
+              assert.equal(
+                  l.text, 'all work and no play make jill a dull girl');
+            }
+            for (const l of groups[5].adds) {
+              assert.equal(
+                  l.text, '  all work and no play make jill a dull girl');
+            }
+
+            assert.equal(groups[6].type, GrDiffGroup.Type.CONTEXT_CONTROL);
+            assert.equal(groups[6].lines[0].contextGroups.length, 2);
+
+            assert.equal(groups[6].lines[0].contextGroups[0].lines.length, 4);
+            assert.equal(groups[6].lines[0].contextGroups[0].removes.length, 2);
+            assert.equal(groups[6].lines[0].contextGroups[0].adds.length, 2);
+            for (const l of groups[6].lines[0].contextGroups[0].removes) {
+              assert.equal(
+                  l.text, 'all work and no play make jill a dull girl');
+            }
+            for (const l of groups[6].lines[0].contextGroups[0].adds) {
+              assert.equal(
+                  l.text, '  all work and no play make jill a dull girl');
+            }
+
+            // The final chunk is completely hidden
+            assert.equal(
+                groups[6].lines[0].contextGroups[1].type,
+                GrDiffGroup.Type.BOTH);
+            assert.equal(groups[6].lines[0].contextGroups[1].lines.length, 3);
+            for (const l of groups[6].lines[0].contextGroups[1].lines) {
+              assert.equal(
+                  l.text, 'all work and no play make jill a dull girl');
+            }
+          });
+        });
+
+        test('in the middle, larger than context', () => {
+          element.context = 10;
+          const content = [
+            {a: ['all work and no play make andybons a dull boy']},
+            {ab: new Array(100)
+                .fill('all work and no play make jill a dull girl')},
+            {a: ['all work and no play make andybons a dull boy']},
+          ];
+
+          return element.process(content).then(() => {
+            const groups = element.groups;
+
+            // group[0] is the file group
+            // group[1] is the "a" group
+
+            assert.equal(groups[2].type, GrDiffGroup.Type.BOTH);
+            assert.equal(groups[2].lines.length, 10);
+            for (const l of groups[2].lines) {
+              assert.equal(
+                  l.text, 'all work and no play make jill a dull girl');
+            }
+
+            assert.equal(groups[3].type, GrDiffGroup.Type.CONTEXT_CONTROL);
+            assert.instanceOf(groups[3].lines[0].contextGroups[0], GrDiffGroup);
+            assert.equal(groups[3].lines[0].contextGroups[0].lines.length, 80);
+            for (const l of groups[3].lines[0].contextGroups[0].lines) {
+              assert.equal(
+                  l.text, 'all work and no play make jill a dull girl');
+            }
+
+            assert.equal(groups[4].type, GrDiffGroup.Type.BOTH);
+            assert.equal(groups[4].lines.length, 10);
+            for (const l of groups[4].lines) {
+              assert.equal(
+                  l.text, 'all work and no play make jill a dull girl');
+            }
+          });
+        });
+
+        test('in the middle, smaller than context', () => {
+          element.context = 10;
+          const content = [
+            {a: ['all work and no play make andybons a dull boy']},
+            {ab: new Array(5)
+                .fill('all work and no play make jill a dull girl')},
+            {a: ['all work and no play make andybons a dull boy']},
+          ];
+
+          return element.process(content).then(() => {
+            const groups = element.groups;
+
+            // group[0] is the file group
+            // group[1] is the "a" group
+
+            assert.equal(groups[2].type, GrDiffGroup.Type.BOTH);
+            assert.equal(groups[2].lines.length, 5);
+            for (const l of groups[2].lines) {
+              assert.equal(
+                  l.text, 'all work and no play make jill a dull girl');
+            }
+          });
         });
       });
 
@@ -280,7 +437,6 @@ limitations under the License.
           left: {1: true},
           right: {10: true},
         };
-        const lineNums = {left: 0, right: 0};
 
         const content = [
           {
@@ -304,10 +460,11 @@ limitations under the License.
           },
         ];
         const result =
-            element._splitCommonGroupsWithComments(content, lineNums);
+            element._splitCommonChunksWithKeyLocations(content);
         assert.deepEqual(result, [
           {
             ab: ['Copyright (C) 2015 The Android Open Source Project'],
+            keyLocation: true,
           },
           {
             ab: [
@@ -321,10 +478,12 @@ limitations under the License.
               '',
               'Unless required by applicable law or agreed to in writing, ',
             ],
+            keyLocation: false,
           },
           {
             ab: [
               'software distributed under the License is distributed on an '],
+            keyLocation: true,
           },
           {
             ab: [
@@ -333,33 +492,33 @@ limitations under the License.
               'language governing permissions and limitations under the ' +
                   'License.',
             ],
+            keyLocation: false,
           },
         ]);
       });
 
-      test('breaks-down shared chunks w/ whole-file', () => {
+      test('breaks down shared chunks w/ whole-file', () => {
         const size = 120 * 2 + 5;
-        const lineNums = {left: 0, right: 0};
         const content = [{
-          ab: _.times(size, () => { return `${Math.random()}`; }),
+          ab: _.times(size, () => `${Math.random()}`),
         }];
         element.context = -1;
-        const result =
-            element._splitCommonGroupsWithComments(content, lineNums);
+        const result = element._splitLargeChunks(content);
         assert.equal(result.length, 2);
         assert.deepEqual(result[0].ab, content[0].ab.slice(0, 120));
         assert.deepEqual(result[1].ab, content[0].ab.slice(120));
       });
 
-      test('does not break-down shared chunks w/ context', () => {
-        const lineNums = {left: 0, right: 0};
+      test('does not break-down common chunks w/ context', () => {
         const content = [{
-          ab: _.times(75, () => { return `${Math.random()}`; }),
+          ab: _.times(75, () => `${Math.random()}`),
         }];
         element.context = 4;
         const result =
-            element._splitCommonGroupsWithComments(content, lineNums);
-        assert.deepEqual(result, content);
+            element._splitCommonChunksWithKeyLocations(content);
+        assert.equal(result.length, 1);
+        assert.deepEqual(result[0].ab, content[0].ab);
+        assert.isFalse(result[0].keyLocation);
       });
 
       test('intraline normalization', () => {
@@ -375,7 +534,7 @@ limitations under the License.
           [31, 34], [42, 26],
         ];
 
-        let results = element._normalizeIntralineHighlights(content,
+        let results = element._convertIntralineInfos(content,
             highlights);
         assert.deepEqual(results, [
           {
@@ -416,7 +575,7 @@ limitations under the License.
           [12, 67],
           [14, 29],
         ];
-        results = element._normalizeIntralineHighlights(content, highlights);
+        results = element._convertIntralineInfos(content, highlights);
         assert.deepEqual(results, [
           {
             contentIndex: 0,
@@ -457,10 +616,13 @@ limitations under the License.
         sandbox.stub(element, 'async');
         element._isScrolling = true;
         element.process(content);
+        // Just the files group - no more processing during scrolling.
         assert.equal(element.groups.length, 1);
+
         element._isScrolling = false;
         element.process(content);
-        assert.equal(element.groups.length, 33);
+        // More groups have been processed. How many does not matter here.
+        assert.isAtLeast(element.groups.length, 2);
       });
 
       test('image diffs', () => {
@@ -479,6 +641,198 @@ limitations under the License.
         assert.equal(element.groups[0].lines.length, 1);
       });
 
+      suite('_processNext', () => {
+        let rows;
+
+        setup(() => {
+          rows = loremIpsum.split(' ');
+        });
+
+        test('WHOLE_FILE', () => {
+          element.context = WHOLE_FILE;
+          const state = {
+            lineNums: {left: 10, right: 100},
+            chunkIndex: 1,
+          };
+          const chunks = [
+            {a: ['foo']},
+            {ab: rows},
+            {a: ['bar']},
+          ];
+          const result = element._processNext(state, chunks);
+
+          // Results in one, uncollapsed group with all rows.
+          assert.equal(result.groups.length, 1);
+          assert.equal(result.groups[0].type, GrDiffGroup.Type.BOTH);
+          assert.equal(result.groups[0].lines.length, rows.length);
+
+          // Line numbers are set correctly.
+          assert.equal(
+              result.groups[0].lines[0].beforeNumber,
+              state.lineNums.left + 1);
+          assert.equal(
+              result.groups[0].lines[0].afterNumber,
+              state.lineNums.right + 1);
+
+          assert.equal(result.groups[0].lines[rows.length - 1].beforeNumber,
+              state.lineNums.left + rows.length);
+          assert.equal(result.groups[0].lines[rows.length - 1].afterNumber,
+              state.lineNums.right + rows.length);
+        });
+
+        test('with context', () => {
+          element.context = 10;
+          const state = {
+            lineNums: {left: 10, right: 100},
+            chunkIndex: 1,
+          };
+          const chunks = [
+            {a: ['foo']},
+            {ab: rows},
+            {a: ['bar']},
+          ];
+          const result = element._processNext(state, chunks);
+          const expectedCollapseSize = rows.length - 2 * element.context;
+
+          assert.equal(result.groups.length, 3, 'Results in three groups');
+
+          // The first and last are uncollapsed context, whereas the middle has
+          // a single context-control line.
+          assert.equal(result.groups[0].lines.length, element.context);
+          assert.equal(result.groups[1].lines.length, 1);
+          assert.equal(result.groups[2].lines.length, element.context);
+
+          // The collapsed group has the hidden lines as its context group.
+          assert.equal(result.groups[1].lines[0].contextGroups[0].lines.length,
+              expectedCollapseSize);
+        });
+
+        test('first', () => {
+          element.context = 10;
+          const state = {
+            lineNums: {left: 10, right: 100},
+            chunkIndex: 0,
+          };
+          const chunks = [
+            {ab: rows},
+            {a: ['foo']},
+            {a: ['bar']},
+          ];
+          const result = element._processNext(state, chunks);
+          const expectedCollapseSize = rows.length - element.context;
+
+          assert.equal(result.groups.length, 2, 'Results in two groups');
+
+          // Only the first group is collapsed.
+          assert.equal(result.groups[0].lines.length, 1);
+          assert.equal(result.groups[1].lines.length, element.context);
+
+          // The collapsed group has the hidden lines as its context group.
+          assert.equal(result.groups[0].lines[0].contextGroups[0].lines.length,
+              expectedCollapseSize);
+        });
+
+        test('few-rows', () => {
+          // Only ten rows.
+          rows = rows.slice(0, 10);
+          element.context = 10;
+          const state = {
+            lineNums: {left: 10, right: 100},
+            chunkIndex: 0,
+          };
+          const chunks = [
+            {ab: rows},
+            {a: ['foo']},
+            {a: ['bar']},
+          ];
+          const result = element._processNext(state, chunks);
+
+          // Results in one uncollapsed group with all rows.
+          assert.equal(result.groups.length, 1, 'Results in one group');
+          assert.equal(result.groups[0].lines.length, rows.length);
+        });
+
+        test('no single line collapse', () => {
+          rows = rows.slice(0, 7);
+          element.context = 3;
+          const state = {
+            lineNums: {left: 10, right: 100},
+            chunkIndex: 1,
+          };
+          const chunks = [
+            {a: ['foo']},
+            {ab: rows},
+            {a: ['bar']},
+          ];
+          const result = element._processNext(state, chunks);
+
+          // Results in one uncollapsed group with all rows.
+          assert.equal(result.groups.length, 1, 'Results in one group');
+          assert.equal(result.groups[0].lines.length, rows.length);
+        });
+
+        suite('with key location', () => {
+          let state;
+          let chunks;
+
+          setup(() => {
+            state = {
+              lineNums: {left: 10, right: 100},
+            };
+            element.context = 10;
+            chunks = [
+              {ab: rows},
+              {ab: ['foo'], keyLocation: true},
+              {ab: rows},
+            ];
+          });
+
+          test('context before', () => {
+            state.chunkIndex = 0;
+            const result = element._processNext(state, chunks);
+
+            // The first chunk is split into two groups:
+            // 1) A context-control, hiding everything but the context before
+            //    the key location.
+            // 2) The context before the key location.
+            // The key location is not processed in this call to _processNext
+            assert.equal(result.groups.length, 2);
+            assert.equal(result.groups[0].lines.length, 1);
+            // The collapsed group has the hidden lines as its context group.
+            assert.equal(result.groups[0].lines[0].contextGroups[0].lines.length,
+                rows.length - element.context);
+            assert.equal(result.groups[1].lines.length, element.context);
+          });
+
+          test('key location itself', () => {
+            state.chunkIndex = 1;
+            const result = element._processNext(state, chunks);
+
+            // The second chunk results in a single group, that is just the
+            // line with the key location
+            assert.equal(result.groups.length, 1);
+            assert.equal(result.groups[0].lines.length, 1);
+            assert.equal(result.lineDelta.left, 1);
+            assert.equal(result.lineDelta.right, 1);
+          });
+
+          test('context after', () => {
+            state.chunkIndex = 2;
+            const result = element._processNext(state, chunks);
+
+            // The last chunk is split into two groups:
+            // 1) The context after the key location.
+            // 1) A context-control, hiding everything but the context after the
+            //    key location.
+            assert.equal(result.groups.length, 2);
+            assert.equal(result.groups[0].lines.length, element.context);
+            assert.equal(result.groups[1].lines.length, 1);
+            // The collapsed group has the hidden lines as its context group.
+            assert.equal(result.groups[1].lines[0].contextGroups[0].lines.length,
+                rows.length - element.context);
+          });
+        });
+      });
 
       suite('gr-diff-processor helpers', () => {
         let rows;
@@ -487,90 +841,10 @@ limitations under the License.
           rows = loremIpsum.split(' ');
         });
 
-        test('_sharedGroupsFromRows WHOLE_FILE', () => {
-          const context = WHOLE_FILE;
-          const lineNumbers = {left: 10, right: 100};
-          const result = element._sharedGroupsFromRows(
-              rows, context, lineNumbers.left, lineNumbers.right, null);
-
-          // Results in one, uncollapsed group with all rows.
-          assert.equal(result.length, 1);
-          assert.equal(result[0].type, GrDiffGroup.Type.BOTH);
-          assert.equal(result[0].lines.length, rows.length);
-
-          // Line numbers are set correctly.
-          assert.equal(result[0].lines[0].beforeNumber, lineNumbers.left + 1);
-          assert.equal(result[0].lines[0].afterNumber, lineNumbers.right + 1);
-
-          assert.equal(result[0].lines[rows.length - 1].beforeNumber,
-              lineNumbers.left + rows.length);
-          assert.equal(result[0].lines[rows.length - 1].afterNumber,
-              lineNumbers.right + rows.length);
-        });
-
-        test('_sharedGroupsFromRows context', () => {
-          const context = 10;
-          const result = element._sharedGroupsFromRows(
-              rows, context, 10, 100, null);
-          const expectedCollapseSize = rows.length - 2 * context;
-
-          assert.equal(result.length, 3, 'Results in three groups');
-
-          // The first and last are uncollapsed context, whereas the middle has
-          // a single context-control line.
-          assert.equal(result[0].lines.length, context);
-          assert.equal(result[1].lines.length, 1);
-          assert.equal(result[2].lines.length, context);
-
-          // The collapsed group has the hidden lines as its context group.
-          assert.equal(result[1].lines[0].contextGroup.lines.length,
-              expectedCollapseSize);
-        });
-
-        test('_sharedGroupsFromRows first', () => {
-          const context = 10;
-          const result = element._sharedGroupsFromRows(
-              rows, context, 10, 100, 'first');
-          const expectedCollapseSize = rows.length - context;
-
-          assert.equal(result.length, 2, 'Results in two groups');
-
-          // Only the first group is collapsed.
-          assert.equal(result[0].lines.length, 1);
-          assert.equal(result[1].lines.length, context);
-
-          // The collapsed group has the hidden lines as its context group.
-          assert.equal(result[0].lines[0].contextGroup.lines.length,
-              expectedCollapseSize);
-        });
-
-        test('_sharedGroupsFromRows few-rows', () => {
-          // Only ten rows.
-          rows = rows.slice(0, 10);
-          const context = 10;
-          const result = element._sharedGroupsFromRows(
-              rows, context, 10, 100, 'first');
-
-          // Results in one uncollapsed group with all rows.
-          assert.equal(result.length, 1, 'Results in one group');
-          assert.equal(result[0].lines.length, rows.length);
-        });
-
-        test('_sharedGroupsFromRows no single line collapse', () => {
-          rows = rows.slice(0, 7);
-          const context = 3;
-          const result = element._sharedGroupsFromRows(
-              rows, context, 10, 100);
-
-          // Results in one uncollapsed group with all rows.
-          assert.equal(result.length, 1, 'Results in one group');
-          assert.equal(result[0].lines.length, rows.length);
-        });
-
-        test('_deltaLinesFromRows', () => {
+        test('_linesFromRows', () => {
           const startLineNum = 10;
-          let result = element._deltaLinesFromRows(GrDiffLine.Type.ADD, rows,
-              startLineNum);
+          let result = element._linesFromRows(GrDiffLine.Type.ADD, rows,
+              startLineNum + 1);
 
           assert.equal(result.length, rows.length);
           assert.equal(result[0].type, GrDiffLine.Type.ADD);
@@ -580,8 +854,8 @@ limitations under the License.
               startLineNum + rows.length);
           assert.notOk(result[result.length - 1].beforeNumber);
 
-          result = element._deltaLinesFromRows(GrDiffLine.Type.REMOVE, rows,
-              startLineNum);
+          result = element._linesFromRows(GrDiffLine.Type.REMOVE, rows,
+              startLineNum + 1);
 
           assert.equal(result.length, rows.length);
           assert.equal(result[0].type, GrDiffLine.Type.REMOVE);
@@ -594,19 +868,19 @@ limitations under the License.
       });
 
       suite('_breakdown*', () => {
-        test('_breakdownGroup breaks down additions', () => {
+        test('_breakdownChunk breaks down additions', () => {
           sandbox.spy(element, '_breakdown');
           const chunk = {b: ['blah', 'blah', 'blah']};
-          const result = element._breakdownGroup(chunk);
+          const result = element._breakdownChunk(chunk);
           assert.deepEqual(result, [chunk]);
           assert.isTrue(element._breakdown.called);
         });
 
-        test('_breakdownGroup keeps due_to_rebase for broken down additions',
+        test('_breakdownChunk keeps due_to_rebase for broken down additions',
             () => {
               sandbox.spy(element, '_breakdown');
               const chunk = {b: ['blah', 'blah', 'blah'], due_to_rebase: true};
-              const result = element._breakdownGroup(chunk);
+              const result = element._breakdownChunk(chunk);
               for (const subResult of result) {
                 assert.isTrue(subResult.due_to_rebase);
               }
@@ -623,7 +897,7 @@ limitations under the License.
             assert.isAtMost(subResult.length, size);
           }
           const flattened = result
-              .reduce((a, b) => { return a.concat(b); }, []);
+              .reduce((a, b) => a.concat(b), []);
           assert.deepEqual(flattened, array);
         });
 

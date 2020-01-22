@@ -17,6 +17,7 @@
 (function(window) {
   'use strict';
 
+  /** @constructor */
   function GrDomHooksManager(plugin) {
     this._plugin = plugin;
     this._hooks = {};
@@ -40,6 +41,7 @@
     return this._hooks[hookName];
   };
 
+  /** @constructor */
   function GrDomHook(hookName, opt_moduleName) {
     this._instances = [];
     this._callbacks = [];

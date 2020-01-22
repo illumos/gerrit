@@ -16,14 +16,22 @@ package com.google.gerrit.acceptance.rest.project;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth8.assertThat;
-import static com.google.gerrit.reviewdb.client.RefNames.REFS_HEADS;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.block;
+import static com.google.gerrit.entities.RefNames.REFS_HEADS;
 import static com.google.gerrit.server.group.SystemGroupBackend.ANONYMOUS_USERS;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
 import com.google.gerrit.acceptance.AbstractDaemonTest;
-import com.google.gerrit.acceptance.GerritConfig;
 import com.google.gerrit.acceptance.RestResponse;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.common.data.Permission;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.projects.BranchApi;
 import com.google.gerrit.extensions.api.projects.BranchInfo;
 import com.google.gerrit.extensions.api.projects.BranchInput;
@@ -31,20 +39,20 @@ import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.RestApiException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.inject.Inject;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.junit.Before;
 import org.junit.Test;
 
 public class CreateBranchIT extends AbstractDaemonTest {
-  private Branch.NameKey testBranch;
+  @Inject private ProjectOperations projectOperations;
+  @Inject private RequestScopeOperations requestScopeOperations;
+
+  private BranchNameKey testBranch;
 
   @Before
   public void setUp() throws Exception {
-    testBranch = new Branch.NameKey(project, "test");
+    testBranch = BranchNameKey.create(project, "test");
   }
 
   @Test
@@ -62,7 +70,7 @@ public class CreateBranchIT extends AbstractDaemonTest {
 
   @Test
   public void createBranch_Forbidden() throws Exception {
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     assertCreateFails(testBranch, AuthException.class, "not permitted: create on refs/heads/test");
   }
 
@@ -80,7 +88,7 @@ public class CreateBranchIT extends AbstractDaemonTest {
   @Test
   public void createBranchByProjectOwner() throws Exception {
     grantOwner();
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     assertCreateSucceeds(testBranch);
   }
 
@@ -94,36 +102,47 @@ public class CreateBranchIT extends AbstractDaemonTest {
   public void createBranchByProjectOwnerCreateReferenceBlocked_Forbidden() throws Exception {
     grantOwner();
     blockCreateReference();
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     assertCreateFails(testBranch, AuthException.class, "not permitted: create on refs/heads/test");
   }
 
   @Test
   public void createMetaBranch() throws Exception {
     String metaRef = RefNames.REFS_META + "foo";
-    allow(metaRef, Permission.CREATE, REGISTERED_USERS);
-    allow(metaRef, Permission.PUSH, REGISTERED_USERS);
-    assertCreateSucceeds(new Branch.NameKey(project, metaRef));
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.CREATE).ref(metaRef).group(REGISTERED_USERS))
+        .add(allow(Permission.PUSH).ref(metaRef).group(REGISTERED_USERS))
+        .update();
+    assertCreateSucceeds(BranchNameKey.create(project, metaRef));
   }
 
   @Test
   public void createUserBranch_Conflict() throws Exception {
-    allow(allUsers, RefNames.REFS_USERS + "*", Permission.CREATE, REGISTERED_USERS);
-    allow(allUsers, RefNames.REFS_USERS + "*", Permission.PUSH, REGISTERED_USERS);
+    projectOperations
+        .project(allUsers)
+        .forUpdate()
+        .add(allow(Permission.CREATE).ref(RefNames.REFS_USERS + "*").group(REGISTERED_USERS))
+        .add(allow(Permission.PUSH).ref(RefNames.REFS_USERS + "*").group(REGISTERED_USERS))
+        .update();
     assertCreateFails(
-        new Branch.NameKey(allUsers, RefNames.refsUsers(new Account.Id(1))),
-        RefNames.refsUsers(admin.getId()),
+        BranchNameKey.create(allUsers, RefNames.refsUsers(Account.id(1))),
+        RefNames.refsUsers(admin.id()),
         ResourceConflictException.class,
         "Not allowed to create user branch.");
   }
 
   @Test
-  @GerritConfig(name = "noteDb.groups.write", value = "true")
   public void createGroupBranch_Conflict() throws Exception {
-    allow(allUsers, RefNames.REFS_GROUPS + "*", Permission.CREATE, REGISTERED_USERS);
-    allow(allUsers, RefNames.REFS_GROUPS + "*", Permission.PUSH, REGISTERED_USERS);
+    projectOperations
+        .project(allUsers)
+        .forUpdate()
+        .add(allow(Permission.CREATE).ref(RefNames.REFS_GROUPS + "*").group(REGISTERED_USERS))
+        .add(allow(Permission.PUSH).ref(RefNames.REFS_GROUPS + "*").group(REGISTERED_USERS))
+        .update();
     assertCreateFails(
-        new Branch.NameKey(allUsers, RefNames.refsGroups(new AccountGroup.UUID("foo"))),
+        BranchNameKey.create(allUsers, RefNames.refsGroups(AccountGroup.uuid("foo"))),
         RefNames.refsGroups(adminGroupUuid()),
         ResourceConflictException.class,
         "Not allowed to create group branch.");
@@ -131,81 +150,85 @@ public class CreateBranchIT extends AbstractDaemonTest {
 
   @Test
   public void createWithRevision() throws Exception {
-    RevCommit revision = getRemoteHead(project, "master");
+    RevCommit revision = projectOperations.project(project).getHead("master");
 
     // update master so that points to a different revision than the revision on which we create the
     // new branch
     pushTo("refs/heads/master");
-    assertThat(getRemoteHead(project, "master")).isNotEqualTo(revision);
+    assertThat(projectOperations.project(project).getHead("master")).isNotEqualTo(revision);
 
     BranchInput input = new BranchInput();
     input.revision = revision.name();
     BranchInfo created = branch(testBranch).create(input).get();
-    assertThat(created.ref).isEqualTo(testBranch.get());
+    assertThat(created.ref).isEqualTo(testBranch.branch());
     assertThat(created.revision).isEqualTo(revision.name());
-    assertThat(getRemoteHead(project, testBranch.getShortName())).isEqualTo(revision);
+    assertThat(projectOperations.project(project).getHead(testBranch.branch())).isEqualTo(revision);
   }
 
   @Test
   public void createWithoutSpecifyingRevision() throws Exception {
     // If revision is not specified, the branch is created based on HEAD, which points to master.
-    RevCommit expectedRevision = getRemoteHead(project, "master");
+    RevCommit expectedRevision = projectOperations.project(project).getHead("master");
 
     BranchInput input = new BranchInput();
     input.revision = null;
     BranchInfo created = branch(testBranch).create(input).get();
-    assertThat(created.ref).isEqualTo(testBranch.get());
+    assertThat(created.ref).isEqualTo(testBranch.branch());
     assertThat(created.revision).isEqualTo(expectedRevision.name());
-    assertThat(getRemoteHead(project, testBranch.getShortName())).isEqualTo(expectedRevision);
+    assertThat(projectOperations.project(project).getHead(testBranch.branch()))
+        .isEqualTo(expectedRevision);
   }
 
   @Test
   public void createWithEmptyRevision() throws Exception {
     // If revision is not specified, the branch is created based on HEAD, which points to master.
-    RevCommit expectedRevision = getRemoteHead(project, "master");
+    RevCommit expectedRevision = projectOperations.project(project).getHead("master");
 
     BranchInput input = new BranchInput();
     input.revision = "";
     BranchInfo created = branch(testBranch).create(input).get();
-    assertThat(created.ref).isEqualTo(testBranch.get());
+    assertThat(created.ref).isEqualTo(testBranch.branch());
     assertThat(created.revision).isEqualTo(expectedRevision.name());
-    assertThat(getRemoteHead(project, testBranch.getShortName())).isEqualTo(expectedRevision);
+    assertThat(projectOperations.project(project).getHead(testBranch.branch()))
+        .isEqualTo(expectedRevision);
   }
 
   @Test
   public void createRevisionIsTrimmed() throws Exception {
-    RevCommit revision = getRemoteHead(project, "master");
+    RevCommit revision = projectOperations.project(project).getHead("master");
 
     BranchInput input = new BranchInput();
     input.revision = "\t" + revision.name();
     BranchInfo created = branch(testBranch).create(input).get();
-    assertThat(created.ref).isEqualTo(testBranch.get());
+    assertThat(created.ref).isEqualTo(testBranch.branch());
     assertThat(created.revision).isEqualTo(revision.name());
-    assertThat(getRemoteHead(project, testBranch.getShortName())).isEqualTo(revision);
+    assertThat(projectOperations.project(project).getHead(testBranch.branch())).isEqualTo(revision);
   }
 
   @Test
   public void createWithBranchNameAsRevision() throws Exception {
-    RevCommit expectedRevision = getRemoteHead(project, "master");
+    RevCommit expectedRevision = projectOperations.project(project).getHead("master");
 
     BranchInput input = new BranchInput();
     input.revision = "master";
     BranchInfo created = branch(testBranch).create(input).get();
-    assertThat(created.ref).isEqualTo(testBranch.get());
+    assertThat(created.ref).isEqualTo(testBranch.branch());
     assertThat(created.revision).isEqualTo(expectedRevision.name());
-    assertThat(getRemoteHead(project, testBranch.getShortName())).isEqualTo(expectedRevision);
+    assertThat(projectOperations.project(project).getHead(testBranch.branch()))
+        .isEqualTo(expectedRevision);
   }
 
   @Test
   public void createWithFullBranchNameAsRevision() throws Exception {
-    RevCommit expectedRevision = getRemoteHead(project, "master");
+    RevCommit expectedRevision = projectOperations.project(project).getHead("master");
 
     BranchInput input = new BranchInput();
     input.revision = "refs/heads/master";
     BranchInfo created = branch(testBranch).create(input).get();
-    assertThat(created.ref).isEqualTo(testBranch.get());
+    assertThat(created.ref).isEqualTo(testBranch.branch());
     assertThat(created.revision).isEqualTo(expectedRevision.name());
-    assertThat(getRemoteHead(project, testBranch.getShortName())).isEqualTo(expectedRevision);
+    assertThat(projectOperations.project(project).getHead(testBranch.branch()))
+        .isEqualTo(expectedRevision);
   }
 
   @Test
@@ -236,44 +259,51 @@ public class CreateBranchIT extends AbstractDaemonTest {
   }
 
   private void blockCreateReference() throws Exception {
-    block("refs/*", Permission.CREATE, ANONYMOUS_USERS);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(Permission.CREATE).ref("refs/*").group(ANONYMOUS_USERS))
+        .update();
   }
 
   private void grantOwner() throws Exception {
-    allow("refs/*", Permission.OWNER, REGISTERED_USERS);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.OWNER).ref("refs/*").group(REGISTERED_USERS))
+        .update();
   }
 
-  private BranchApi branch(Branch.NameKey branch) throws Exception {
-    return gApi.projects().name(branch.getParentKey().get()).branch(branch.get());
+  private BranchApi branch(BranchNameKey branch) throws Exception {
+    return gApi.projects().name(branch.project().get()).branch(branch.branch());
   }
 
-  private void assertCreateSucceeds(Branch.NameKey branch) throws Exception {
+  private void assertCreateSucceeds(BranchNameKey branch) throws Exception {
     BranchInfo created = branch(branch).create(new BranchInput()).get();
-    assertThat(created.ref).isEqualTo(branch.get());
+    assertThat(created.ref).isEqualTo(branch.branch());
   }
 
   private void assertCreateFails(
-      Branch.NameKey branch, Class<? extends RestApiException> errType, String errMsg)
+      BranchNameKey branch, Class<? extends RestApiException> errType, String errMsg)
       throws Exception {
     assertCreateFails(branch, null, errType, errMsg);
   }
 
   private void assertCreateFails(
-      Branch.NameKey branch,
+      BranchNameKey branch,
       String revision,
       Class<? extends RestApiException> errType,
       String errMsg)
       throws Exception {
     BranchInput in = new BranchInput();
     in.revision = revision;
+    RestApiException thrown = assertThrows(errType, () -> branch(branch).create(in));
     if (errMsg != null) {
-      exception.expectMessage(errMsg);
+      assertThat(thrown).hasMessageThat().contains(errMsg);
     }
-    exception.expect(errType);
-    branch(branch).create(in);
   }
 
-  private void assertCreateFails(Branch.NameKey branch, Class<? extends RestApiException> errType)
+  private void assertCreateFails(BranchNameKey branch, Class<? extends RestApiException> errType)
       throws Exception {
     assertCreateFails(branch, errType, null);
   }

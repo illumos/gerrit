@@ -34,24 +34,28 @@
 
 package com.google.gerrit.util.cli;
 
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.gerrit.util.cli.Localizable.localizable;
+import static java.util.Objects.requireNonNull;
 
 import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
-import com.google.common.collect.MultimapBuilder;
 import com.google.common.flogger.FluentLogger;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 import java.io.StringWriter;
 import java.io.Writer;
-import java.lang.annotation.Annotation;
-import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.ResourceBundle;
@@ -65,7 +69,6 @@ import org.kohsuke.args4j.OptionDef;
 import org.kohsuke.args4j.ParserProperties;
 import org.kohsuke.args4j.spi.BooleanOptionHandler;
 import org.kohsuke.args4j.spi.EnumOptionHandler;
-import org.kohsuke.args4j.spi.FieldSetter;
 import org.kohsuke.args4j.spi.MethodSetter;
 import org.kohsuke.args4j.spi.OptionHandler;
 import org.kohsuke.args4j.spi.Setter;
@@ -83,6 +86,89 @@ public class CmdLineParser {
 
   public interface Factory {
     CmdLineParser create(Object bean);
+  }
+
+  /**
+   * This may be used by an option handler during parsing to "call" additional parameters simulating
+   * as if they had been passed from the command line originally.
+   *
+   * <p>To call additional parameters from within an option handler, instantiate this class with the
+   * parameters and then call callParameters() with the additional parameters to be parsed.
+   * OptionHandlers may optionally pass this class to other methods which may then both
+   * parse/consume more parameters and call additional parameters.
+   */
+  public static class Parameters implements org.kohsuke.args4j.spi.Parameters {
+    protected final String[] args;
+    protected MyParser parser;
+    protected int consumed = 0;
+
+    public Parameters(org.kohsuke.args4j.spi.Parameters args, MyParser parser)
+        throws CmdLineException {
+      this.args = new String[args.size()];
+      for (int i = 0; i < args.size(); i++) {
+        this.args[i] = args.getParameter(i);
+      }
+      this.parser = parser;
+    }
+
+    public Parameters(String[] args, MyParser parser) {
+      this.args = args;
+      this.parser = parser;
+    }
+
+    @Override
+    public String getParameter(int idx) throws CmdLineException {
+      return args[idx];
+    }
+
+    /**
+     * get and consume (consider parsed) a parameter
+     *
+     * @return the consumed parameter
+     */
+    public String consumeParameter() throws CmdLineException {
+      return getParameter(consumed++);
+    }
+
+    @Override
+    public int size() {
+      return args.length;
+    }
+
+    /**
+     * Add 'count' to the value of parsed parameters. May be called more than once.
+     *
+     * @param count How many parameters were just parsed.
+     */
+    public void consume(int count) {
+      consumed += count;
+    }
+
+    /**
+     * Reports handlers how many parameters were parsed
+     *
+     * @return the count of parsed parameters
+     */
+    public int getConsumed() {
+      return consumed;
+    }
+
+    /**
+     * Use during parsing to call additional parameters simulating as if they had been passed from
+     * the command line originally.
+     *
+     * @param args A variable amount of parameters to call immediately
+     *     <p>The parameters will be parsed immediately, before the remaining parameter will be
+     *     parsed.
+     *     <p>Note: Since this is done outside of the arg4j parsing loop, it will not match exactly
+     *     what would happen if they were actually passed from the command line, but it will be
+     *     pretty close. If this were moved to args4j, the interface could be the same and it could
+     *     match exactly the behavior as if passed from the command line originally.
+     */
+    public void callParameters(String... args) throws CmdLineException {
+      Parameters impl = new Parameters(Arrays.copyOfRange(args, 1, args.length), parser);
+      parser.findOptionByName(args[0]).parseArguments(impl);
+    }
   }
 
   private final OptionHandlers handlers;
@@ -200,7 +286,7 @@ public class CmdLineParser {
   }
 
   public boolean wasHelpRequestedByOption() {
-    return parser.help.value;
+    return parser.help;
   }
 
   public void parseArgument(String... args) throws CmdLineException {
@@ -228,23 +314,13 @@ public class CmdLineParser {
     parser.parseArgument(tmp.toArray(new String[tmp.size()]));
   }
 
-  public void parseOptionMap(Map<String, String[]> parameters) throws CmdLineException {
-    ListMultimap<String, String> map = MultimapBuilder.hashKeys().arrayListValues().build();
-    for (Map.Entry<String, String[]> ent : parameters.entrySet()) {
-      for (String val : ent.getValue()) {
-        map.put(ent.getKey(), val);
-      }
-    }
-    parseOptionMap(map);
-  }
-
   public void parseOptionMap(ListMultimap<String, String> params) throws CmdLineException {
     logger.atFinest().log("Command-line parameters: %s", params.keySet());
     List<String> tmp = Lists.newArrayListWithCapacity(2 * params.size());
     for (String key : params.keySet()) {
       String name = makeOption(key);
 
-      if (isBoolean(name)) {
+      if (isBooleanOption(name)) {
         boolean on = false;
         for (String value : params.get(key)) {
           on = toBoolean(key, value);
@@ -262,12 +338,16 @@ public class CmdLineParser {
     parser.parseArgument(tmp.toArray(new String[tmp.size()]));
   }
 
-  public boolean isBoolean(String name) {
-    return findHandler(makeOption(name)) instanceof BooleanOptionHandler;
-  }
-
   public void parseWithPrefix(String prefix, Object bean) {
     parser.parseWithPrefix(prefix, bean);
+  }
+
+  public void drainOptionQueue() {
+    parser.addOptionsWithMetRequirements();
+  }
+
+  private boolean isBooleanOption(String name) {
+    return findHandler(makeOption(name)) instanceof BooleanOptionHandler;
   }
 
   private String makeOption(String name) {
@@ -330,90 +410,81 @@ public class CmdLineParser {
     throw new CmdLineException(parser, localizable("invalid boolean \"%s=%s\""), name, value);
   }
 
-  private static class PrefixedOption implements Option {
-    private final String prefix;
-    private final Option o;
-
-    PrefixedOption(String prefix, Option o) {
-      this.prefix = prefix;
-      this.o = o;
-    }
-
-    @Override
-    public String name() {
-      return getPrefixedName(prefix, o.name());
-    }
-
-    @Override
-    public String[] aliases() {
-      String[] prefixedAliases = new String[o.aliases().length];
-      for (int i = 0; i < prefixedAliases.length; i++) {
-        prefixedAliases[i] = getPrefixedName(prefix, o.aliases()[i]);
-      }
-      return prefixedAliases;
-    }
-
-    @Override
-    public String usage() {
-      return o.usage();
-    }
-
-    @Override
-    public String metaVar() {
-      return o.metaVar();
-    }
-
-    @Override
-    public boolean required() {
-      return o.required();
-    }
-
-    @Override
-    public boolean hidden() {
-      return o.hidden();
-    }
-
-    @SuppressWarnings("rawtypes")
-    @Override
-    public Class<? extends OptionHandler> handler() {
-      return o.handler();
-    }
-
-    @Override
-    public String[] depends() {
-      return o.depends();
-    }
-
-    @Override
-    public String[] forbids() {
-      return null;
-    }
-
-    @Override
-    public boolean help() {
-      return false;
-    }
-
-    @Override
-    public Class<? extends Annotation> annotationType() {
-      return o.annotationType();
-    }
-
-    private static String getPrefixedName(String prefix, String name) {
-      return prefix + name;
-    }
+  private static Option newPrefixedOption(String prefix, Option o) {
+    requireNonNull(prefix);
+    checkArgument(o.name().startsWith("-"), "Option name must start with '-': %s", o);
+    ImmutableList<String> aliases =
+        Arrays.stream(o.aliases()).map(prefix::concat).collect(toImmutableList());
+    return OptionUtil.newOption(
+        prefix + o.name(),
+        aliases,
+        o.usage(),
+        o.metaVar(),
+        o.required(),
+        false,
+        o.hidden(),
+        o.handler(),
+        ImmutableList.copyOf(o.depends()),
+        ImmutableList.of());
   }
 
-  private class MyParser extends org.kohsuke.args4j.CmdLineParser {
+  public class MyParser extends org.kohsuke.args4j.CmdLineParser {
+    boolean help;
+
     @SuppressWarnings("rawtypes")
     private List<OptionHandler> optionsList;
 
-    private HelpOption help;
+    private Map<String, QueuedOption> queuedOptionsByName = new LinkedHashMap<>();
+
+    private class QueuedOption {
+      public final Option option;
+
+      @SuppressWarnings("rawtypes")
+      public final Setter setter;
+
+      public final String[] requiredOptions;
+
+      private QueuedOption(
+          Option option,
+          @SuppressWarnings("rawtypes") Setter setter,
+          RequiresOptions requiresOptions) {
+        this.option = option;
+        this.setter = setter;
+        this.requiredOptions = requiresOptions != null ? requiresOptions.value() : new String[0];
+      }
+    }
 
     MyParser(Object bean) {
       super(bean, ParserProperties.defaults().withAtSyntax(false));
       parseAdditionalOptions(bean, new HashSet<>());
+      addOptionsWithMetRequirements();
       ensureOptionsInitialized();
+    }
+
+    public int addOptionsWithMetRequirements() {
+      int count = 0;
+      for (Iterator<Map.Entry<String, QueuedOption>> it = queuedOptionsByName.entrySet().iterator();
+          it.hasNext(); ) {
+        QueuedOption queuedOption = it.next().getValue();
+        if (hasAllRequiredOptions(queuedOption)) {
+          addOption(queuedOption.setter, queuedOption.option);
+          it.remove();
+          count++;
+        }
+      }
+      if (count > 0) {
+        count += addOptionsWithMetRequirements();
+      }
+      return count;
+    }
+
+    private boolean hasAllRequiredOptions(QueuedOption queuedOption) {
+      for (String name : queuedOption.requiredOptions) {
+        if (findOptionByName(name) == null) {
+          return false;
+        }
+      }
+      return true;
     }
 
     // NOTE: Argument annotations on bean are ignored.
@@ -430,13 +501,19 @@ public class CmdLineParser {
         for (Method m : c.getDeclaredMethods()) {
           Option o = m.getAnnotation(Option.class);
           if (o != null) {
-            addOption(new MethodSetter(this, bean, m), new PrefixedOption(prefix, o));
+            queueOption(
+                newPrefixedOption(prefix, o),
+                new MethodSetter(this, bean, m),
+                m.getAnnotation(RequiresOptions.class));
           }
         }
         for (Field f : c.getDeclaredFields()) {
           Option o = f.getAnnotation(Option.class);
           if (o != null) {
-            addOption(Setters.create(f, bean), new PrefixedOption(prefix, o));
+            queueOption(
+                newPrefixedOption(prefix, o),
+                Setters.create(f, bean),
+                f.getAnnotation(RequiresOptions.class));
           }
           if (f.isAnnotationPresent(Options.class)) {
             try {
@@ -480,6 +557,41 @@ public class CmdLineParser {
       return add(super.createOptionHandler(option, setter));
     }
 
+    /**
+     * Finds a registered {@code OptionHandler} by its name or its alias.
+     *
+     * @param name name
+     * @return the {@code OptionHandler} or {@code null}
+     *     <p>Note: this is cut & pasted from the parent class in arg4j, it was private and it
+     *     needed to be exposed.
+     */
+    @SuppressWarnings("rawtypes")
+    public OptionHandler findOptionByName(String name) {
+      for (OptionHandler h : optionsList) {
+        NamedOptionDef option = (NamedOptionDef) h.option;
+        if (name.equals(option.name())) {
+          return h;
+        }
+        for (String alias : option.aliases()) {
+          if (name.equals(alias)) {
+            return h;
+          }
+        }
+      }
+      return null;
+    }
+
+    private void queueOption(
+        Option option,
+        @SuppressWarnings("rawtypes") Setter setter,
+        RequiresOptions requiresOptions) {
+      if (queuedOptionsByName.put(option.name(), new QueuedOption(option, setter, requiresOptions))
+          != null) {
+        throw new IllegalAnnotationError(
+            "Option name " + option.name() + " is used more than once");
+      }
+    }
+
     @SuppressWarnings("rawtypes")
     private OptionHandler add(OptionHandler handler) {
       ensureOptionsInitialized();
@@ -489,10 +601,31 @@ public class CmdLineParser {
 
     private void ensureOptionsInitialized() {
       if (optionsList == null) {
-        help = new HelpOption();
         optionsList = new ArrayList<>();
-        addOption(help, help);
+        addOption(newHelpSetter(), newHelpOption());
       }
+    }
+
+    private Setter<?> newHelpSetter() {
+      try {
+        return Setters.create(getClass().getDeclaredField("help"), this);
+      } catch (NoSuchFieldException e) {
+        throw new IllegalStateException(e);
+      }
+    }
+
+    private Option newHelpOption() {
+      return OptionUtil.newOption(
+          "--help",
+          ImmutableList.of("-h"),
+          "display this help text",
+          "",
+          false,
+          false,
+          false,
+          BooleanOptionHandler.class,
+          ImmutableList.of(),
+          ImmutableList.of());
     }
 
     private boolean isHandlerSpecified(OptionDef option) {
@@ -505,90 +638,6 @@ public class CmdLineParser {
 
     private <T> boolean isPrimitive(Setter<T> setter) {
       return setter.getType().isPrimitive();
-    }
-  }
-
-  private static class HelpOption implements Option, Setter<Boolean> {
-    private boolean value;
-
-    @Override
-    public String name() {
-      return "--help";
-    }
-
-    @Override
-    public String[] aliases() {
-      return new String[] {"-h"};
-    }
-
-    @Override
-    public String[] depends() {
-      return new String[] {};
-    }
-
-    @Override
-    public boolean hidden() {
-      return false;
-    }
-
-    @Override
-    public String usage() {
-      return "display this help text";
-    }
-
-    @Override
-    public void addValue(Boolean val) {
-      value = val;
-    }
-
-    @Override
-    public Class<? extends OptionHandler<Boolean>> handler() {
-      return BooleanOptionHandler.class;
-    }
-
-    @Override
-    public String metaVar() {
-      return "";
-    }
-
-    @Override
-    public boolean required() {
-      return false;
-    }
-
-    @Override
-    public Class<? extends Annotation> annotationType() {
-      return Option.class;
-    }
-
-    @Override
-    public FieldSetter asFieldSetter() {
-      throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public AnnotatedElement asAnnotatedElement() {
-      throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Class<Boolean> getType() {
-      return Boolean.class;
-    }
-
-    @Override
-    public boolean isMultiValued() {
-      return false;
-    }
-
-    @Override
-    public String[] forbids() {
-      return null;
-    }
-
-    @Override
-    public boolean help() {
-      return false;
     }
   }
 

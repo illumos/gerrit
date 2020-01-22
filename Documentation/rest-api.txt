@@ -1,3 +1,4 @@
+:linkattrs:
 = Gerrit Code Review - REST API
 
 Gerrit Code Review comes with a REST like API available over HTTP.
@@ -128,7 +129,7 @@ must be URL encoded.
 === Response Codes
 The Gerrit REST endpoints use HTTP status codes as described
 in the link:http://www.w3.org/Protocols/rfc2616/rfc2616-sec10.html[
-HTTP specification].
+HTTP specification,role=external,window=_blank].
 
 In most cases, the response body of an error response will be a
 plaintext, human-readable error message.
@@ -190,6 +191,11 @@ Preconditions] section.
 ==== 422 Unprocessable Entity
 "`422 Unprocessable Entity`" is returned if the ID of a resource that is
 specified in the request body cannot be resolved.
+
+==== 429 Too Many Requests
+"`429 Too Many Requests`" is returned if the request exhausted any set
+quota limits. Depending on the exhausted quota, the request may be retried
+with exponential backoff.
 
 [[tracing]]
 === Request Tracing

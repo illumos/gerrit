@@ -14,10 +14,10 @@
 
 package com.google.gerrit.server.project;
 
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.client.InheritableBoolean;
 import com.google.gerrit.extensions.client.SubmitType;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.Project;
 import java.util.List;
 
 public class CreateProjectArgs {
@@ -49,6 +49,7 @@ public class CreateProjectArgs {
     enableSignedPush = InheritableBoolean.INHERIT;
     requireSignedPush = InheritableBoolean.INHERIT;
     submitType = SubmitType.MERGE_IF_NECESSARY;
+    rejectEmptyCommit = InheritableBoolean.INHERIT;
   }
 
   public Project.NameKey getProject() {
@@ -60,7 +61,7 @@ public class CreateProjectArgs {
   }
 
   public void setProjectName(String n) {
-    projectName = n != null ? new Project.NameKey(n) : null;
+    projectName = n != null ? Project.nameKey(n) : null;
   }
 
   public void setProjectName(Project.NameKey n) {

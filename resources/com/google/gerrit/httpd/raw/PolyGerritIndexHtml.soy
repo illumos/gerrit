@@ -16,16 +16,18 @@
 
 {namespace com.google.gerrit.httpd.raw}
 
-/**
- * @param canonicalPath
- * @param staticResourcePath
- * @param? assetsPath {string} URL to static assets root, if served from CDN.
- * @param? assetsBundle {string} Assets bundle .html file, served from $assetsPath.
- * @param? faviconPath
- * @param? versionInfo
- * @param? deprecateGwtUi
- */
 {template .Index}
+  {@param canonicalPath: ?}
+  {@param staticResourcePath: ?}
+  {@param gerritInitialData: /** {string} map of REST endpoint to response for startup. */ ?}
+  {@param? assetsPath: ?}  /** {string} URL to static assets root, if served from CDN. */
+  {@param? assetsBundle: ?}  /** {string} Assets bundle .html file, served from $assetsPath. */
+  {@param? faviconPath: ?}
+  {@param? versionInfo: ?}
+  {@param? polyfillCE: ?}
+  {@param? polyfillSD: ?}
+  {@param? polyfillSC: ?}
+  {@param? useGoogleFonts: ?}
   <!DOCTYPE html>{\n}
   <html lang="en">{\n}
   <meta charset="utf-8">{\n}
@@ -38,12 +40,27 @@
   </noscript>
 
   <script>
+    // Disable extra font load from paper-styles
+    window.polymerSkipLoadingFontRoboto = true;
     window.CLOSURE_NO_DEPS = true;
     {if $canonicalPath != ''}window.CANONICAL_PATH = '{$canonicalPath}';{/if}
-    {if $deprecateGwtUi}window.DEPRECATE_GWT_UI = true;{/if}
     {if $versionInfo}window.VERSION_INFO = '{$versionInfo}';{/if}
     {if $staticResourcePath != ''}window.STATIC_RESOURCE_PATH = '{$staticResourcePath}';{/if}
     {if $assetsPath}window.ASSETS_PATH = '{$assetsPath}';{/if}
+    {if $polyfillCE}if (window.customElements) window.customElements.forcePolyfill = true;{/if}
+    {if $polyfillSD}{literal}ShadyDOM = { force: true };{/literal}{/if}
+    {if $polyfillSC}{literal}ShadyCSS = { shimcssproperties: true};{/literal}{/if}
+    {if $gerritInitialData}
+      // INITIAL_DATA is a string that represents a JSON map. It's inlined here so that we can
+      // spare calls to the API when starting up the app.
+      // The map maps from endpoint to returned value. This matches Gerrit's REST API 1:1, so the
+      // values here can be used as a drop-in replacement for calls to the API.
+      //
+      // Example:
+      // '/config/server/version' => '3.0.0-468-g0757b52a7d'
+      // '/accounts/self/detail' => { 'username' : 'gerrit-user' }
+      window.INITIAL_DATA = JSON.parse({$gerritInitialData});
+    {/if}
   </script>{\n}
 
   {if $faviconPath}
@@ -53,16 +70,22 @@
   {/if}
 
   // RobotoMono fonts are used in styles/fonts.css
-  // @see https://github.com/w3c/preload/issues/32 regarding crossorigin
-  <link rel="preload" href="{$staticResourcePath}/fonts/RobotoMono-Regular.woff2" as="font" type="font/woff2" crossorigin="anonymous">{\n}
-  <link rel="preload" href="{$staticResourcePath}/fonts/RobotoMono-Regular.woff" as="font" type="font/woff" crossorigin="anonymous">{\n}
-  <link rel="preload" href="{$staticResourcePath}/fonts/Roboto-Regular.woff2" as="font" type="font/woff2" crossorigin="anonymous">{\n}
-  <link rel="preload" href="{$staticResourcePath}/fonts/Roboto-Regular.woff" as="font" type="font/woff" crossorigin="anonymous">{\n}
-  <link rel="preload" href="{$staticResourcePath}/fonts/Roboto-Medium.woff2" as="font" type="font/woff2" crossorigin="anonymous">{\n}
-  <link rel="preload" href="{$staticResourcePath}/fonts/Roboto-Medium.woff" as="font" type="font/woff" crossorigin="anonymous">{\n}
+  {if $useGoogleFonts}
+    <link rel="preload" href="https://fonts.googleapis.com/css?family=Roboto+Mono:400,500,700|Roboto:400,500,700&display=swap" as="style">
+  {else}
+    // @see https://github.com/w3c/preload/issues/32 regarding crossorigin
+    <link rel="preload" href="{$staticResourcePath}/fonts/RobotoMono-Regular.woff2" as="font" type="font/woff2" crossorigin="anonymous">{\n}
+    <link rel="preload" href="{$staticResourcePath}/fonts/RobotoMono-Regular.woff" as="font" type="font/woff" crossorigin="anonymous">{\n}
+    <link rel="preload" href="{$staticResourcePath}/fonts/Roboto-Regular.woff2" as="font" type="font/woff2" crossorigin="anonymous">{\n}
+    <link rel="preload" href="{$staticResourcePath}/fonts/Roboto-Regular.woff" as="font" type="font/woff" crossorigin="anonymous">{\n}
+    <link rel="preload" href="{$staticResourcePath}/fonts/Roboto-Medium.woff2" as="font" type="font/woff2" crossorigin="anonymous">{\n}
+    <link rel="preload" href="{$staticResourcePath}/fonts/Roboto-Medium.woff" as="font" type="font/woff" crossorigin="anonymous">{\n}
+  {/if}
   <link rel="stylesheet" href="{$staticResourcePath}/styles/fonts.css">{\n}
   <link rel="stylesheet" href="{$staticResourcePath}/styles/main.css">{\n}
+
   <script src="{$staticResourcePath}/bower_components/webcomponentsjs/webcomponents-lite.js"></script>{\n}
+
   // Content between webcomponents-lite and the load of the main app element
   // run before polymer-resin is installed so may have security consequences.
   // Contact your local security engineer if you have any questions, and
@@ -73,7 +96,6 @@
     <link rel="import" href="{$assetsPath}/{$assetsBundle}">{\n}
   {/if}
 
-  <link rel="preload" href="{$staticResourcePath}/elements/gr-app.js" as="script" crossorigin="anonymous">{\n}
   <link rel="import" href="{$staticResourcePath}/elements/gr-app.html">{\n}
 
   <body unresolved>{\n}

@@ -17,12 +17,12 @@ package com.google.gerrit.server.args4j;
 import static com.google.gerrit.util.cli.Localizable.localizable;
 
 import com.google.common.base.Splitter;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.assistedinject.Assisted;
@@ -59,15 +59,15 @@ public class ChangeIdHandler extends OptionHandler<Change.Id> {
 
     try {
       final Change.Key key = Change.Key.parse(tokens.get(2));
-      final Project.NameKey project = new Project.NameKey(tokens.get(0));
-      final Branch.NameKey branch = new Branch.NameKey(project, tokens.get(1));
+      final Project.NameKey project = Project.nameKey(tokens.get(0));
+      final BranchNameKey branch = BranchNameKey.create(project, tokens.get(1));
       for (ChangeData cd : queryProvider.get().byBranchKey(branch, key)) {
         setter.addValue(cd.getId());
         return 1;
       }
     } catch (IllegalArgumentException e) {
       throw new CmdLineException(owner, localizable("Change-Id is not valid"));
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       throw new CmdLineException(owner, localizable("Database error: %s"), e.getMessage());
     }
 

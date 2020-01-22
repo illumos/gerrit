@@ -16,25 +16,26 @@ package com.google.gerrit.server.group.db;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
+import static com.google.gerrit.server.group.testing.InternalGroupSubject.internalGroups;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static com.google.gerrit.truth.OptionalSubject.assertThat;
 import static org.hamcrest.CoreMatchers.instanceOf;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.data.GroupDescription;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.group.InternalGroup;
 import com.google.gerrit.server.group.testing.InternalGroupSubject;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.gerrit.truth.OptionalSubject;
-import com.google.gwtorm.client.KeyUtil;
-import com.google.gwtorm.server.StandardKeyEncoder;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.time.LocalDate;
@@ -53,31 +54,22 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.ExpectedException;
 
 public class GroupConfigTest {
-  static {
-    // Necessary so that toString() methods of ReviewDb entities work correctly.
-    KeyUtil.setEncoderImpl(new StandardKeyEncoder());
-  }
-
-  @Rule public ExpectedException expectedException = ExpectedException.none();
-
   private Project.NameKey projectName;
   private Repository repository;
   private TestRepository<?> testRepository;
-  private final AccountGroup.UUID groupUuid = new AccountGroup.UUID("users-XYZ");
-  private final AccountGroup.NameKey groupName = new AccountGroup.NameKey("users");
-  private final AccountGroup.Id groupId = new AccountGroup.Id(123);
+  private final AccountGroup.UUID groupUuid = AccountGroup.uuid("users-XYZ");
+  private final AccountGroup.NameKey groupName = AccountGroup.nameKey("users");
+  private final AccountGroup.Id groupId = AccountGroup.id(123);
   private final AuditLogFormatter auditLogFormatter =
       AuditLogFormatter.createBackedBy(ImmutableSet.of(), ImmutableSet.of(), "server-id");
   private final TimeZone timeZone = TimeZone.getTimeZone("America/Los_Angeles");
 
   @Before
   public void setUp() throws Exception {
-    projectName = new Project.NameKey("Test Repository");
+    projectName = Project.nameKey("Test Repository");
     repository = new InMemoryRepository(new DfsRepositoryDescription("Test Repository"));
     testRepository = new TestRepository<>(repository);
   }
@@ -104,7 +96,7 @@ public class GroupConfigTest {
 
   @Test
   public void nameOfGroupUpdateOverridesGroupCreation() throws Exception {
-    AccountGroup.NameKey anotherName = new AccountGroup.NameKey("Another name");
+    AccountGroup.NameKey anotherName = AccountGroup.nameKey("Another name");
 
     InternalGroupCreation groupCreation =
         getPrefilledGroupCreationBuilder().setNameKey(groupName).build();
@@ -118,26 +110,13 @@ public class GroupConfigTest {
   @Test
   public void nameOfNewGroupMustNotBeEmpty() throws Exception {
     InternalGroupCreation groupCreation =
-        getPrefilledGroupCreationBuilder().setNameKey(new AccountGroup.NameKey("")).build();
+        getPrefilledGroupCreationBuilder().setNameKey(AccountGroup.nameKey("")).build();
     GroupConfig groupConfig = GroupConfig.createForNewGroup(projectName, repository, groupCreation);
 
     try (MetaDataUpdate metaDataUpdate = createMetaDataUpdate()) {
-      expectedException.expectCause(instanceOf(ConfigInvalidException.class));
-      expectedException.expectMessage("Name of the group " + groupUuid);
-      groupConfig.commit(metaDataUpdate);
-    }
-  }
-
-  @Test
-  public void nameOfNewGroupMustNotBeNull() throws Exception {
-    InternalGroupCreation groupCreation =
-        getPrefilledGroupCreationBuilder().setNameKey(new AccountGroup.NameKey(null)).build();
-    GroupConfig groupConfig = GroupConfig.createForNewGroup(projectName, repository, groupCreation);
-
-    try (MetaDataUpdate metaDataUpdate = createMetaDataUpdate()) {
-      expectedException.expectCause(instanceOf(ConfigInvalidException.class));
-      expectedException.expectMessage("Name of the group " + groupUuid);
-      groupConfig.commit(metaDataUpdate);
+      Throwable thrown = assertThrows(Throwable.class, () -> groupConfig.commit(metaDataUpdate));
+      assertThat(thrown.getCause(), instanceOf(ConfigInvalidException.class));
+      assertThat(thrown).hasMessageThat().contains("Name of the group " + groupUuid);
     }
   }
 
@@ -153,13 +132,13 @@ public class GroupConfigTest {
   @Test
   public void idOfNewGroupMustNotBeNegative() throws Exception {
     InternalGroupCreation groupCreation =
-        getPrefilledGroupCreationBuilder().setId(new AccountGroup.Id(-2)).build();
+        getPrefilledGroupCreationBuilder().setId(AccountGroup.id(-2)).build();
     GroupConfig groupConfig = GroupConfig.createForNewGroup(projectName, repository, groupCreation);
 
     try (MetaDataUpdate metaDataUpdate = createMetaDataUpdate()) {
-      expectedException.expectCause(instanceOf(ConfigInvalidException.class));
-      expectedException.expectMessage("ID of the group " + groupUuid);
-      groupConfig.commit(metaDataUpdate);
+      Throwable thrown = assertThrows(Throwable.class, () -> groupConfig.commit(metaDataUpdate));
+      assertThat(thrown.getCause(), instanceOf(ConfigInvalidException.class));
+      assertThat(thrown).hasMessageThat().contains("ID of the group " + groupUuid);
     }
   }
 
@@ -216,7 +195,7 @@ public class GroupConfigTest {
 
   @Test
   public void specifiedOwnerGroupUuidIsRespectedForNewGroup() throws Exception {
-    AccountGroup.UUID ownerGroupUuid = new AccountGroup.UUID("anotherOwnerUuid");
+    AccountGroup.UUID ownerGroupUuid = AccountGroup.uuid("anotherOwnerUuid");
 
     InternalGroupCreation groupCreation = getPrefilledGroupCreationBuilder().build();
     InternalGroupUpdate groupUpdate =
@@ -228,32 +207,17 @@ public class GroupConfigTest {
   }
 
   @Test
-  public void ownerGroupUuidOfNewGroupMustNotBeNull() throws Exception {
-    InternalGroupCreation groupCreation = getPrefilledGroupCreationBuilder().build();
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setOwnerGroupUUID(new AccountGroup.UUID(null)).build();
-    GroupConfig groupConfig = GroupConfig.createForNewGroup(projectName, repository, groupCreation);
-    groupConfig.setGroupUpdate(groupUpdate, auditLogFormatter);
-
-    try (MetaDataUpdate metaDataUpdate = createMetaDataUpdate()) {
-      expectedException.expectCause(instanceOf(ConfigInvalidException.class));
-      expectedException.expectMessage("Owner UUID of the group " + groupUuid);
-      groupConfig.commit(metaDataUpdate);
-    }
-  }
-
-  @Test
   public void ownerGroupUuidOfNewGroupMustNotBeEmpty() throws Exception {
     InternalGroupCreation groupCreation = getPrefilledGroupCreationBuilder().build();
     InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setOwnerGroupUUID(new AccountGroup.UUID("")).build();
+        InternalGroupUpdate.builder().setOwnerGroupUUID(AccountGroup.uuid("")).build();
     GroupConfig groupConfig = GroupConfig.createForNewGroup(projectName, repository, groupCreation);
     groupConfig.setGroupUpdate(groupUpdate, auditLogFormatter);
 
     try (MetaDataUpdate metaDataUpdate = createMetaDataUpdate()) {
-      expectedException.expectCause(instanceOf(ConfigInvalidException.class));
-      expectedException.expectMessage("Owner UUID of the group " + groupUuid);
-      groupConfig.commit(metaDataUpdate);
+      Throwable thrown = assertThrows(Throwable.class, () -> groupConfig.commit(metaDataUpdate));
+      assertThat(thrown.getCause(), instanceOf(ConfigInvalidException.class));
+      assertThat(thrown).hasMessageThat().contains("Owner UUID of the group " + groupUuid);
     }
   }
 
@@ -312,8 +276,8 @@ public class GroupConfigTest {
 
   @Test
   public void specifiedMembersAreRespectedForNewGroup() throws Exception {
-    Account.Id member1 = new Account.Id(1);
-    Account.Id member2 = new Account.Id(2);
+    Account.Id member1 = Account.id(1);
+    Account.Id member2 = Account.id(2);
 
     InternalGroupCreation groupCreation = getPrefilledGroupCreationBuilder().build();
     InternalGroupUpdate groupUpdate =
@@ -328,8 +292,8 @@ public class GroupConfigTest {
 
   @Test
   public void specifiedSubgroupsAreRespectedForNewGroup() throws Exception {
-    AccountGroup.UUID subgroup1 = new AccountGroup.UUID("subgroup1");
-    AccountGroup.UUID subgroup2 = new AccountGroup.UUID("subgroup2");
+    AccountGroup.UUID subgroup1 = AccountGroup.uuid("subgroup1");
+    AccountGroup.UUID subgroup2 = AccountGroup.uuid("subgroup2");
 
     InternalGroupCreation groupCreation = getPrefilledGroupCreationBuilder().build();
     InternalGroupUpdate groupUpdate =
@@ -362,9 +326,11 @@ public class GroupConfigTest {
   public void idInConfigMustBeDefined() throws Exception {
     populateGroupConfig(groupUuid, "[group]\n\tname = users\n\townerGroupUuid = owners\n");
 
-    expectedException.expect(ConfigInvalidException.class);
-    expectedException.expectMessage("ID of the group " + groupUuid);
-    GroupConfig.loadForGroup(projectName, repository, groupUuid);
+    ConfigInvalidException thrown =
+        assertThrows(
+            ConfigInvalidException.class,
+            () -> GroupConfig.loadForGroup(projectName, repository, groupUuid));
+    assertThat(thrown).hasMessageThat().contains("ID of the group " + groupUuid);
   }
 
   @Test
@@ -372,9 +338,11 @@ public class GroupConfigTest {
     populateGroupConfig(
         groupUuid, "[group]\n\tname = users\n\tid = -5\n\townerGroupUuid = owners\n");
 
-    expectedException.expect(ConfigInvalidException.class);
-    expectedException.expectMessage("ID of the group " + groupUuid);
-    GroupConfig.loadForGroup(projectName, repository, groupUuid);
+    ConfigInvalidException thrown =
+        assertThrows(
+            ConfigInvalidException.class,
+            () -> GroupConfig.loadForGroup(projectName, repository, groupUuid));
+    assertThat(thrown).hasMessageThat().contains("ID of the group " + groupUuid);
   }
 
   @Test
@@ -398,9 +366,11 @@ public class GroupConfigTest {
   public void ownerGroupUuidInConfigMustBeDefined() throws Exception {
     populateGroupConfig(groupUuid, "[group]\n\tname = users\n\tid = 42\n");
 
-    expectedException.expect(ConfigInvalidException.class);
-    expectedException.expectMessage("Owner UUID of the group " + groupUuid);
-    GroupConfig.loadForGroup(projectName, repository, groupUuid);
+    ConfigInvalidException thrown =
+        assertThrows(
+            ConfigInvalidException.class,
+            () -> GroupConfig.loadForGroup(projectName, repository, groupUuid));
+    assertThat(thrown).hasMessageThat().contains("Owner UUID of the group " + groupUuid);
   }
 
   @Test
@@ -439,12 +409,12 @@ public class GroupConfigTest {
         .value()
         .members()
         .containsExactly(
-            new Account.Id(1),
-            new Account.Id(2),
-            new Account.Id(3),
-            new Account.Id(4),
-            new Account.Id(5),
-            new Account.Id(6));
+            Account.id(1),
+            Account.id(2),
+            Account.id(3),
+            Account.id(4),
+            Account.id(5),
+            Account.id(6));
   }
 
   @Test
@@ -452,9 +422,9 @@ public class GroupConfigTest {
     populateGroupConfig(groupUuid, "[group]\n\tname=users\n\tid = 42\n\townerGroupUuid = owners\n");
     populateMembersFile(groupUuid, "One");
 
-    expectedException.expect(ConfigInvalidException.class);
-    expectedException.expectMessage("Invalid file members");
-    loadGroup(groupUuid);
+    ConfigInvalidException thrown =
+        assertThrows(ConfigInvalidException.class, () -> loadGroup(groupUuid));
+    assertThat(thrown).hasMessageThat().contains("Invalid file members");
   }
 
   @Test
@@ -462,9 +432,9 @@ public class GroupConfigTest {
     populateGroupConfig(groupUuid, "[group]\n\tname=users\n\tid = 42\n\townerGroupUuid = owners\n");
     populateMembersFile(groupUuid, "1\t2");
 
-    expectedException.expect(ConfigInvalidException.class);
-    expectedException.expectMessage("Invalid file members");
-    loadGroup(groupUuid);
+    ConfigInvalidException thrown =
+        assertThrows(ConfigInvalidException.class, () -> loadGroup(groupUuid));
+    assertThat(thrown).hasMessageThat().contains("Invalid file members");
   }
 
   @Test
@@ -503,12 +473,12 @@ public class GroupConfigTest {
         .value()
         .subgroups()
         .containsExactly(
-            new AccountGroup.UUID("1"),
-            new AccountGroup.UUID("2"),
-            new AccountGroup.UUID("3"),
-            new AccountGroup.UUID("4"),
-            new AccountGroup.UUID("5"),
-            new AccountGroup.UUID("6"));
+            AccountGroup.uuid("1"),
+            AccountGroup.uuid("2"),
+            AccountGroup.uuid("3"),
+            AccountGroup.uuid("4"),
+            AccountGroup.uuid("5"),
+            AccountGroup.uuid("6"));
   }
 
   @Test
@@ -517,7 +487,7 @@ public class GroupConfigTest {
     populateSubgroupsFile(groupUuid, "1\t2 3");
 
     Optional<InternalGroup> group = loadGroup(groupUuid);
-    assertThatGroup(group).value().subgroups().containsExactly(new AccountGroup.UUID("1\t2 3"));
+    assertThatGroup(group).value().subgroups().containsExactly(AccountGroup.uuid("1\t2 3"));
   }
 
   @Test
@@ -529,13 +499,13 @@ public class GroupConfigTest {
     assertThatGroup(group)
         .value()
         .subgroups()
-        .containsExactly(new AccountGroup.UUID("1\t2"), new AccountGroup.UUID("3"));
+        .containsExactly(AccountGroup.uuid("1\t2"), AccountGroup.uuid("3"));
   }
 
   @Test
   public void nameCanBeUpdated() throws Exception {
     createArbitraryGroup(groupUuid);
-    AccountGroup.NameKey newName = new AccountGroup.NameKey("New name");
+    AccountGroup.NameKey newName = AccountGroup.nameKey("New name");
 
     InternalGroupUpdate groupUpdate = InternalGroupUpdate.builder().setName(newName).build();
     updateGroup(groupUuid, groupUpdate);
@@ -545,41 +515,25 @@ public class GroupConfigTest {
   }
 
   @Test
-  public void nameCannotBeUpdatedToNull() throws Exception {
-    createArbitraryGroup(groupUuid);
-
-    GroupConfig groupConfig = GroupConfig.loadForGroup(projectName, repository, groupUuid);
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setName(new AccountGroup.NameKey(null)).build();
-    groupConfig.setGroupUpdate(groupUpdate, auditLogFormatter);
-
-    try (MetaDataUpdate metaDataUpdate = createMetaDataUpdate()) {
-      expectedException.expectCause(instanceOf(ConfigInvalidException.class));
-      expectedException.expectMessage("Name of the group " + groupUuid);
-      groupConfig.commit(metaDataUpdate);
-    }
-  }
-
-  @Test
   public void nameCannotBeUpdatedToEmptyString() throws Exception {
     createArbitraryGroup(groupUuid);
 
     GroupConfig groupConfig = GroupConfig.loadForGroup(projectName, repository, groupUuid);
     InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setName(new AccountGroup.NameKey("")).build();
+        InternalGroupUpdate.builder().setName(AccountGroup.nameKey("")).build();
     groupConfig.setGroupUpdate(groupUpdate, auditLogFormatter);
 
     try (MetaDataUpdate metaDataUpdate = createMetaDataUpdate()) {
-      expectedException.expectCause(instanceOf(ConfigInvalidException.class));
-      expectedException.expectMessage("Name of the group " + groupUuid);
-      groupConfig.commit(metaDataUpdate);
+      Throwable thrown = assertThrows(Throwable.class, () -> groupConfig.commit(metaDataUpdate));
+      assertThat(thrown.getCause(), instanceOf(ConfigInvalidException.class));
+      assertThat(thrown).hasMessageThat().contains("Name of the group " + groupUuid);
     }
   }
 
   @Test
   public void nameCanBeUpdatedToEmptyStringIfExplicitlySpecified() throws Exception {
     createArbitraryGroup(groupUuid);
-    AccountGroup.NameKey emptyName = new AccountGroup.NameKey("");
+    AccountGroup.NameKey emptyName = AccountGroup.nameKey("");
 
     GroupConfig groupConfig = GroupConfig.loadForGroup(projectName, repository, groupUuid);
     groupConfig.setAllowSaveEmptyName();
@@ -617,7 +571,7 @@ public class GroupConfigTest {
   @Test
   public void ownerGroupUuidCanBeUpdated() throws Exception {
     createArbitraryGroup(groupUuid);
-    AccountGroup.UUID newOwnerGroupUuid = new AccountGroup.UUID("New owner");
+    AccountGroup.UUID newOwnerGroupUuid = AccountGroup.uuid("New owner");
 
     InternalGroupUpdate groupUpdate =
         InternalGroupUpdate.builder().setOwnerGroupUUID(newOwnerGroupUuid).build();
@@ -628,34 +582,18 @@ public class GroupConfigTest {
   }
 
   @Test
-  public void ownerGroupUuidCannotBeUpdatedToNull() throws Exception {
-    createArbitraryGroup(groupUuid);
-
-    GroupConfig groupConfig = GroupConfig.loadForGroup(projectName, repository, groupUuid);
-    InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setOwnerGroupUUID(new AccountGroup.UUID(null)).build();
-    groupConfig.setGroupUpdate(groupUpdate, auditLogFormatter);
-
-    try (MetaDataUpdate metaDataUpdate = createMetaDataUpdate()) {
-      expectedException.expectCause(instanceOf(ConfigInvalidException.class));
-      expectedException.expectMessage("Owner UUID of the group " + groupUuid);
-      groupConfig.commit(metaDataUpdate);
-    }
-  }
-
-  @Test
   public void ownerGroupUuidCannotBeUpdatedToEmptyString() throws Exception {
     createArbitraryGroup(groupUuid);
 
     GroupConfig groupConfig = GroupConfig.loadForGroup(projectName, repository, groupUuid);
     InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setOwnerGroupUUID(new AccountGroup.UUID("")).build();
+        InternalGroupUpdate.builder().setOwnerGroupUUID(AccountGroup.uuid("")).build();
     groupConfig.setGroupUpdate(groupUpdate, auditLogFormatter);
 
     try (MetaDataUpdate metaDataUpdate = createMetaDataUpdate()) {
-      expectedException.expectCause(instanceOf(ConfigInvalidException.class));
-      expectedException.expectMessage("Owner UUID of the group " + groupUuid);
-      groupConfig.commit(metaDataUpdate);
+      Throwable thrown = assertThrows(Throwable.class, () -> groupConfig.commit(metaDataUpdate));
+      assertThat(thrown.getCause(), instanceOf(ConfigInvalidException.class));
+      assertThat(thrown).hasMessageThat().contains("Owner UUID of the group " + groupUuid);
     }
   }
 
@@ -684,7 +622,7 @@ public class GroupConfigTest {
 
     InternalGroupUpdate laterGroupUpdate =
         InternalGroupUpdate.builder()
-            .setName(new AccountGroup.NameKey("Another name"))
+            .setName(AccountGroup.nameKey("Another name"))
             .setUpdatedOn(updatedOn)
             .build();
     Optional<InternalGroup> group = updateGroup(groupCreation.getGroupUUID(), laterGroupUpdate);
@@ -697,8 +635,8 @@ public class GroupConfigTest {
   @Test
   public void membersCanBeAdded() throws Exception {
     createArbitraryGroup(groupUuid);
-    Account.Id member1 = new Account.Id(1);
-    Account.Id member2 = new Account.Id(2);
+    Account.Id member1 = Account.id(1);
+    Account.Id member2 = Account.id(2);
 
     InternalGroupUpdate groupUpdate1 =
         InternalGroupUpdate.builder()
@@ -719,8 +657,8 @@ public class GroupConfigTest {
   @Test
   public void membersCanBeDeleted() throws Exception {
     createArbitraryGroup(groupUuid);
-    Account.Id member1 = new Account.Id(1);
-    Account.Id member2 = new Account.Id(2);
+    Account.Id member1 = Account.id(1);
+    Account.Id member2 = Account.id(2);
 
     InternalGroupUpdate groupUpdate1 =
         InternalGroupUpdate.builder()
@@ -741,8 +679,8 @@ public class GroupConfigTest {
   @Test
   public void subgroupsCanBeAdded() throws Exception {
     createArbitraryGroup(groupUuid);
-    AccountGroup.UUID subgroup1 = new AccountGroup.UUID("subgroups1");
-    AccountGroup.UUID subgroup2 = new AccountGroup.UUID("subgroups2");
+    AccountGroup.UUID subgroup1 = AccountGroup.uuid("subgroups1");
+    AccountGroup.UUID subgroup2 = AccountGroup.uuid("subgroups2");
 
     InternalGroupUpdate groupUpdate1 =
         InternalGroupUpdate.builder()
@@ -763,8 +701,8 @@ public class GroupConfigTest {
   @Test
   public void subgroupsCanBeDeleted() throws Exception {
     createArbitraryGroup(groupUuid);
-    AccountGroup.UUID subgroup1 = new AccountGroup.UUID("subgroups1");
-    AccountGroup.UUID subgroup2 = new AccountGroup.UUID("subgroups2");
+    AccountGroup.UUID subgroup1 = AccountGroup.uuid("subgroups1");
+    AccountGroup.UUID subgroup2 = AccountGroup.uuid("subgroups2");
 
     InternalGroupUpdate groupUpdate1 =
         InternalGroupUpdate.builder()
@@ -807,13 +745,12 @@ public class GroupConfigTest {
     InternalGroupUpdate groupUpdate =
         InternalGroupUpdate.builder()
             .setDescription("A test group")
-            .setOwnerGroupUUID(new AccountGroup.UUID("another owner"))
+            .setOwnerGroupUUID(AccountGroup.uuid("another owner"))
             .setVisibleToAll(true)
-            .setName(new AccountGroup.NameKey("Another name"))
+            .setName(AccountGroup.nameKey("Another name"))
             .setUpdatedOn(new Timestamp(92900892))
-            .setMemberModification(members -> ImmutableSet.of(new Account.Id(1), new Account.Id(2)))
-            .setSubgroupModification(
-                subgroups -> ImmutableSet.of(new AccountGroup.UUID("subgroup")))
+            .setMemberModification(members -> ImmutableSet.of(Account.id(1), Account.id(2)))
+            .setSubgroupModification(subgroups -> ImmutableSet.of(AccountGroup.uuid("subgroup")))
             .build();
 
     Optional<InternalGroup> createdGroup = createGroup(groupCreation, groupUpdate);
@@ -829,13 +766,12 @@ public class GroupConfigTest {
     InternalGroupUpdate groupUpdate =
         InternalGroupUpdate.builder()
             .setDescription("A test group")
-            .setOwnerGroupUUID(new AccountGroup.UUID("another owner"))
+            .setOwnerGroupUUID(AccountGroup.uuid("another owner"))
             .setVisibleToAll(true)
-            .setName(new AccountGroup.NameKey("Another name"))
+            .setName(AccountGroup.nameKey("Another name"))
             .setUpdatedOn(new Timestamp(92900892))
-            .setMemberModification(members -> ImmutableSet.of(new Account.Id(1), new Account.Id(2)))
-            .setSubgroupModification(
-                subgroups -> ImmutableSet.of(new AccountGroup.UUID("subgroup")))
+            .setMemberModification(members -> ImmutableSet.of(Account.id(1), Account.id(2)))
+            .setSubgroupModification(subgroups -> ImmutableSet.of(AccountGroup.uuid("subgroup")))
             .build();
 
     Optional<InternalGroup> updatedGroup = updateGroup(groupUuid, groupUpdate);
@@ -852,19 +788,18 @@ public class GroupConfigTest {
     InternalGroupUpdate initialGroupUpdate =
         InternalGroupUpdate.builder()
             .setDescription("A test group")
-            .setOwnerGroupUUID(new AccountGroup.UUID("another owner"))
+            .setOwnerGroupUUID(AccountGroup.uuid("another owner"))
             .setVisibleToAll(true)
-            .setName(new AccountGroup.NameKey("Another name"))
+            .setName(AccountGroup.nameKey("Another name"))
             .setUpdatedOn(new Timestamp(92900892))
-            .setMemberModification(members -> ImmutableSet.of(new Account.Id(1), new Account.Id(2)))
-            .setSubgroupModification(
-                subgroups -> ImmutableSet.of(new AccountGroup.UUID("subgroup")))
+            .setMemberModification(members -> ImmutableSet.of(Account.id(1), Account.id(2)))
+            .setSubgroupModification(subgroups -> ImmutableSet.of(AccountGroup.uuid("subgroup")))
             .build();
     createGroup(groupCreation, initialGroupUpdate);
 
     // Only update one of the properties.
     InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setName(new AccountGroup.NameKey("Another name")).build();
+        InternalGroupUpdate.builder().setName(AccountGroup.nameKey("Another name")).build();
 
     Optional<InternalGroup> updatedGroup = updateGroup(groupCreation.getGroupUUID(), groupUpdate);
     Optional<InternalGroup> reloadedGroup = loadGroup(groupCreation.getGroupUUID());
@@ -879,7 +814,7 @@ public class GroupConfigTest {
     GroupConfig groupConfig = GroupConfig.createForNewGroup(projectName, repository, groupCreation);
     commit(groupConfig);
 
-    AccountGroup.NameKey name = new AccountGroup.NameKey("Robots");
+    AccountGroup.NameKey name = AccountGroup.nameKey("Robots");
     InternalGroupUpdate groupUpdate1 = InternalGroupUpdate.builder().setName(name).build();
     groupConfig.setGroupUpdate(groupUpdate1, auditLogFormatter);
     commit(groupConfig);
@@ -916,7 +851,7 @@ public class GroupConfigTest {
     RevCommit commitAfterCreation = getLatestCommitForGroup(groupUuid);
 
     InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setName(new AccountGroup.NameKey("Another name")).build();
+        InternalGroupUpdate.builder().setName(AccountGroup.nameKey("Another name")).build();
     updateGroup(groupUuid, groupUpdate);
 
     RevCommit commitAfterUpdate = getLatestCommitForGroup(groupUuid);
@@ -999,9 +934,7 @@ public class GroupConfigTest {
     createArbitraryGroup(groupUuid);
 
     InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder()
-            .setOwnerGroupUUID(new AccountGroup.UUID("Another owner"))
-            .build();
+        InternalGroupUpdate.builder().setOwnerGroupUUID(AccountGroup.uuid("Another owner")).build();
     updateGroup(groupUuid, groupUpdate);
 
     RevCommit commitBeforeUpdate = getLatestCommitForGroup(groupUuid);
@@ -1017,8 +950,7 @@ public class GroupConfigTest {
 
     InternalGroupUpdate groupUpdate =
         InternalGroupUpdate.builder()
-            .setMemberModification(
-                members -> Sets.union(members, ImmutableSet.of(new Account.Id(10))))
+            .setMemberModification(members -> Sets.union(members, ImmutableSet.of(Account.id(10))))
             .build();
     updateGroup(groupUuid, groupUpdate);
 
@@ -1036,8 +968,7 @@ public class GroupConfigTest {
     InternalGroupUpdate groupUpdate =
         InternalGroupUpdate.builder()
             .setSubgroupModification(
-                subgroups ->
-                    Sets.union(subgroups, ImmutableSet.of(new AccountGroup.UUID("subgroup"))))
+                subgroups -> Sets.union(subgroups, ImmutableSet.of(AccountGroup.uuid("subgroup"))))
             .build();
     updateGroup(groupUuid, groupUpdate);
 
@@ -1054,7 +985,7 @@ public class GroupConfigTest {
         getPrefilledGroupCreationBuilder().setGroupUUID(groupUuid).build();
 
     InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setName(new AccountGroup.NameKey("Another name")).build();
+        InternalGroupUpdate.builder().setName(AccountGroup.nameKey("Another name")).build();
 
     GroupConfig groupConfig = GroupConfig.createForNewGroup(projectName, repository, groupCreation);
     groupConfig.setGroupUpdate(groupUpdate, auditLogFormatter);
@@ -1137,7 +1068,7 @@ public class GroupConfigTest {
             .build();
     InternalGroupUpdate groupUpdate =
         InternalGroupUpdate.builder()
-            .setName(new AccountGroup.NameKey("Another name"))
+            .setName(AccountGroup.nameKey("Another name"))
             .setUpdatedOn(createdOn)
             .build();
     GroupConfig groupConfig = GroupConfig.createForNewGroup(projectName, repository, groupCreation);
@@ -1170,7 +1101,7 @@ public class GroupConfigTest {
             .build();
     InternalGroupUpdate groupUpdate =
         InternalGroupUpdate.builder()
-            .setName(new AccountGroup.NameKey("Another name"))
+            .setName(AccountGroup.nameKey("Another name"))
             .setUpdatedOn(createdOn)
             .build();
     GroupConfig groupConfig = GroupConfig.createForNewGroup(projectName, repository, groupCreation);
@@ -1196,7 +1127,7 @@ public class GroupConfigTest {
 
     createArbitraryGroup(groupUuid);
     InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setName(new AccountGroup.NameKey("Another name")).build();
+        InternalGroupUpdate.builder().setName(AccountGroup.nameKey("Another name")).build();
     updateGroup(groupUuid, groupUpdate);
 
     RevCommit revCommit = getLatestCommitForGroup(groupUuid);
@@ -1211,7 +1142,7 @@ public class GroupConfigTest {
     createArbitraryGroup(groupUuid);
     InternalGroupUpdate groupUpdate =
         InternalGroupUpdate.builder()
-            .setName(new AccountGroup.NameKey("Another name"))
+            .setName(AccountGroup.nameKey("Another name"))
             .setUpdatedOn(new Timestamp(updatedOnAsSecondsSinceEpoch * 1000))
             .build();
     updateGroup(groupUuid, groupUpdate);
@@ -1229,7 +1160,7 @@ public class GroupConfigTest {
     createArbitraryGroup(groupUuid);
     InternalGroupUpdate groupUpdate =
         InternalGroupUpdate.builder()
-            .setName(new AccountGroup.NameKey("Another name"))
+            .setName(AccountGroup.nameKey("Another name"))
             .setUpdatedOn(updatedOn)
             .build();
     GroupConfig groupConfig = GroupConfig.loadForGroup(projectName, repository, groupUuid);
@@ -1257,7 +1188,7 @@ public class GroupConfigTest {
     createArbitraryGroup(groupUuid);
     InternalGroupUpdate groupUpdate =
         InternalGroupUpdate.builder()
-            .setName(new AccountGroup.NameKey("Another name"))
+            .setName(AccountGroup.nameKey("Another name"))
             .setUpdatedOn(updatedOn)
             .build();
     GroupConfig groupConfig = GroupConfig.loadForGroup(projectName, repository, groupUuid);
@@ -1290,14 +1221,14 @@ public class GroupConfigTest {
   public void groupCanBeLoadedAtASpecificRevision() throws Exception {
     createArbitraryGroup(groupUuid);
 
-    AccountGroup.NameKey firstName = new AccountGroup.NameKey("Bots");
+    AccountGroup.NameKey firstName = AccountGroup.nameKey("Bots");
     InternalGroupUpdate groupUpdate1 = InternalGroupUpdate.builder().setName(firstName).build();
     updateGroup(groupUuid, groupUpdate1);
 
     RevCommit commitAfterUpdate1 = getLatestCommitForGroup(groupUuid);
 
     InternalGroupUpdate groupUpdate2 =
-        InternalGroupUpdate.builder().setName(new AccountGroup.NameKey("Robots")).build();
+        InternalGroupUpdate.builder().setName(AccountGroup.nameKey("Robots")).build();
     updateGroup(groupUuid, groupUpdate2);
 
     GroupConfig groupConfig =
@@ -1324,7 +1255,7 @@ public class GroupConfigTest {
     InternalGroupCreation groupCreation =
         getPrefilledGroupCreationBuilder().setGroupUUID(groupUuid).build();
     InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setName(new AccountGroup.NameKey("Another name")).build();
+        InternalGroupUpdate.builder().setName(AccountGroup.nameKey("Another name")).build();
     createGroup(groupCreation, groupUpdate);
 
     RevCommit revCommit = getLatestCommitForGroup(groupUuid);
@@ -1333,8 +1264,8 @@ public class GroupConfigTest {
 
   @Test
   public void commitMessageOfNewGroupWithMembersContainsFooters() throws Exception {
-    Account account13 = createAccount(new Account.Id(13), "John");
-    Account account7 = createAccount(new Account.Id(7), "Jane");
+    Account account13 = createAccount(Account.id(13), "John");
+    Account account7 = createAccount(Account.id(7), "Jane");
     ImmutableSet<Account> accounts = ImmutableSet.of(account13, account7);
 
     AuditLogFormatter auditLogFormatter =
@@ -1344,7 +1275,7 @@ public class GroupConfigTest {
         getPrefilledGroupCreationBuilder().setGroupUUID(groupUuid).build();
     InternalGroupUpdate groupUpdate =
         InternalGroupUpdate.builder()
-            .setMemberModification(members -> ImmutableSet.of(account13.getId(), account7.getId()))
+            .setMemberModification(members -> ImmutableSet.of(account13.id(), account7.id()))
             .build();
 
     GroupConfig groupConfig = GroupConfig.createForNewGroup(projectName, repository, groupCreation);
@@ -1358,8 +1289,8 @@ public class GroupConfigTest {
 
   @Test
   public void commitMessageOfNewGroupWithSubgroupsContainsFooters() throws Exception {
-    GroupDescription.Basic group1 = createGroup(new AccountGroup.UUID("129403"), "Bots");
-    GroupDescription.Basic group2 = createGroup(new AccountGroup.UUID("8903493"), "Verifiers");
+    GroupDescription.Basic group1 = createGroup(AccountGroup.uuid("129403"), "Bots");
+    GroupDescription.Basic group2 = createGroup(AccountGroup.uuid("8903493"), "Verifiers");
     ImmutableSet<GroupDescription.Basic> groups = ImmutableSet.of(group1, group2);
 
     AuditLogFormatter auditLogFormatter =
@@ -1383,8 +1314,8 @@ public class GroupConfigTest {
 
   @Test
   public void commitMessageOfMemberAdditionContainsFooters() throws Exception {
-    Account account13 = createAccount(new Account.Id(13), "John");
-    Account account7 = createAccount(new Account.Id(7), "Jane");
+    Account account13 = createAccount(Account.id(13), "John");
+    Account account7 = createAccount(Account.id(7), "Jane");
     ImmutableSet<Account> accounts = ImmutableSet.of(account13, account7);
 
     createArbitraryGroup(groupUuid);
@@ -1394,7 +1325,7 @@ public class GroupConfigTest {
 
     InternalGroupUpdate groupUpdate =
         InternalGroupUpdate.builder()
-            .setMemberModification(members -> ImmutableSet.of(account13.getId(), account7.getId()))
+            .setMemberModification(members -> ImmutableSet.of(account13.id(), account7.id()))
             .build();
     updateGroup(groupUuid, groupUpdate, auditLogFormatter);
 
@@ -1405,8 +1336,8 @@ public class GroupConfigTest {
 
   @Test
   public void commitMessageOfMemberRemovalContainsFooters() throws Exception {
-    Account account13 = createAccount(new Account.Id(13), "John");
-    Account account7 = createAccount(new Account.Id(7), "Jane");
+    Account account13 = createAccount(Account.id(13), "John");
+    Account account7 = createAccount(Account.id(7), "Jane");
     ImmutableSet<Account> accounts = ImmutableSet.of(account13, account7);
 
     createArbitraryGroup(groupUuid);
@@ -1416,13 +1347,13 @@ public class GroupConfigTest {
 
     InternalGroupUpdate groupUpdate1 =
         InternalGroupUpdate.builder()
-            .setMemberModification(members -> ImmutableSet.of(account13.getId(), account7.getId()))
+            .setMemberModification(members -> ImmutableSet.of(account13.id(), account7.id()))
             .build();
     updateGroup(groupUuid, groupUpdate1, auditLogFormatter);
 
     InternalGroupUpdate groupUpdate2 =
         InternalGroupUpdate.builder()
-            .setMemberModification(members -> ImmutableSet.of(account7.getId()))
+            .setMemberModification(members -> ImmutableSet.of(account7.id()))
             .build();
     updateGroup(groupUuid, groupUpdate2, auditLogFormatter);
 
@@ -1432,8 +1363,8 @@ public class GroupConfigTest {
 
   @Test
   public void commitMessageOfSubgroupAdditionContainsFooters() throws Exception {
-    GroupDescription.Basic group1 = createGroup(new AccountGroup.UUID("129403"), "Bots");
-    GroupDescription.Basic group2 = createGroup(new AccountGroup.UUID("8903493"), "Verifiers");
+    GroupDescription.Basic group1 = createGroup(AccountGroup.uuid("129403"), "Bots");
+    GroupDescription.Basic group2 = createGroup(AccountGroup.uuid("8903493"), "Verifiers");
     ImmutableSet<GroupDescription.Basic> groups = ImmutableSet.of(group1, group2);
 
     createArbitraryGroup(groupUuid);
@@ -1455,8 +1386,8 @@ public class GroupConfigTest {
 
   @Test
   public void commitMessageOfSubgroupRemovalContainsFooters() throws Exception {
-    GroupDescription.Basic group1 = createGroup(new AccountGroup.UUID("129403"), "Bots");
-    GroupDescription.Basic group2 = createGroup(new AccountGroup.UUID("8903493"), "Verifiers");
+    GroupDescription.Basic group1 = createGroup(AccountGroup.uuid("129403"), "Bots");
+    GroupDescription.Basic group2 = createGroup(AccountGroup.uuid("8903493"), "Verifiers");
     ImmutableSet<GroupDescription.Basic> groups = ImmutableSet.of(group1, group2);
 
     createArbitraryGroup(groupUuid);
@@ -1487,11 +1418,11 @@ public class GroupConfigTest {
     createArbitraryGroup(groupUuid);
 
     InternalGroupUpdate groupUpdate1 =
-        InternalGroupUpdate.builder().setName(new AccountGroup.NameKey("Old name")).build();
+        InternalGroupUpdate.builder().setName(AccountGroup.nameKey("Old name")).build();
     updateGroup(groupUuid, groupUpdate1);
 
     InternalGroupUpdate groupUpdate2 =
-        InternalGroupUpdate.builder().setName(new AccountGroup.NameKey("New name")).build();
+        InternalGroupUpdate.builder().setName(AccountGroup.nameKey("New name")).build();
     updateGroup(groupUuid, groupUpdate2);
 
     RevCommit revCommit = getLatestCommitForGroup(groupUuid);
@@ -1501,11 +1432,11 @@ public class GroupConfigTest {
 
   @Test
   public void commitMessageFootersCanBeMixed() throws Exception {
-    Account account13 = createAccount(new Account.Id(13), "John");
-    Account account7 = createAccount(new Account.Id(7), "Jane");
+    Account account13 = createAccount(Account.id(13), "John");
+    Account account7 = createAccount(Account.id(7), "Jane");
     ImmutableSet<Account> accounts = ImmutableSet.of(account13, account7);
-    GroupDescription.Basic group1 = createGroup(new AccountGroup.UUID("129403"), "Bots");
-    GroupDescription.Basic group2 = createGroup(new AccountGroup.UUID("8903493"), "Verifiers");
+    GroupDescription.Basic group1 = createGroup(AccountGroup.uuid("129403"), "Bots");
+    GroupDescription.Basic group2 = createGroup(AccountGroup.uuid("8903493"), "Verifiers");
     ImmutableSet<GroupDescription.Basic> groups = ImmutableSet.of(group1, group2);
 
     createArbitraryGroup(groupUuid);
@@ -1515,16 +1446,16 @@ public class GroupConfigTest {
 
     InternalGroupUpdate groupUpdate1 =
         InternalGroupUpdate.builder()
-            .setName(new AccountGroup.NameKey("Old name"))
-            .setMemberModification(members -> ImmutableSet.of(account7.getId()))
+            .setName(AccountGroup.nameKey("Old name"))
+            .setMemberModification(members -> ImmutableSet.of(account7.id()))
             .setSubgroupModification(subgroups -> ImmutableSet.of(group2.getGroupUUID()))
             .build();
     updateGroup(groupUuid, groupUpdate1, auditLogFormatter);
 
     InternalGroupUpdate groupUpdate2 =
         InternalGroupUpdate.builder()
-            .setName(new AccountGroup.NameKey("New name"))
-            .setMemberModification(members -> ImmutableSet.of(account13.getId()))
+            .setName(AccountGroup.nameKey("New name"))
+            .setMemberModification(members -> ImmutableSet.of(account13.id()))
             .setSubgroupModification(subgroups -> ImmutableSet.of(group1.getGroupUUID()))
             .build();
     updateGroup(groupUuid, groupUpdate2, auditLogFormatter);
@@ -1632,7 +1563,7 @@ public class GroupConfigTest {
 
     MetaDataUpdate metaDataUpdate =
         new MetaDataUpdate(
-            GitReferenceUpdated.DISABLED, new Project.NameKey("Test Repository"), repository);
+            GitReferenceUpdated.DISABLED, Project.nameKey("Test Repository"), repository);
     metaDataUpdate.getCommitBuilder().setCommitter(serverIdent);
     metaDataUpdate.getCommitBuilder().setAuthor(serverIdent);
     return metaDataUpdate;
@@ -1650,9 +1581,9 @@ public class GroupConfigTest {
   }
 
   private static Account createAccount(Account.Id id, String name) {
-    Account account = new Account(id, TimeUtil.nowTs());
+    Account.Builder account = Account.builder(id, TimeUtil.nowTs());
     account.setFullName(name);
-    return account;
+    return account.build();
   }
 
   private static GroupDescription.Basic createGroup(AccountGroup.UUID uuid, String name) {
@@ -1683,6 +1614,6 @@ public class GroupConfigTest {
 
   private static OptionalSubject<InternalGroupSubject, InternalGroup> assertThatGroup(
       Optional<InternalGroup> loadedGroup) {
-    return assertThat(loadedGroup, InternalGroupSubject::assertThat);
+    return assertThat(loadedGroup, internalGroups());
   }
 }

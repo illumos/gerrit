@@ -1,34 +1,15 @@
 load("@rules_java//java:defs.bzl", "java_library")
-load("//tools/bzl:gwt.bzl", "gwt_module")
 
 ANNOTATIONS = [
     "Nullable.java",
-    "audit/Audit.java",
-    "auth/SignInRequired.java",
+    "UsedAt.java",
 ]
 
 java_library(
     name = "annotations",
     srcs = ANNOTATIONS,
     visibility = ["//visibility:public"],
-)
-
-gwt_module(
-    name = "client",
-    srcs = glob(["**/*.java"]),
-    exported_deps = [
-        "//java/com/google/gerrit/extensions:api",
-        "//java/com/google/gerrit/prettify:client",
-        "//lib:guava",
-        "//lib:gwtorm-client",
-        "//lib:servlet-api-3_1",
-        "//lib/auto:auto-value",
-        "//lib/auto:auto-value-annotations",
-        "//lib/flogger:api",
-        "//lib/jgit/org.eclipse.jgit:jgit",
-    ],
-    gwt_xml = "Common.gwt.xml",
-    visibility = ["//visibility:public"],
+    deps = ["//lib:guava"],
 )
 
 java_library(
@@ -40,18 +21,15 @@ java_library(
     visibility = ["//visibility:public"],
     deps = [
         ":annotations",
+        "//java/com/google/gerrit/entities",
         "//java/com/google/gerrit/extensions:api",
         "//java/com/google/gerrit/prettify:server",
-        "//java/com/google/gerrit/reviewdb:server",
-        "//java/org/eclipse/jgit:server",
         "//lib:guava",
-        "//lib:gwtjsonrpc",
-        "//lib:gwtorm",
-        "//lib:servlet-api-3_1",
+        "//lib:jgit",
+        "//lib:servlet-api",
         "//lib/auto:auto-value",
         "//lib/auto:auto-value-annotations",
         "//lib/flogger:api",
-        "//lib/jgit/org.eclipse.jgit:jgit",
     ],
 )
 

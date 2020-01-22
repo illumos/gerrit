@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-admin-view</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-admin-view.html">
 
@@ -99,13 +101,15 @@ limitations under the License.
       sandbox.stub(element.$.restAPI, 'getAccount').returns(Promise.resolve({
         name: 'test-user',
       }));
-      sandbox.stub(element.$.restAPI, 'getAccountCapabilities', () => {
-        return Promise.resolve({
-          createGroup: true,
-          createProject: true,
-          viewPlugins: true,
-        });
-      });
+      sandbox.stub(
+          element.$.restAPI,
+          'getAccountCapabilities',
+          () => Promise.resolve({
+            createGroup: true,
+            createProject: true,
+            viewPlugins: true,
+          })
+      );
       element.reload().then(() => {
         assert.equal(element._filteredLinks.length, 3);
 
@@ -125,9 +129,11 @@ limitations under the License.
       sandbox.stub(element.$.restAPI, 'getAccount').returns(Promise.resolve({
         name: 'test-user',
       }));
-      sandbox.stub(element.$.restAPI, 'getAccountCapabilities', () => {
-        return Promise.resolve({});
-      });
+      sandbox.stub(
+          element.$.restAPI,
+          'getAccountCapabilities',
+          () => Promise.resolve({})
+      );
       element.reload().then(() => {
         assert.equal(element._filteredLinks.length, 2);
 
@@ -158,6 +164,7 @@ limitations under the License.
       return element.reload().then(() => {
         assert.equal(element._filteredLinks.length, 3);
         assert.deepEqual(element._filteredLinks[1], {
+          capability: null,
           url: '/internal/link/url',
           name: 'internal link text',
           noBaseUrl: true,
@@ -166,6 +173,7 @@ limitations under the License.
           target: null,
         });
         assert.deepEqual(element._filteredLinks[2], {
+          capability: null,
           url: 'http://external/link/url',
           name: 'external link text',
           noBaseUrl: false,
@@ -181,19 +189,23 @@ limitations under the License.
       sandbox.stub(element.$.restAPI, 'getAccount').returns(Promise.resolve({
         name: 'test-user',
       }));
-      sandbox.stub(element.$.restAPI, 'getAccountCapabilities', () => {
-        return Promise.resolve({
-          createGroup: true,
-          createProject: true,
-          viewPlugins: true,
-        });
-      });
+      sandbox.stub(
+          element.$.restAPI,
+          'getAccountCapabilities',
+          () => Promise.resolve({
+            createGroup: true,
+            createProject: true,
+            viewPlugins: true,
+          }));
       element.reload().then(() => {
         flushAsynchronousOperations();
         assert.equal(Polymer.dom(element.root)
             .querySelectorAll('.sectionTitle').length, 3);
         assert.equal(element.$$('.breadcrumbText').innerText, 'Test Repo');
-        assert.equal(element.$$('#pageSelect').items.length, 6);
+        assert.equal(
+            element.shadowRoot.querySelector('#pageSelect').items.length,
+            6
+        );
         done();
       });
     });
@@ -207,13 +219,14 @@ limitations under the License.
       sandbox.stub(element.$.restAPI, 'getAccount').returns(Promise.resolve({
         name: 'test-user',
       }));
-      sandbox.stub(element.$.restAPI, 'getAccountCapabilities', () => {
-        return Promise.resolve({
-          createGroup: true,
-          createProject: true,
-          viewPlugins: true,
-        });
-      });
+      sandbox.stub(
+          element.$.restAPI,
+          'getAccountCapabilities',
+          () => Promise.resolve({
+            createGroup: true,
+            createProject: true,
+            viewPlugins: true,
+          }));
       element.reload().then(() => {
         flushAsynchronousOperations();
         assert.equal(element._filteredLinks.length, 3);
@@ -232,16 +245,18 @@ limitations under the License.
     });
 
     test('Nav is reloaded when repo changes', () => {
-      sandbox.stub(element.$.restAPI, 'getAccountCapabilities', () => {
-        return Promise.resolve({
-          createGroup: true,
-          createProject: true,
-          viewPlugins: true,
-        });
-      });
-      sandbox.stub(element.$.restAPI, 'getAccount', () => {
-        return Promise.resolve({_id: 1});
-      });
+      sandbox.stub(
+          element.$.restAPI,
+          'getAccountCapabilities',
+          () => Promise.resolve({
+            createGroup: true,
+            createProject: true,
+            viewPlugins: true,
+          }));
+      sandbox.stub(
+          element.$.restAPI,
+          'getAccount',
+          () => Promise.resolve({_id: 1}));
       sandbox.stub(element, 'reload');
       element.params = {repo: 'Test Repo', adminView: 'gr-repo'};
       assert.equal(element.reload.callCount, 1);
@@ -252,16 +267,18 @@ limitations under the License.
 
     test('Nav is reloaded when group changes', () => {
       sandbox.stub(element, '_computeGroupName');
-      sandbox.stub(element.$.restAPI, 'getAccountCapabilities', () => {
-        return Promise.resolve({
-          createGroup: true,
-          createProject: true,
-          viewPlugins: true,
-        });
-      });
-      sandbox.stub(element.$.restAPI, 'getAccount', () => {
-        return Promise.resolve({_id: 1});
-      });
+      sandbox.stub(
+          element.$.restAPI,
+          'getAccountCapabilities',
+          () => Promise.resolve({
+            createGroup: true,
+            createProject: true,
+            viewPlugins: true,
+          }));
+      sandbox.stub(
+          element.$.restAPI,
+          'getAccount',
+          () => Promise.resolve({_id: 1}));
       sandbox.stub(element, 'reload');
       element.params = {groupId: '1', adminView: 'gr-group'};
       assert.equal(element.reload.callCount, 1);
@@ -297,7 +314,9 @@ limitations under the License.
       assert.isOk(element.$$('.mainHeader'));
       element._subsectionLinks = undefined;
       flushAsynchronousOperations();
-      assert.equal(getComputedStyle(element.$$('.mainHeader')).display, 'none');
+      assert.equal(
+          getComputedStyle(element.$$('.mainHeader')).display,
+          'none');
     });
 
     test('Dropdown only triggers navigation on explicit select', done => {
@@ -307,16 +326,18 @@ limitations under the License.
         view: Gerrit.Nav.View.REPO,
         detail: Gerrit.Nav.RepoDetailView.ACCESS,
       };
-      sandbox.stub(element.$.restAPI, 'getAccountCapabilities', () => {
-        return Promise.resolve({
-          createGroup: true,
-          createProject: true,
-          viewPlugins: true,
-        });
-      });
-      sandbox.stub(element.$.restAPI, 'getAccount', () => {
-        return Promise.resolve({_id: 1});
-      });
+      sandbox.stub(
+          element.$.restAPI,
+          'getAccountCapabilities',
+          () => Promise.resolve({
+            createGroup: true,
+            createProject: true,
+            viewPlugins: true,
+          }));
+      sandbox.stub(
+          element.$.restAPI,
+          'getAccount',
+          () => Promise.resolve({_id: 1}));
       flushAsynchronousOperations();
       const expectedFilteredLinks = [
         {
@@ -435,13 +456,16 @@ limitations under the License.
       element.reload().then(() => {
         assert.deepEqual(element._filteredLinks, expectedFilteredLinks);
         assert.deepEqual(element._subsectionLinks, expectedSubsectionLinks);
-        assert.equal(element.$$('#pageSelect').value, 'repoaccess');
+        assert.equal(
+            element.shadowRoot.querySelector('#pageSelect').value,
+            'repoaccess'
+        );
         assert.isTrue(element._selectedIsCurrentPage.calledOnce);
         // Doesn't trigger navigation from the page select menu.
         assert.isFalse(Gerrit.Nav.navigateToRelativeUrl.called);
 
         // When explicitly changed, navigation is called
-        element.$$('#pageSelect').value = 'repo';
+        element.shadowRoot.querySelector('#pageSelect').value = 'repo';
         assert.isTrue(element._selectedIsCurrentPage.calledTwice);
         assert.isTrue(Gerrit.Nav.navigateToRelativeUrl.calledOnce);
         done();
@@ -465,16 +489,18 @@ limitations under the License.
 
     suite('_computeSelectedClass', () => {
       setup(() => {
-        sandbox.stub(element.$.restAPI, 'getAccountCapabilities', () => {
-          return Promise.resolve({
-            createGroup: true,
-            createProject: true,
-            viewPlugins: true,
-          });
-        });
-        sandbox.stub(element.$.restAPI, 'getAccount', () => {
-          return Promise.resolve({_id: 1});
-        });
+        sandbox.stub(
+            element.$.restAPI,
+            'getAccountCapabilities',
+            () => Promise.resolve({
+              createGroup: true,
+              createProject: true,
+              viewPlugins: true,
+            }));
+        sandbox.stub(
+            element.$.restAPI,
+            'getAccount',
+            () => Promise.resolve({_id: 1}));
 
         return element.reload();
       });

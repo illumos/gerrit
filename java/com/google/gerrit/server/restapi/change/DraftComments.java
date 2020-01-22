@@ -14,19 +14,17 @@
 
 package com.google.gerrit.server.restapi.change;
 
+import com.google.gerrit.entities.Comment;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.ChildCollection;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.RestView;
-import com.google.gerrit.reviewdb.client.Comment;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.CommentsUtil;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.change.DraftCommentResource;
 import com.google.gerrit.server.change.RevisionResource;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -36,7 +34,6 @@ public class DraftComments implements ChildCollection<RevisionResource, DraftCom
   private final DynamicMap<RestView<DraftCommentResource>> views;
   private final Provider<CurrentUser> user;
   private final ListRevisionDrafts list;
-  private final Provider<ReviewDb> dbProvider;
   private final CommentsUtil commentsUtil;
 
   @Inject
@@ -44,12 +41,10 @@ public class DraftComments implements ChildCollection<RevisionResource, DraftCom
       DynamicMap<RestView<DraftCommentResource>> views,
       Provider<CurrentUser> user,
       ListRevisionDrafts list,
-      Provider<ReviewDb> dbProvider,
       CommentsUtil commentsUtil) {
     this.views = views;
     this.user = user;
     this.list = list;
-    this.dbProvider = dbProvider;
     this.commentsUtil = commentsUtil;
   }
 
@@ -66,12 +61,12 @@ public class DraftComments implements ChildCollection<RevisionResource, DraftCom
 
   @Override
   public DraftCommentResource parse(RevisionResource rev, IdString id)
-      throws ResourceNotFoundException, OrmException, AuthException {
+      throws ResourceNotFoundException, AuthException {
     checkIdentifiedUser();
     String uuid = id.get();
     for (Comment c :
         commentsUtil.draftByPatchSetAuthor(
-            dbProvider.get(), rev.getPatchSet().getId(), rev.getAccountId(), rev.getNotes())) {
+            rev.getPatchSet().id(), rev.getAccountId(), rev.getNotes())) {
       if (uuid.equals(c.key.uuid)) {
         return new DraftCommentResource(rev, c);
       }

@@ -18,12 +18,10 @@ import com.google.gerrit.common.data.SubmitRecord;
 import com.google.gerrit.common.data.SubmitTypeRecord;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectState;
-import com.google.gerrit.server.project.SubmitRuleOptions;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
-import java.util.Collection;
-import java.util.Collections;
+import java.util.Optional;
 
 @Singleton
 public class PrologRule implements SubmitRule {
@@ -37,21 +35,29 @@ public class PrologRule implements SubmitRule {
   }
 
   @Override
-  public Collection<SubmitRecord> evaluate(ChangeData cd, SubmitRuleOptions opts) {
+  public Optional<SubmitRecord> evaluate(ChangeData cd) {
     ProjectState projectState = projectCache.get(cd.project());
     // We only want to run the Prolog engine if we have at least one rules.pl file to use.
-    if ((projectState == null || !projectState.hasPrologRules()) && opts.rule() == null) {
-      return Collections.emptyList();
+    if ((projectState == null || !projectState.hasPrologRules())) {
+      return Optional.empty();
     }
 
+    return Optional.of(evaluate(cd, PrologOptions.defaultOptions()));
+  }
+
+  public SubmitRecord evaluate(ChangeData cd, PrologOptions opts) {
     return getEvaluator(cd, opts).evaluate();
   }
 
-  private PrologRuleEvaluator getEvaluator(ChangeData cd, SubmitRuleOptions opts) {
-    return factory.create(cd, opts);
+  public SubmitTypeRecord getSubmitType(ChangeData cd) {
+    return getSubmitType(cd, PrologOptions.defaultOptions());
   }
 
-  public SubmitTypeRecord getSubmitType(ChangeData cd, SubmitRuleOptions opts) {
+  public SubmitTypeRecord getSubmitType(ChangeData cd, PrologOptions opts) {
     return getEvaluator(cd, opts).getSubmitType();
+  }
+
+  private PrologRuleEvaluator getEvaluator(ChangeData cd, PrologOptions opts) {
+    return factory.create(cd, opts);
   }
 }

@@ -15,7 +15,7 @@
 package com.google.gerrit.server.mail.send;
 
 import com.google.common.base.Joiner;
-import com.google.gerrit.common.errors.EmailException;
+import com.google.gerrit.exceptions.EmailException;
 import com.google.gerrit.extensions.api.changes.RecipientType;
 import com.google.gerrit.mail.Address;
 import com.google.gerrit.server.IdentifiedUser;
@@ -25,6 +25,9 @@ import com.google.inject.assistedinject.AssistedInject;
 import java.util.Collections;
 import java.util.List;
 
+/**
+ * Sender that informs a user by email about the removal of an SSH or GPG key from their account.
+ */
 public class DeleteKeySender extends OutgoingEmail {
   public interface Factory {
     DeleteKeySender create(IdentifiedUser user, AccountSshKey sshKey);
@@ -38,8 +41,8 @@ public class DeleteKeySender extends OutgoingEmail {
 
   @AssistedInject
   public DeleteKeySender(
-      EmailArguments ea, @Assisted IdentifiedUser user, @Assisted AccountSshKey sshKey) {
-    super(ea, "deletekey");
+      EmailArguments args, @Assisted IdentifiedUser user, @Assisted AccountSshKey sshKey) {
+    super(args, "deletekey");
     this.user = user;
     this.gpgKeyFingerprints = Collections.emptyList();
     this.sshKey = sshKey;
@@ -47,8 +50,10 @@ public class DeleteKeySender extends OutgoingEmail {
 
   @AssistedInject
   public DeleteKeySender(
-      EmailArguments ea, @Assisted IdentifiedUser user, @Assisted List<String> gpgKeyFingerprints) {
-    super(ea, "deletekey");
+      EmailArguments args,
+      @Assisted IdentifiedUser user,
+      @Assisted List<String> gpgKeyFingerprints) {
+    super(args, "deletekey");
     this.user = user;
     this.gpgKeyFingerprints = gpgKeyFingerprints;
     this.sshKey = null;
@@ -74,15 +79,26 @@ public class DeleteKeySender extends OutgoingEmail {
     }
   }
 
-  public String getEmail() {
-    return user.getAccount().getPreferredEmail();
+  @Override
+  protected void setupSoyContext() {
+    super.setupSoyContext();
+    soyContextEmailData.put("email", getEmail());
+    soyContextEmailData.put("gpgKeyFingerprints", getGpgKeyFingerprints());
+    soyContextEmailData.put("keyType", getKeyType());
+    soyContextEmailData.put("sshKey", getSshKey());
+    soyContextEmailData.put("userNameEmail", getUserNameEmailFor(user.getAccountId()));
   }
 
-  public String getUserNameEmail() {
-    return getUserNameEmailFor(user.getAccountId());
+  @Override
+  protected boolean supportsHtml() {
+    return true;
   }
 
-  public String getKeyType() {
+  private String getEmail() {
+    return user.getAccount().preferredEmail();
+  }
+
+  private String getKeyType() {
     if (sshKey != null) {
       return "SSH";
     } else if (gpgKeyFingerprints != null) {
@@ -91,29 +107,14 @@ public class DeleteKeySender extends OutgoingEmail {
     throw new IllegalStateException("key type is not SSH or GPG");
   }
 
-  public String getSshKey() {
+  private String getSshKey() {
     return (sshKey != null) ? sshKey.sshPublicKey() + "\n" : null;
   }
 
-  public String getGpgKeyFingerprints() {
+  private String getGpgKeyFingerprints() {
     if (!gpgKeyFingerprints.isEmpty()) {
       return Joiner.on("\n").join(gpgKeyFingerprints);
     }
     return null;
-  }
-
-  @Override
-  protected void setupSoyContext() {
-    super.setupSoyContext();
-    soyContextEmailData.put("email", getEmail());
-    soyContextEmailData.put("gpgKeyFingerprints", getGpgKeyFingerprints());
-    soyContextEmailData.put("keyType", getKeyType());
-    soyContextEmailData.put("sshKey", getSshKey());
-    soyContextEmailData.put("userNameEmail", getUserNameEmail());
-  }
-
-  @Override
-  protected boolean supportsHtml() {
-    return true;
   }
 }

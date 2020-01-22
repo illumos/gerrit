@@ -15,7 +15,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../styles/shared-styles.html">
 <link rel="import" href="../../shared/gr-button/gr-button.html">
 <link rel="import" href="../../shared/gr-diff-preferences/gr-diff-preferences.html">
@@ -26,7 +27,7 @@ limitations under the License.
     <style include="shared-styles">
       .diffHeader,
       .diffActions {
-        padding: 1em 1.5em;
+        padding: var(--spacing-l) var(--spacing-xl);
       }
       .diffHeader,
       .diffActions {
@@ -42,7 +43,7 @@ limitations under the License.
         justify-content: flex-end;
       }
       .diffPrefsOverlay gr-button {
-        margin-left: 1em;
+        margin-left: var(--spacing-l);
       }
       div.edited:after {
         color: var(--deemphasized-text-color);
@@ -50,7 +51,7 @@ limitations under the License.
       }
       #diffPreferences {
         display: flex;
-        padding: .35em 1.5em;
+        padding: var(--spacing-s) var(--spacing-xl);
       }
     </style>
     <gr-overlay id="diffPrefsOverlay" with-backdrop>
@@ -63,13 +64,13 @@ limitations under the License.
         <gr-button
             id="cancelButton"
             link
-            on-tap="_handleCancelDiff">
+            on-click="_handleCancelDiff">
             Cancel
         </gr-button>
         <gr-button
             id="saveButton"
             link primary
-            on-tap="_handleSaveDiffPreferences"
+            on-click="_handleSaveDiffPreferences"
             disabled$="[[!_diffPrefsChanged]]">
             Save
         </gr-button>

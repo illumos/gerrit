@@ -14,7 +14,8 @@
 
 package com.google.gerrit.sshd;
 
-import com.google.gerrit.reviewdb.client.Account;
+import com.google.common.io.BaseEncoding;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.AccountSshKey;
@@ -28,14 +29,10 @@ import java.security.PublicKey;
 import java.security.interfaces.DSAPublicKey;
 import java.security.interfaces.RSAPublicKey;
 import java.security.spec.InvalidKeySpecException;
-import org.apache.commons.codec.binary.Base64;
 import org.apache.sshd.common.SshException;
-import org.apache.sshd.common.future.CloseFuture;
-import org.apache.sshd.common.future.SshFutureListener;
 import org.apache.sshd.common.keyprovider.KeyPairProvider;
 import org.apache.sshd.common.util.buffer.ByteArrayBuffer;
 import org.apache.sshd.server.session.ServerSession;
-import org.eclipse.jgit.lib.Constants;
 
 /** Utilities to support SSH operations. */
 public class SshUtil {
@@ -55,7 +52,7 @@ public class SshUtil {
       if (s == null) {
         throw new InvalidKeySpecException("No key string");
       }
-      final byte[] bin = Base64.decodeBase64(Constants.encodeASCII(s));
+      final byte[] bin = BaseEncoding.base64().decode(s);
       return new ByteArrayBuffer(bin).getRawPublicKey();
     } catch (RuntimeException | SshException e) {
       throw new InvalidKeySpecException("Cannot parse key", e);
@@ -93,8 +90,7 @@ public class SshUtil {
       }
 
       final PublicKey key =
-          new ByteArrayBuffer(Base64.decodeBase64(Constants.encodeASCII(strBuf.toString())))
-              .getRawPublicKey();
+          new ByteArrayBuffer(BaseEncoding.base64().decode(strBuf.toString())).getRawPublicKey();
       if (key instanceof RSAPublicKey) {
         strBuf.insert(0, KeyPairProvider.SSH_RSA + " ");
 
@@ -127,7 +123,7 @@ public class SshUtil {
       // session, record a login event in the log and add
       // a close listener to record a logout event.
       //
-      Context ctx = sshScope.newContext(null, sd, null);
+      Context ctx = sshScope.newContext(sd, null);
       Context old = sshScope.set(ctx);
       try {
         sshLog.onLogin();
@@ -136,16 +132,13 @@ public class SshUtil {
       }
 
       session.addCloseFutureListener(
-          new SshFutureListener<CloseFuture>() {
-            @Override
-            public void operationComplete(CloseFuture future) {
-              final Context ctx = sshScope.newContext(null, sd, null);
-              final Context old = sshScope.set(ctx);
-              try {
-                sshLog.onLogout();
-              } finally {
-                sshScope.set(old);
-              }
+          future -> {
+            final Context ctx1 = sshScope.newContext(sd, null);
+            final Context old1 = sshScope.set(ctx1);
+            try {
+              sshLog.onLogout();
+            } finally {
+              sshScope.set(old1);
             }
           });
     }

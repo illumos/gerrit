@@ -15,7 +15,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../behaviors/keyboard-shortcut-behavior/keyboard-shortcut-behavior.html">
 <link rel="import" href="../../shared/gr-button/gr-button.html">
 <link rel="import" href="../gr-key-binding-display/gr-key-binding-display.html">
@@ -30,11 +31,11 @@ limitations under the License.
         overflow-y: auto;
       }
       header{
-        padding: 1em;
+        padding: var(--spacing-l);
       }
       main {
         display: flex;
-        padding: 0 2em 2em;
+        padding: 0 var(--spacing-xxl) var(--spacing-xxl);
       }
       header {
         align-items: center;
@@ -43,18 +44,18 @@ limitations under the License.
         justify-content: space-between;
       }
       table:last-of-type {
-        margin-left: 3em;
+        margin-left: var(--spacing-xxl);
       }
       td {
-        padding: .2em 0;
+        padding: var(--spacing-xs) 0;
       }
       td:first-child {
-        padding-right: .5em;
+        padding-right: var(--spacing-m);
         text-align: right;
       }
       .header {
         font-weight: var(--font-weight-bold);
-        padding-top: 1em;
+        padding-top: var(--spacing-l);
       }
       .modifier {
         font-weight: normal;
@@ -62,7 +63,7 @@ limitations under the License.
     </style>
     <header>
       <h3>Keyboard shortcuts</h3>
-      <gr-button link on-tap="_handleCloseTap">Close</gr-button>
+      <gr-button link on-click="_handleCloseTap">Close</gr-button>
     </header>
     <main>
       <table>

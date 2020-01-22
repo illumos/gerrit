@@ -15,6 +15,7 @@
 package com.google.gerrit.server.restapi.account;
 
 import com.google.common.base.Strings;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo;
 import com.google.gerrit.extensions.config.DownloadScheme;
 import com.google.gerrit.extensions.registration.DynamicMap;
@@ -22,25 +23,35 @@ import com.google.gerrit.extensions.registration.Extension;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestModifyView;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.UserInitiated;
 import com.google.gerrit.server.account.AccountResource;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.account.AccountsUpdate;
-import com.google.gerrit.server.account.Preferences;
+import com.google.gerrit.server.account.StoredPreferences;
 import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 
+/**
+ * REST endpoint to set general preferences for an account.
+ *
+ * <p>This REST endpoint handles {@code PUT /accounts/<account-identifier>/preferences} requests.
+ *
+ * <p>Diff preferences can be set by {@link SetDiffPreferences} and edit preferences can be set by
+ * {@link SetEditPreferences}.
+ *
+ * <p>Default general preferences that apply for all accounts can be set by {@link
+ * com.google.gerrit.server.restapi.config.SetPreferences}.
+ */
 @Singleton
 public class SetPreferences implements RestModifyView<AccountResource, GeneralPreferencesInfo> {
   private final Provider<CurrentUser> self;
@@ -61,22 +72,22 @@ public class SetPreferences implements RestModifyView<AccountResource, GeneralPr
   }
 
   @Override
-  public GeneralPreferencesInfo apply(AccountResource rsrc, GeneralPreferencesInfo input)
-      throws RestApiException, IOException, ConfigInvalidException, PermissionBackendException,
-          OrmException {
+  public Response<GeneralPreferencesInfo> apply(AccountResource rsrc, GeneralPreferencesInfo input)
+      throws RestApiException, IOException, ConfigInvalidException, PermissionBackendException {
     if (!self.get().hasSameAccountId(rsrc.getUser())) {
       permissionBackend.currentUser().check(GlobalPermission.MODIFY_ACCOUNT);
     }
 
     checkDownloadScheme(input.downloadScheme);
-    Preferences.validateMy(input.my);
+    StoredPreferences.validateMy(input.my);
     Account.Id id = rsrc.getUser().getAccountId();
 
-    return accountsUpdateProvider
-        .get()
-        .update("Set General Preferences via API", id, u -> u.setGeneralPreferences(input))
-        .map(AccountState::getGeneralPreferences)
-        .orElseThrow(() -> new ResourceNotFoundException(IdString.fromDecoded(id.toString())));
+    return Response.ok(
+        accountsUpdateProvider
+            .get()
+            .update("Set General Preferences via API", id, u -> u.setGeneralPreferences(input))
+            .map(AccountState::generalPreferences)
+            .orElseThrow(() -> new ResourceNotFoundException(IdString.fromDecoded(id.toString()))));
   }
 
   private void checkDownloadScheme(String downloadScheme) throws BadRequestException {

@@ -32,13 +32,19 @@ import com.google.gerrit.server.account.Realm;
 import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 
+/**
+ * REST endpoint to set the full name of an account.
+ *
+ * <p>This REST endpoint handles {@code PUT /accounts/<account-identifier>/name} requests.
+ *
+ * <p>Whether a full name can be set depends on whether the used {@link Realm} supports this.
+ */
 @Singleton
 public class PutName implements RestModifyView<AccountResource, NameInput> {
   private final Provider<CurrentUser> self;
@@ -60,8 +66,8 @@ public class PutName implements RestModifyView<AccountResource, NameInput> {
 
   @Override
   public Response<String> apply(AccountResource rsrc, NameInput input)
-      throws AuthException, MethodNotAllowedException, ResourceNotFoundException, OrmException,
-          IOException, PermissionBackendException, ConfigInvalidException {
+      throws AuthException, MethodNotAllowedException, ResourceNotFoundException, IOException,
+          PermissionBackendException, ConfigInvalidException {
     if (!self.get().hasSameAccountId(rsrc.getUser())) {
       permissionBackend.currentUser().check(GlobalPermission.MODIFY_ACCOUNT);
     }
@@ -70,7 +76,7 @@ public class PutName implements RestModifyView<AccountResource, NameInput> {
 
   public Response<String> apply(IdentifiedUser user, NameInput input)
       throws MethodNotAllowedException, ResourceNotFoundException, IOException,
-          ConfigInvalidException, OrmException {
+          ConfigInvalidException {
     if (input == null) {
       input = new NameInput();
     }
@@ -85,8 +91,8 @@ public class PutName implements RestModifyView<AccountResource, NameInput> {
             .get()
             .update("Set Full Name via API", user.getAccountId(), u -> u.setFullName(newName))
             .orElseThrow(() -> new ResourceNotFoundException("account not found"));
-    return Strings.isNullOrEmpty(accountState.getAccount().getFullName())
+    return Strings.isNullOrEmpty(accountState.account().fullName())
         ? Response.none()
-        : Response.ok(accountState.getAccount().getFullName());
+        : Response.ok(accountState.account().fullName());
   }
 }

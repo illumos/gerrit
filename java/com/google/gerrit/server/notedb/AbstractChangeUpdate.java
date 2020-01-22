@@ -19,20 +19,17 @@ import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Comment;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Comment;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.InternalUser;
-import com.google.gwtorm.server.OrmException;
 import java.io.IOException;
-import java.sql.Timestamp;
 import java.util.Date;
 import org.eclipse.jgit.lib.CommitBuilder;
-import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
@@ -44,31 +41,26 @@ import org.eclipse.jgit.revwalk.RevWalk;
 public abstract class AbstractChangeUpdate {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
-  protected final NotesMigration migration;
   protected final ChangeNoteUtil noteUtil;
   protected final Account.Id accountId;
   protected final Account.Id realAccountId;
   protected final PersonIdent authorIdent;
   protected final Date when;
-  private final long readOnlySkewMs;
 
   @Nullable private final ChangeNotes notes;
   private final Change change;
   protected final PersonIdent serverIdent;
 
-  protected PatchSet.Id psId;
+  @Nullable protected PatchSet.Id psId;
   private ObjectId result;
-  protected boolean rootOnly;
+  boolean rootOnly;
 
-  protected AbstractChangeUpdate(
-      Config cfg,
-      NotesMigration migration,
+  AbstractChangeUpdate(
       ChangeNotes notes,
       CurrentUser user,
       PersonIdent serverIdent,
       ChangeNoteUtil noteUtil,
       Date when) {
-    this.migration = migration;
     this.noteUtil = noteUtil;
     this.serverIdent = new PersonIdent(serverIdent, when);
     this.notes = notes;
@@ -78,12 +70,9 @@ public abstract class AbstractChangeUpdate {
     this.realAccountId = realAccountId != null ? realAccountId : accountId;
     this.authorIdent = ident(noteUtil, serverIdent, user, when);
     this.when = when;
-    this.readOnlySkewMs = NoteDbChangeState.getReadOnlySkew(cfg);
   }
 
-  protected AbstractChangeUpdate(
-      Config cfg,
-      NotesMigration migration,
+  AbstractChangeUpdate(
       ChangeNoteUtil noteUtil,
       PersonIdent serverIdent,
       @Nullable ChangeNotes notes,
@@ -95,7 +84,6 @@ public abstract class AbstractChangeUpdate {
     checkArgument(
         (notes != null && change == null) || (notes == null && change != null),
         "exactly one of notes or change required");
-    this.migration = migration;
     this.noteUtil = noteUtil;
     this.serverIdent = new PersonIdent(serverIdent, when);
     this.notes = notes;
@@ -104,7 +92,6 @@ public abstract class AbstractChangeUpdate {
     this.realAccountId = realAccountId;
     this.authorIdent = authorIdent;
     this.when = when;
-    this.readOnlySkewMs = NoteDbChangeState.getReadOnlySkew(cfg);
   }
 
   private static void checkUserType(CurrentUser user) {
@@ -160,7 +147,7 @@ public abstract class AbstractChangeUpdate {
   }
 
   public void setPatchSetId(PatchSet.Id psId) {
-    checkArgument(psId == null || psId.getParentKey().equals(getId()));
+    checkArgument(psId == null || psId.changeId().equals(getId()));
     this.psId = psId;
   }
 
@@ -185,7 +172,7 @@ public abstract class AbstractChangeUpdate {
   public abstract boolean isEmpty();
 
   /** Wether this update can only be a root commit. */
-  public boolean isRootOnly() {
+  boolean isRootOnly() {
     return rootOnly;
   }
 
@@ -198,6 +185,14 @@ public abstract class AbstractChangeUpdate {
   protected abstract String getRefName();
 
   /**
+   * Whether to allow bypassing the check that an update does not exceed the max update count on an
+   * object.
+   */
+  protected boolean bypassMaxUpdates() {
+    return false;
+  }
+
+  /**
    * Apply this update to the given inserter.
    *
    * @param rw walk for reading back any objects needed for the update.
@@ -206,21 +201,14 @@ public abstract class AbstractChangeUpdate {
    * @return commit ID produced by inserting this update's commit, or null if this update is a no-op
    *     and should be skipped. The zero ID is a valid return value, and indicates the ref should be
    *     deleted.
-   * @throws OrmException if a Gerrit-level error occurred.
    * @throws IOException if a lower-level error occurred.
    */
-  final ObjectId apply(RevWalk rw, ObjectInserter ins, ObjectId curr)
-      throws OrmException, IOException {
+  final ObjectId apply(RevWalk rw, ObjectInserter ins, ObjectId curr) throws IOException {
     if (isEmpty()) {
       return null;
     }
 
-    // Allow this method to proceed even if migration.failChangeWrites() = true.
-    // This may be used by an auto-rebuilding step that the caller does not plan
-    // to actually store.
-
     checkArgument(rw.getObjectReader().getCreatedFromInserter() == ins);
-    checkNotReadOnly();
 
     logger.atFinest().log(
         "%s for change %s of project %s in %s (NoteDb)",
@@ -253,18 +241,6 @@ public abstract class AbstractChangeUpdate {
     return result;
   }
 
-  protected void checkNotReadOnly() throws OrmException {
-    ChangeNotes notes = getNotes();
-    if (notes == null) {
-      // Can only happen during ChangeRebuilder, which will never include a read-only lease.
-      return;
-    }
-    Timestamp until = notes.getReadOnlyUntil();
-    if (until != null && NoteDbChangeState.timeForReadOnlyCheck(readOnlySkewMs).before(until)) {
-      throw new OrmException("change " + notes.getChangeId() + " is read-only until " + until);
-    }
-  }
-
   /**
    * Create a commit containing the contents of this update.
    *
@@ -275,13 +251,12 @@ public abstract class AbstractChangeUpdate {
    *     indicates to the caller that it should be copied from the parent commit. To indicate that
    *     this update is a no-op (but this could not be determined by {@link #isEmpty()}), return the
    *     sentinel {@link #NO_OP_UPDATE}.
-   * @throws OrmException if a Gerrit-level error occurred.
    * @throws IOException if a lower-level error occurred.
    */
   protected abstract CommitBuilder applyImpl(RevWalk rw, ObjectInserter ins, ObjectId curr)
-      throws OrmException, IOException;
+      throws IOException;
 
-  protected static final CommitBuilder NO_OP_UPDATE = new CommitBuilder();
+  static final CommitBuilder NO_OP_UPDATE = new CommitBuilder();
 
   ObjectId getResult() {
     return result;
@@ -295,8 +270,8 @@ public abstract class AbstractChangeUpdate {
     return ins.insert(Constants.OBJ_TREE, new byte[] {});
   }
 
-  protected void verifyComment(Comment c) {
-    checkArgument(c.revId != null, "RevId required for comment: %s", c);
+  void verifyComment(Comment c) {
+    checkArgument(c.getCommitId() != null, "commit ID required for comment: %s", c);
     checkArgument(
         c.author.getId().equals(getAccountId()),
         "The author for the following comment does not match the author of this %s (%s): %s",

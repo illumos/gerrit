@@ -15,9 +15,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
-<link rel="import" href="../../../bower_components/iron-icon/iron-icon.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/iron-icon/iron-icon.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../shared/gr-account-label/gr-account-label.html">
+<link rel="import" href="../../shared/gr-account-chip/gr-account-chip.html">
 <link rel="import" href="../../shared/gr-button/gr-button.html">
 <link rel="import" href="../../shared/gr-date-formatter/gr-date-formatter.html">
 <link rel="import" href="../../shared/gr-formatted-text/gr-formatted-text.html">
@@ -29,23 +31,26 @@ limitations under the License.
 
 <dom-module id="gr-message">
   <template>
-    <style include="gr-voting-styles"></style>
+    <style include="gr-voting-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <style include="shared-styles">
       :host {
         border-bottom: 1px solid var(--border-color);
         display: block;
         position: relative;
         cursor: pointer;
+        overflow-y: hidden;
       }
       :host(.expanded) {
         cursor: auto;
       }
       :host > div {
-        padding: 0 var(--default-horizontal-margin);
+        padding: 0 var(--spacing-l);
       }
       gr-avatar {
         position: absolute;
-        left: var(--default-horizontal-margin);
+        left: var(--spacing-l);
       }
       .collapsed .contentContainer {
         align-items: baseline;
@@ -54,11 +59,11 @@ limitations under the License.
         white-space: nowrap;
       }
       .contentContainer {
-        margin-left: calc(var(--default-horizontal-margin) + 2.5em);
-        padding: 10px 0;
+        margin-left: calc(var(--spacing-l) + 2.5em);
+        padding: var(--spacing-m) 0;
       }
       .showAvatar.collapsed .contentContainer {
-        margin-left: calc(var(--default-horizontal-margin) + 1.75em);
+        margin-left: calc(var(--spacing-l) + 1.75em);
       }
       .hideAvatar.collapsed .contentContainer,
       .hideAvatar.expanded .contentContainer {
@@ -67,17 +72,17 @@ limitations under the License.
       .showAvatar.collapsed .contentContainer,
       .hideAvatar.collapsed .contentContainer,
       .hideAvatar.expanded .contentContainer {
-        padding: .75em 0;
+        padding: var(--spacing-m) 0;
       }
       .collapsed gr-avatar {
-        top: .5em;
-        height: 1.75em;
-        width: 1.75em;
+        top: var(--spacing-m);
+        height: var(--line-height-normal);
+        width: var(--line-height-normal);
       }
       .expanded gr-avatar {
-        top: 12px;
-        height: 2.5em;
-        width: 2.5em;
+        top: var(--spacing-l);
+        height: var(--line-height-h1);
+        width: var(--line-height-h1);
       }
       .name {
         font-weight: var(--font-weight-bold);
@@ -111,7 +116,7 @@ limitations under the License.
       }
       .collapsed .content {
         flex: 1;
-        margin-right: .25em;
+        margin-right: var(--spacing-xs);
         min-width: 0;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -122,33 +127,37 @@ limitations under the License.
       .collapsed .author {
         overflow: hidden;
         color: var(--primary-text-color);
-        margin-right: .4em;
+        margin-right: var(--spacing-s);
       }
       .expanded .author {
         cursor: pointer;
-        margin-bottom: .4em;
+        margin-bottom: var(--spacing-s);
       }
       .dateContainer {
         position: absolute;
-        right: var(--default-horizontal-margin);
+        right: var(--spacing-l);
         top: 10px;
       }
-      .date {
+      span.date {
         color: var(--deemphasized-text-color);
+      }
+      span.date:hover {
+        text-decoration: underline;
       }
       .dateContainer iron-icon {
         cursor: pointer;
+        vertical-align: top;
       }
       .replyContainer {
-        padding: .5em 0 0 0;
+        padding: var(--spacing-m) 0 0 0;
       }
       .score {
         border: 1px solid rgba(0,0,0,.12);
-        border-radius: 3px;
+        border-radius: var(--border-radius);
         color: var(--primary-text-color);
         display: inline-block;
-        margin: -.1em 0;
-        padding: 0 .1em;
+        margin: -1px 0;
+        padding: 0 var(--spacing-xxs);
       }
       .score.negative {
         background-color: var(--vote-color-disliked);
@@ -171,7 +180,7 @@ limitations under the License.
     <div class$="[[_computeClass(_expanded, showAvatar, message)]]">
       <gr-avatar account="[[author]]" image-size="100"></gr-avatar>
       <div class="contentContainer">
-        <div class="author" on-tap="_handleAuthorTap">
+        <div class="author" on-click="_handleAuthorClick">
           <span hidden$="[[!showOnBehalfOf]]">
             <span class="name">[[message.real_author.name]]</span>
             on behalf of
@@ -194,7 +203,7 @@ limitations under the License.
                 content="[[message.message]]"
                 config="[[_projectConfig.commentlinks]]"></gr-formatted-text>
             <div class="replyContainer" hidden$="[[!showReplyButton]]" hidden>
-              <gr-button link small on-tap="_handleReplyTap">Reply</gr-button>
+              <gr-button link small on-click="_handleReplyTap">Reply</gr-button>
             </div>
             <gr-comment-list
                 comments="[[comments]]"
@@ -228,16 +237,16 @@ limitations under the License.
             </span>
           </template>
           <template is="dom-if" if="[[message.id]]">
-            <a class="date" href$="[[_computeMessageHash(message)]]" on-tap="_handleLinkTap">
+            <span class="date" on-click="_handleAnchorClick">
               <gr-date-formatter
                   has-tooltip
                   show-date-and-time
                   date-str="[[message.date]]"></gr-date-formatter>
-            </a>
+            </span>
           </template>
           <iron-icon
               id="expandToggle"
-              on-tap="_toggleExpanded"
+              on-click="_toggleExpanded"
               title="Toggle expanded state"
               icon="[[_computeExpandToggleIcon(_expanded)]]">
         </span>

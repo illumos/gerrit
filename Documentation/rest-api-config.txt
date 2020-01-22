@@ -126,10 +126,7 @@ As result a link:#server-info[ServerInfo] entity is returned.
     "gerrit": {
       "all_projects": "All-Projects",
       "all_users": "All-Users"
-      "doc_search": true,
-      "web_uis": [
-        "gwt"
-      ]
+      "doc_search": true
     },
     "sshd": {},
     "suggest": {
@@ -1057,14 +1054,11 @@ PreferencesInfo] is returned.
   )]}'
   {
     "changes_per_page": 25,
-    "show_site_header": true,
-    "use_flash_clipboard": true,
     "download_command": "CHECKOUT",
     "date_format": "STD",
     "time_format": "HHMM_12",
     "diff_view": "SIDE_BY_SIDE",
     "size_bar_in_change_table": true,
-    "review_category_strategy": "NONE",
     "mute_common_path_prefixes": true,
     "publish_comments_on_push": true,
     "my": [
@@ -1136,14 +1130,11 @@ PreferencesInfo] is returned.
   )]}'
   {
     "changes_per_page": 50,
-    "show_site_header": true,
-    "use_flash_clipboard": true,
     "download_command": "CHECKOUT",
     "date_format": "STD",
     "time_format": "HHMM_12",
     "diff_view": "SIDE_BY_SIDE",
     "size_bar_in_change_table": true,
-    "review_category_strategy": "NONE",
     "mute_common_path_prefixes": true,
     "publish_comments_on_push": true,
     "my": [
@@ -1486,8 +1477,8 @@ type] is `CUSTOM_EXTENSION`.
 |`git_basic_auth_policy`      |optional|
 The link:config-gerrit.html#auth.gitBasicAuthPolicy[policy] to authenticate
 Git over HTTP and REST API requests when
-link:config-gerrit.html#auth.type[authentication type] is `LDAP`.
-Can be `HTTP`, `LDAP` or `HTTP_LDAP`.
+link:config-gerrit.html#auth.type[authentication type] is `LDAP`,
+`LDAP_BIND` or `OAUTH`. Can be `HTTP`, `LDAP`, `HTTP_LDAP` or `OAUTH`.
 |==========================================
 
 [[cache-info]]
@@ -1570,11 +1561,30 @@ button].
 |`update_delay`       ||
 link:config-gerrit.html#change.updateDelay[How often in seconds the web
 interface should poll for updates to the currently open change].
-|`submit_whole_topic` ||
+|`submit_whole_topic` |not set if `false`|
 link:config-gerrit.html#change.submitWholeTopic[A configuration if
 the whole topic is submitted].
 |`disable_private_changes` |not set if `false`|
 Returns true if private changes are disabled.
+|`exclude_mergeable_in_change_info` |not set if `false`|
+Value of the link:config-gerrit.html#change.api.excludeMergeableInChangeInfo[
+configuration parameter] that controls whether the mergeability bit in
+link:rest-api-changes.html#change-info[ChangeInfo] will never be set.
+|=============================
+
+[[change-index-config-info]]
+=== ChangeIndexConfigInfo
+The `ChangeIndexConfigInfo` entity contains information about Gerrit
+configuration from the link:config-gerrit.html#index.change[index.change]
+section.
+
+[options="header",cols="1,^1,5"]
+|=============================
+|Field Name           ||Description
+|`index_mergeable`        |not set if `false`|
+Value of the link:config-gerrit.html#index.change.indexMergeable[
+configuration parameter] that controls whether the mergeability bit is
+indexed (hence queryable using `is:mergeable`).
 |=============================
 
 [[check-account-external-ids-input]]
@@ -1824,13 +1834,22 @@ Gerrit base path even if this value is unset.)
 Whether to enable the web UI for editing GPG keys.
 |`report_bug_url`    |optional|
 link:config-gerrit.html#gerrit.reportBugUrl[URL to report bugs].
-|`report_bug_text`   |optional, not set if default|
-link:config-gerrit.html#gerrit.reportBugText[Display text for report
-bugs link].
-|`web_uis`           ||
-List of web UIs supported by the HTTP server. Possible values are `GWT`
-and `POLYGERRIT`.
 |=================================
+
+[[index-config-info]]
+=== IndexConfigInfo
+The `IndexConfigInfo` entity contains information about Gerrit
+configuration from the link:config-gerrit.html#index[index]
+section.
+
+[options="header",cols="1,^1,5"]
+|=============================
+|Field Name           ||Description
+|`change`                  ||
+Information about the configuration from the
+link:config-gerrit.html#index.change[index.change] section as
+link:#index.change[ChangeIndexConfigInfo] entity.
+|=============================
 
 [[hit-ration-info]]
 === HitRatioInfo
@@ -1958,6 +1977,10 @@ information about Gerrit
 Information about the configuration from the
 link:config-gerrit.html#gerrit[gerrit] section as link:#gerrit-info[
 GerritInfo] entity.
+|`index`                  ||
+Information about the configuration from the
+link:config-gerrit.html#index[index] section as link:#index[
+IndexConfigInfo] entity.
 |`note_db_enabled`         |not set if `false`|
 Whether the NoteDb storage backend is fully enabled.
 |`plugin`                  ||
@@ -1974,11 +1997,6 @@ entity. Not set if SSHD is disabled.
 Information about the configuration from the
 link:config-gerrit.html#suggest[suggest] section as link:#suggest-info[
 SuggestInfo] entity.
-|`url_aliases`             |optional|
-A map of URL aliases, where a regular expression for an URL token is
-mapped to a target URL token. The target URL token can contain
-placeholders for the groups matched by the regular expression: `$1` for
-the first matched group, `$2` for the second matched group, etc.
 |`user`                    ||
 Information about the configuration from the
 link:config-gerrit.html#user[user] section as link:#user-config-info[

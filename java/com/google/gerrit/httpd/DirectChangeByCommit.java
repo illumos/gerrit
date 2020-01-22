@@ -6,11 +6,11 @@ import com.google.common.base.CharMatcher;
 import com.google.common.collect.ImmutableList;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.PageLinks;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.api.changes.Changes;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.restapi.RestApiException;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.io.IOException;
@@ -47,7 +47,7 @@ class DirectChangeByCommit extends HttpServlet {
       // If exactly one change matches, link to that change.
       // TODO Link to a specific patch set, if one matched.
       ChangeInfo ci = results.iterator().next();
-      token = PageLinks.toChange(new Project.NameKey(ci.project), new Change.Id(ci._number));
+      token = PageLinks.toChange(Project.nameKey(ci.project), Change.id(ci._number));
     } else {
       // Otherwise, link to the query page.
       token = PageLinks.toChangeQuery(query);

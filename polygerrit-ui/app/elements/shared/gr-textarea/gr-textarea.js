@@ -20,114 +20,133 @@
   const MAX_ITEMS_DROPDOWN = 10;
 
   const ALL_SUGGESTIONS = [
+    {value: '😊', match: 'smile :)'},
+    {value: '👍', match: 'thumbs up'},
+    {value: '😄', match: 'laugh :D'},
+    {value: '🎉', match: 'party'},
+    {value: '😞', match: 'sad :('},
+    {value: '😂', match: 'tears :\')'},
+    {value: '🙏', match: 'pray'},
+    {value: '😐', match: 'neutral :|'},
+    {value: '😮', match: 'shock :O'},
+    {value: '👎', match: 'thumbs down'},
+    {value: '😎', match: 'cool |;)'},
+    {value: '😕', match: 'confused'},
+    {value: '👌', match: 'ok'},
+    {value: '🔥', match: 'fire'},
+    {value: '👊', match: 'fistbump'},
     {value: '💯', match: '100'},
     {value: '💔', match: 'broken heart'},
     {value: '🍺', match: 'beer'},
     {value: '✔', match: 'check'},
-    {value: '😎', match: 'cool'},
-    {value: '😕', match: 'confused'},
-    {value: '😭', match: 'crying'},
-    {value: '🔥', match: 'fire'},
-    {value: '👊', match: 'fistbump'},
+    {value: '😋', match: 'tongue'},
+    {value: '😭', match: 'crying :\'('},
     {value: '🐨', match: 'koala'},
-    {value: '😄', match: 'laugh'},
     {value: '🤓', match: 'glasses'},
     {value: '😆', match: 'grin'},
-    {value: '😐', match: 'neutral'},
-    {value: '👌', match: 'ok'},
-    {value: '🎉', match: 'party'},
     {value: '💩', match: 'poop'},
-    {value: '🙏', match: 'pray'},
-    {value: '😞', match: 'sad'},
-    {value: '😮', match: 'shock'},
-    {value: '😊', match: 'smile'},
     {value: '😢', match: 'tear'},
-    {value: '😂', match: 'tears'},
-    {value: '😋', match: 'tongue'},
-    {value: '👍', match: 'thumbs up'},
-    {value: '👎', match: 'thumbs down'},
     {value: '😒', match: 'unamused'},
-    {value: '😉', match: 'wink'},
+    {value: '😉', match: 'wink ;)'},
     {value: '🍷', match: 'wine'},
-    {value: '😜', match: 'winking tongue'},
+    {value: '😜', match: 'winking tongue ;)'},
   ];
 
-  Polymer({
-    is: 'gr-textarea',
-
+  /**
+   * @appliesMixin Gerrit.FireMixin
+   * @appliesMixin Gerrit.KeyboardShortcutMixin
+   * @extends Polymer.Element
+   */
+  class GrTextarea extends Polymer.mixinBehaviors( [
+    Gerrit.FireBehavior,
+    Gerrit.KeyboardShortcutBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-textarea'; }
     /**
      * @event bind-value-changed
      */
 
-    properties: {
-      autocomplete: Boolean,
-      disabled: Boolean,
-      rows: Number,
-      maxRows: Number,
-      placeholder: String,
-      text: {
-        type: String,
-        notify: true,
-        observer: '_handleTextChanged',
-      },
-      hideBorder: {
-        type: Boolean,
-        value: false,
-      },
-      monospace: {
-        type: Boolean,
-        value: false,
-      },
-      /** @type(?number) */
-      _colonIndex: Number,
-      _currentSearchString: {
-        type: String,
-        value: '',
-        observer: '_determineSuggestions',
-      },
-      _hideAutocomplete: {
-        type: Boolean,
-        value: true,
-      },
-      _index: Number,
-      _suggestions: Array,
-      // Offset makes dropdown appear below text.
-      _verticalOffset: {
-        type: Number,
-        value: 20,
-        readOnly: true,
-      },
-    },
+    static get properties() {
+      return {
+        autocomplete: Boolean,
+        disabled: Boolean,
+        rows: Number,
+        maxRows: Number,
+        placeholder: String,
+        text: {
+          type: String,
+          notify: true,
+          observer: '_handleTextChanged',
+        },
+        hideBorder: {
+          type: Boolean,
+          value: false,
+        },
+        /** Text input should be rendered in monspace font.  */
+        monospace: {
+          type: Boolean,
+          value: false,
+        },
+        /** Text input should be rendered in code font, which is smaller than the
+          standard monospace font. */
+        code: {
+          type: Boolean,
+          value: false,
+        },
+        /** @type {?number} */
+        _colonIndex: Number,
+        _currentSearchString: {
+          type: String,
+          observer: '_determineSuggestions',
+        },
+        _hideAutocomplete: {
+          type: Boolean,
+          value: true,
+        },
+        _index: Number,
+        _suggestions: Array,
+        // Offset makes dropdown appear below text.
+        _verticalOffset: {
+          type: Number,
+          value: 20,
+          readOnly: true,
+        },
+      };
+    }
 
-    behaviors: [
-      Gerrit.KeyboardShortcutBehavior,
-    ],
+    get keyBindings() {
+      return {
+        esc: '_handleEscKey',
+        tab: '_handleEnterByKey',
+        enter: '_handleEnterByKey',
+        up: '_handleUpKey',
+        down: '_handleDownKey',
+      };
+    }
 
-    keyBindings: {
-      esc: '_handleEscKey',
-      tab: '_handleEnterByKey',
-      enter: '_handleEnterByKey',
-      up: '_handleUpKey',
-      down: '_handleDownKey',
-    },
-
+    /** @override */
     ready() {
-      this._resetEmojiDropdown();
+      super.ready();
       if (this.monospace) {
         this.classList.add('monospace');
+      }
+      if (this.code) {
+        this.classList.add('code');
       }
       if (this.hideBorder) {
         this.$.textarea.classList.add('noBorder');
       }
-    },
+    }
 
     closeDropdown() {
       return this.$.emojiSuggestions.close();
-    },
+    }
 
     getNativeTextarea() {
       return this.$.textarea.textarea;
-    },
+    }
 
     putCursorAtEnd() {
       const textarea = this.getNativeTextarea();
@@ -137,14 +156,14 @@
       this.async(() => {
         textarea.focus();
       });
-    },
+    }
 
     _handleEscKey(e) {
       if (this._hideAutocomplete) { return; }
       e.preventDefault();
       e.stopPropagation();
       this._resetEmojiDropdown();
-    },
+    }
 
     _handleUpKey(e) {
       if (this._hideAutocomplete) { return; }
@@ -152,7 +171,8 @@
       e.stopPropagation();
       this.$.emojiSuggestions.cursorUp();
       this.$.textarea.textarea.focus();
-    },
+      this.disableEnterKeyForSelectingEmoji = false;
+    }
 
     _handleDownKey(e) {
       if (this._hideAutocomplete) { return; }
@@ -160,25 +180,36 @@
       e.stopPropagation();
       this.$.emojiSuggestions.cursorDown();
       this.$.textarea.textarea.focus();
-    },
+      this.disableEnterKeyForSelectingEmoji = false;
+    }
 
     _handleEnterByKey(e) {
-      if (this._hideAutocomplete) { return; }
+      if (this._hideAutocomplete || this.disableEnterKeyForSelectingEmoji) {
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
-      this.text = this._getText(this.$.emojiSuggestions.getCurrentText());
-      this._resetEmojiDropdown();
-    },
+      this._setEmoji(this.$.emojiSuggestions.getCurrentText());
+    }
 
     _handleEmojiSelect(e) {
-      this.text = this._getText(e.detail.selected.dataset.value);
+      this._setEmoji(e.detail.selected.dataset.value);
+    }
+
+    _setEmoji(text) {
+      const colonIndex = this._colonIndex;
+      this.text = this._getText(text);
+      this.$.textarea.selectionStart = colonIndex + 1;
+      this.$.textarea.selectionEnd = colonIndex + 1;
+      this.$.reporting.reportInteraction('select-emoji');
       this._resetEmojiDropdown();
-    },
+    }
 
     _getText(value) {
       return this.text.substr(0, this._colonIndex || 0) +
-          value + this.text.substr(this.$.textarea.selectionStart) + ' ';
-    },
+          value + this.text.substr(this.$.textarea.selectionStart);
+    }
+
     /**
      * Uses a hidden element with the same width and styling of the textarea and
      * the text up until the point of interest. Then caratSpan element is added
@@ -194,17 +225,17 @@
       this.$.hiddenText.appendChild(caratSpan);
       this.$.emojiSuggestions.positionTarget = caratSpan;
       this._openEmojiDropdown();
-    },
+    }
 
     _getFontSize() {
       const fontSizePx = getComputedStyle(this).fontSize || '12px';
       return parseInt(fontSizePx.substr(0, fontSizePx.length - 2),
           10);
-    },
+    }
 
     _getScrollTop() {
       return document.body.scrollTop;
-    },
+    }
 
     /**
      * _handleKeydown used for key handling in the this.$.textarea AND all child
@@ -217,42 +248,46 @@
       // If cursor is not in textarea (just opened with colon as last char),
       // Don't do anything.
       if (!e.currentTarget.focused) { return; }
-      const newChar = e.detail.value[this.$.textarea.selectionStart - 1];
 
-      // When a colon is detected, set a colon index, but don't do anything else
-      // yet.
-      if (newChar === ':') {
-        this._colonIndex = this.$.textarea.selectionStart - 1;
-      // If the colon index exists, continue to determine what needs to be done
-      // with the dropdown. It may be open or closed at this point.
-      } else if (this._colonIndex !== null) {
-        // The search string is a substring of the textarea's value from (1
-        // position after) the colon index to the cursor position.
-        this._currentSearchString = e.detail.value.substr(this._colonIndex + 1,
-            this.$.textarea.selectionStart);
-        // Under the following conditions, close and reset the dropdown:
-        // - The cursor is no longer at the end of the current search string
-        // - The search string is an space or new line
-        // - The colon has been removed
-        // - There are no suggestions that match the search string
-        if (this.$.textarea.selectionStart !==
-            this._currentSearchString.length + this._colonIndex + 1 ||
-            this._currentSearchString === ' ' ||
-            this._currentSearchString === '\n' ||
-            !(e.detail.value[this._colonIndex] === ':') ||
-            !this._suggestions.length) {
-          this._resetEmojiDropdown();
-        // Otherwise open the dropdown and set the position to be just below the
-        // cursor.
-        } else if (this.$.emojiSuggestions.isHidden) {
-          this._updateCaratPosition();
+      const charAtCursor = e.detail && e.detail.value ?
+        e.detail.value[this.$.textarea.selectionStart - 1] : '';
+      if (charAtCursor !== ':' && this._colonIndex == null) { return; }
+
+      // When a colon is detected, set a colon index. We are interested only on
+      // colons after space or in beginning of textarea
+      if (charAtCursor === ':') {
+        if (this.$.textarea.selectionStart < 2 ||
+            e.detail.value[this.$.textarea.selectionStart - 2] === ' ') {
+          this._colonIndex = this.$.textarea.selectionStart - 1;
         }
-        this.$.textarea.textarea.focus();
       }
-    },
+
+      this._currentSearchString = e.detail.value.substr(this._colonIndex + 1,
+          this.$.textarea.selectionStart - this._colonIndex - 1);
+      // Under the following conditions, close and reset the dropdown:
+      // - The cursor is no longer at the end of the current search string
+      // - The search string is an space or new line
+      // - The colon has been removed
+      // - There are no suggestions that match the search string
+      if (this.$.textarea.selectionStart !==
+          this._currentSearchString.length + this._colonIndex + 1 ||
+          this._currentSearchString === ' ' ||
+          this._currentSearchString === '\n' ||
+          !(e.detail.value[this._colonIndex] === ':') ||
+          !this._suggestions.length) {
+        this._resetEmojiDropdown();
+      // Otherwise open the dropdown and set the position to be just below the
+      // cursor.
+      } else if (this.$.emojiSuggestions.isHidden) {
+        this._updateCaratPosition();
+      }
+      this.$.textarea.textarea.focus();
+    }
+
     _openEmojiDropdown() {
       this.$.emojiSuggestions.open();
-    },
+      this.$.reporting.reportInteraction('open-emoji-dropdown');
+    }
 
     _formatSuggestions(matchedSuggestions) {
       const suggestions = [];
@@ -262,17 +297,20 @@
         suggestions.push(suggestion);
       }
       this.set('_suggestions', suggestions);
-    },
+    }
 
     _determineSuggestions(emojiText) {
       if (!emojiText.length) {
         this._formatSuggestions(ALL_SUGGESTIONS);
+        this.disableEnterKeyForSelectingEmoji = true;
+      } else {
+        const matches = ALL_SUGGESTIONS
+            .filter(suggestion => suggestion.match.includes(emojiText))
+            .slice(0, MAX_ITEMS_DROPDOWN);
+        this._formatSuggestions(matches);
+        this.disableEnterKeyForSelectingEmoji = false;
       }
-      const matches = ALL_SUGGESTIONS.filter(suggestion => {
-        return suggestion.match.includes(emojiText);
-      }).splice(0, MAX_ITEMS_DROPDOWN);
-      this._formatSuggestions(matches);
-    },
+    }
 
     _resetEmojiDropdown() {
       // hide and reset the autocomplete dropdown.
@@ -282,11 +320,13 @@
       this.closeDropdown();
       this._colonIndex = null;
       this.$.textarea.textarea.focus();
-    },
+    }
 
     _handleTextChanged(text) {
       this.dispatchEvent(
           new CustomEvent('value-changed', {detail: {value: text}}));
-    },
-  });
+    }
+  }
+
+  customElements.define(GrTextarea.is, GrTextarea);
 })();

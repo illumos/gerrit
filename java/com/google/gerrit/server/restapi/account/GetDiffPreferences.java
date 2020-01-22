@@ -14,12 +14,13 @@
 
 package com.google.gerrit.server.restapi.account;
 
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.client.DiffPreferencesInfo;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestReadView;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountResource;
@@ -33,6 +34,18 @@ import com.google.inject.Singleton;
 import java.io.IOException;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 
+/**
+ * REST endpoint to get the diff preferences of an account.
+ *
+ * <p>This REST endpoint handles {@code GET /accounts/<account-identifier>/preferences.diff}
+ * requests.
+ *
+ * <p>General preferences can be retrieved by {@link GetPreferences} and edit preferences can be
+ * retrieved by {@link GetEditPreferences}.
+ *
+ * <p>Default diff preferences that apply for all accounts can be retrieved by {@link
+ * com.google.gerrit.server.restapi.config.GetDiffPreferences}.
+ */
 @Singleton
 public class GetDiffPreferences implements RestReadView<AccountResource> {
   private final Provider<CurrentUser> self;
@@ -48,16 +61,17 @@ public class GetDiffPreferences implements RestReadView<AccountResource> {
   }
 
   @Override
-  public DiffPreferencesInfo apply(AccountResource rsrc)
+  public Response<DiffPreferencesInfo> apply(AccountResource rsrc)
       throws RestApiException, ConfigInvalidException, IOException, PermissionBackendException {
     if (!self.get().hasSameAccountId(rsrc.getUser())) {
       permissionBackend.currentUser().check(GlobalPermission.ADMINISTRATE_SERVER);
     }
 
     Account.Id id = rsrc.getUser().getAccountId();
-    return accountCache
-        .get(id)
-        .map(AccountState::getDiffPreferences)
-        .orElseThrow(() -> new ResourceNotFoundException(IdString.fromDecoded(id.toString())));
+    return Response.ok(
+        accountCache
+            .get(id)
+            .map(AccountState::diffPreferences)
+            .orElseThrow(() -> new ResourceNotFoundException(IdString.fromDecoded(id.toString()))));
   }
 }

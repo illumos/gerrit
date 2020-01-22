@@ -26,6 +26,7 @@ import static com.google.common.net.HttpHeaders.CONTENT_TYPE;
 import static com.google.common.net.HttpHeaders.ORIGIN;
 import static com.google.common.net.HttpHeaders.VARY;
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
 
 import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
@@ -34,6 +35,7 @@ import com.google.common.truth.StringSubject;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.PushOneCommit.Result;
 import com.google.gerrit.acceptance.RestResponse;
+import com.google.gerrit.acceptance.RestSession;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.restapi.RestApiException;
@@ -44,6 +46,7 @@ import java.util.Locale;
 import java.util.stream.Stream;
 import org.apache.http.Header;
 import org.apache.http.HttpResponse;
+import org.apache.http.HttpStatus;
 import org.apache.http.client.fluent.Executor;
 import org.apache.http.client.fluent.Request;
 import org.apache.http.cookie.Cookie;
@@ -78,11 +81,11 @@ public class CorsIT extends AbstractDaemonTest {
     String allowMethods = r.getHeader(ACCESS_CONTROL_ALLOW_METHODS);
     String allowHeaders = r.getHeader(ACCESS_CONTROL_ALLOW_HEADERS);
 
-    assertThat(allowOrigin).named(ACCESS_CONTROL_ALLOW_ORIGIN).isNull();
-    assertThat(allowCred).named(ACCESS_CONTROL_ALLOW_CREDENTIALS).isNull();
-    assertThat(maxAge).named(ACCESS_CONTROL_MAX_AGE).isNull();
-    assertThat(allowMethods).named(ACCESS_CONTROL_ALLOW_METHODS).isNull();
-    assertThat(allowHeaders).named(ACCESS_CONTROL_ALLOW_HEADERS).isNull();
+    assertWithMessage(ACCESS_CONTROL_ALLOW_ORIGIN).that(allowOrigin).isNull();
+    assertWithMessage(ACCESS_CONTROL_ALLOW_CREDENTIALS).that(allowCred).isNull();
+    assertWithMessage(ACCESS_CONTROL_MAX_AGE).that(maxAge).isNull();
+    assertWithMessage(ACCESS_CONTROL_ALLOW_METHODS).that(allowMethods).isNull();
+    assertWithMessage(ACCESS_CONTROL_ALLOW_HEADERS).that(allowHeaders).isNull();
   }
 
   @Test
@@ -96,6 +99,30 @@ public class CorsIT extends AbstractDaemonTest {
 
     check(url, false, "http://evil.attacker");
     check(url, false, "http://friendsly");
+  }
+
+  @Test
+  public void originsOnNotFoundException() throws Exception {
+    String url = "/changes/999/detail";
+    check(url, true, "http://example.com", adminRestSession, 404);
+    check(url, false, "http://friendsly", adminRestSession, 404);
+  }
+
+  @Test
+  public void originsOnBadRequestException() throws Exception {
+    String url = "/config/server/caches/?format=NONSENSE";
+    check(url, true, "http://example.com", adminRestSession, 400);
+    check(url, false, "http://friendsly", adminRestSession, 400);
+  }
+
+  @Test
+  public void originsOnForbidden() throws Exception {
+    Result change = createChange();
+    // Make change private to hide it
+    gApi.changes().id(change.getChangeId()).setPrivate(true, "now private");
+    String url = "/changes/" + change.getChangeId() + "/detail";
+    check(url, true, "http://example.com", anonymousRestSession, 404);
+    check(url, false, "http://friendsly", anonymousRestSession, 404);
   }
 
   @Test
@@ -136,7 +163,7 @@ public class CorsIT extends AbstractDaemonTest {
     res.assertOK();
 
     String vary = res.getHeader(VARY);
-    assertThat(vary).named(VARY).isNotNull();
+    assertWithMessage(VARY).that(vary).isNotNull();
     assertThat(Splitter.on(", ").splitToList(vary))
         .containsExactly(ORIGIN, ACCESS_CONTROL_REQUEST_METHOD, ACCESS_CONTROL_REQUEST_HEADERS);
     checkCors(res, true, origin);
@@ -179,7 +206,7 @@ public class CorsIT extends AbstractDaemonTest {
     BasicCookieStore cookies = new BasicCookieStore();
     Executor http = Executor.newInstance().cookieStore(cookies);
 
-    Request req = Request.Get(canonicalWebUrl.get() + "/login/?account_id=" + admin.id.get());
+    Request req = Request.Get(canonicalWebUrl.get() + "/login/?account_id=" + admin.id().get());
     http.execute(req);
     String auth = null;
     for (Cookie c : cookies.getCookies()) {
@@ -187,7 +214,7 @@ public class CorsIT extends AbstractDaemonTest {
         auth = c.getValue();
       }
     }
-    assertThat(auth).named("GerritAccount cookie").isNotNull();
+    assertWithMessage("GerritAccount cookie").that(auth).isNotNull();
     cookies.clear();
 
     UrlEncoded url =
@@ -206,16 +233,18 @@ public class CorsIT extends AbstractDaemonTest {
     assertThat(r.getStatusLine().getStatusCode()).isEqualTo(200);
 
     Header vary = r.getFirstHeader(VARY);
-    assertThat(vary).named(VARY).isNotNull();
-    assertThat(Splitter.on(", ").splitToList(vary.getValue())).named(VARY).contains(ORIGIN);
+    assertWithMessage(VARY).that(vary).isNotNull();
+    assertWithMessage(VARY).that(Splitter.on(", ").splitToList(vary.getValue())).contains(ORIGIN);
 
     Header allowOrigin = r.getFirstHeader(ACCESS_CONTROL_ALLOW_ORIGIN);
-    assertThat(allowOrigin).named(ACCESS_CONTROL_ALLOW_ORIGIN).isNotNull();
-    assertThat(allowOrigin.getValue()).named(ACCESS_CONTROL_ALLOW_ORIGIN).isEqualTo(origin);
+    assertWithMessage(ACCESS_CONTROL_ALLOW_ORIGIN).that(allowOrigin).isNotNull();
+    assertWithMessage(ACCESS_CONTROL_ALLOW_ORIGIN).that(allowOrigin.getValue()).isEqualTo(origin);
 
     Header allowAuth = r.getFirstHeader(ACCESS_CONTROL_ALLOW_CREDENTIALS);
-    assertThat(allowAuth).named(ACCESS_CONTROL_ALLOW_CREDENTIALS).isNotNull();
-    assertThat(allowAuth.getValue()).named(ACCESS_CONTROL_ALLOW_CREDENTIALS).isEqualTo("true");
+    assertWithMessage(ACCESS_CONTROL_ALLOW_CREDENTIALS).that(allowAuth).isNotNull();
+    assertWithMessage(ACCESS_CONTROL_ALLOW_CREDENTIALS)
+        .that(allowAuth.getValue())
+        .isEqualTo("true");
 
     checkTopic(change, "test-xd");
   }
@@ -238,7 +267,7 @@ public class CorsIT extends AbstractDaemonTest {
 
   private void checkTopic(Result change, @Nullable String topic) throws RestApiException {
     ChangeInfo info = gApi.changes().id(change.getChangeId()).get();
-    StringSubject t = assertThat(info.topic).named("topic");
+    StringSubject t = assertWithMessage("topic").that(info.topic);
     if (topic != null) {
       t.isEqualTo(topic);
     } else {
@@ -247,16 +276,22 @@ public class CorsIT extends AbstractDaemonTest {
   }
 
   private void check(String url, boolean accept, String origin) throws Exception {
+    check(url, accept, origin, adminRestSession, HttpStatus.SC_OK);
+  }
+
+  private void check(
+      String url, boolean accept, String origin, RestSession restSession, int httpStatusCode)
+      throws Exception {
     Header hdr = new BasicHeader(ORIGIN, origin);
-    RestResponse r = adminRestSession.getWithHeader(url, hdr);
-    r.assertOK();
+    RestResponse r = restSession.getWithHeader(url, hdr);
+    r.assertStatus(httpStatusCode);
     checkCors(r, accept, origin);
   }
 
   private void checkCors(RestResponse r, boolean accept, String origin) {
     String vary = r.getHeader(VARY);
-    assertThat(vary).named(VARY).isNotNull();
-    assertThat(Splitter.on(", ").splitToList(vary)).named(VARY).contains(ORIGIN);
+    assertWithMessage(VARY).that(vary).isNotNull();
+    assertWithMessage(VARY).that(Splitter.on(", ").splitToList(vary)).contains(ORIGIN);
 
     String allowOrigin = r.getHeader(ACCESS_CONTROL_ALLOW_ORIGIN);
     String allowCred = r.getHeader(ACCESS_CONTROL_ALLOW_CREDENTIALS);
@@ -264,28 +299,28 @@ public class CorsIT extends AbstractDaemonTest {
     String allowMethods = r.getHeader(ACCESS_CONTROL_ALLOW_METHODS);
     String allowHeaders = r.getHeader(ACCESS_CONTROL_ALLOW_HEADERS);
     if (accept) {
-      assertThat(allowOrigin).named(ACCESS_CONTROL_ALLOW_ORIGIN).isEqualTo(origin);
-      assertThat(allowCred).named(ACCESS_CONTROL_ALLOW_CREDENTIALS).isEqualTo("true");
-      assertThat(maxAge).named(ACCESS_CONTROL_MAX_AGE).isEqualTo("600");
+      assertWithMessage(ACCESS_CONTROL_ALLOW_ORIGIN).that(allowOrigin).isEqualTo(origin);
+      assertWithMessage(ACCESS_CONTROL_ALLOW_CREDENTIALS).that(allowCred).isEqualTo("true");
+      assertWithMessage(ACCESS_CONTROL_MAX_AGE).that(maxAge).isEqualTo("600");
 
-      assertThat(allowMethods).named(ACCESS_CONTROL_ALLOW_METHODS).isNotNull();
-      assertThat(Splitter.on(", ").splitToList(allowMethods))
-          .named(ACCESS_CONTROL_ALLOW_METHODS)
+      assertWithMessage(ACCESS_CONTROL_ALLOW_METHODS).that(allowMethods).isNotNull();
+      assertWithMessage(ACCESS_CONTROL_ALLOW_METHODS)
+          .that(Splitter.on(", ").splitToList(allowMethods))
           .containsExactly("GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS");
 
-      assertThat(allowHeaders).named(ACCESS_CONTROL_ALLOW_HEADERS).isNotNull();
-      assertThat(Splitter.on(", ").splitToList(allowHeaders))
-          .named(ACCESS_CONTROL_ALLOW_HEADERS)
+      assertWithMessage(ACCESS_CONTROL_ALLOW_HEADERS).that(allowHeaders).isNotNull();
+      assertWithMessage(ACCESS_CONTROL_ALLOW_HEADERS)
+          .that(Splitter.on(", ").splitToList(allowHeaders))
           .containsExactlyElementsIn(
               Stream.of(AUTHORIZATION, CONTENT_TYPE, "X-Gerrit-Auth", "X-Requested-With")
                   .map(s -> s.toLowerCase(Locale.US))
                   .collect(ImmutableSet.toImmutableSet()));
     } else {
-      assertThat(allowOrigin).named(ACCESS_CONTROL_ALLOW_ORIGIN).isNull();
-      assertThat(allowCred).named(ACCESS_CONTROL_ALLOW_CREDENTIALS).isNull();
-      assertThat(maxAge).named(ACCESS_CONTROL_MAX_AGE).isNull();
-      assertThat(allowMethods).named(ACCESS_CONTROL_ALLOW_METHODS).isNull();
-      assertThat(allowHeaders).named(ACCESS_CONTROL_ALLOW_HEADERS).isNull();
+      assertWithMessage(ACCESS_CONTROL_ALLOW_ORIGIN).that(allowOrigin).isNull();
+      assertWithMessage(ACCESS_CONTROL_ALLOW_CREDENTIALS).that(allowCred).isNull();
+      assertWithMessage(ACCESS_CONTROL_MAX_AGE).that(maxAge).isNull();
+      assertWithMessage(ACCESS_CONTROL_ALLOW_METHODS).that(allowMethods).isNull();
+      assertWithMessage(ACCESS_CONTROL_ALLOW_HEADERS).that(allowHeaders).isNull();
     }
   }
 }

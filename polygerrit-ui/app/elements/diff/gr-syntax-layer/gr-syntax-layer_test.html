@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-syntax-layer</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="../../shared/gr-rest-api-interface/mock-diff-response_test.html">
 <link rel="import" href="gr-syntax-layer.html">
@@ -38,6 +40,7 @@ limitations under the License.
     let sandbox;
     let diff;
     let element;
+    const lineNumberEl = document.createElement('td');
 
     function getMockHLJS() {
       const html = '<span class="gr-diff gr-syntax gr-syntax-string">' +
@@ -49,6 +52,11 @@ limitations under the License.
             value: line.replace(/ipsum/, html),
             top: state === undefined ? 1 : state + 1,
           };
+        },
+        // Return something truthy because this method is used to check if the
+        // language is supported.
+        getLanguage(s) {
+          return {};
         },
       };
     }
@@ -72,7 +80,7 @@ limitations under the License.
       const line = new GrDiffLine(GrDiffLine.Type.REMOVE);
       line.beforeNumber = 12;
 
-      element.annotate(el, line);
+      element.annotate(el, lineNumberEl, line);
 
       assert.isFalse(annotationSpy.called);
     });
@@ -94,7 +102,7 @@ limitations under the License.
         className,
       }];
 
-      element.annotate(el, line);
+      element.annotate(el, lineNumberEl, line);
 
       assert.isTrue(annotationSpy.called);
       assert.equal(annotationSpy.lastCall.args[0], el);
@@ -122,7 +130,7 @@ limitations under the License.
       }];
       element.enabled = false;
 
-      element.annotate(el, line);
+      element.annotate(el, lineNumberEl, line);
 
       assert.isFalse(annotationSpy.called);
     });
@@ -186,7 +194,7 @@ limitations under the License.
       const mockHLJS = getMockHLJS();
       const highlightSpy = sinon.spy(mockHLJS, 'highlight');
       sandbox.stub(element.$.libLoader, 'getHLJS',
-          () => { return Promise.resolve(mockHLJS); });
+          () => Promise.resolve(mockHLJS));
       const processNextSpy = sandbox.spy(element, '_processNextLine');
       const processPromise = element.process();
 
@@ -380,8 +388,18 @@ limitations under the License.
         '<span class="non-whtelisted-class">',
         '<span class="gr-diff gr-syntax gr-syntax-keyword">public</span>',
         '</span>'].join('');
-      const result = element._rangesFromString(str);
+      const result = element._rangesFromString(str, new Map());
       assert.notEqual(result.length, 0);
+    });
+
+    test('_rangesFromString cache same syntax markers', () => {
+      sandbox.spy(element, '_rangesFromElement');
+      const str =
+        '<span class="gr-diff gr-syntax gr-syntax-keyword">public</span>';
+      const cacheMap = new Map();
+      element._rangesFromString(str, cacheMap);
+      element._rangesFromString(str, cacheMap);
+      assert.isTrue(element._rangesFromElement.calledOnce);
     });
 
     test('_isSectionDone', () => {

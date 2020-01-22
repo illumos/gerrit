@@ -1,3 +1,4 @@
+:linkattrs:
 = Quickstart for Installing Gerrit on Linux
 
 This content explains how to install a basic instance of Gerrit on a Linux
@@ -29,10 +30,10 @@ From the Linux machine on which you want to install Gerrit:
 . Download the desired Gerrit archive.
 
 To view previous archives, see
-link:https://gerrit-releases.storage.googleapis.com/index.html[Gerrit Code Review: Releases]. The steps below install Gerrit 2.15.1:
+link:https://gerrit-releases.storage.googleapis.com/index.html[Gerrit Code Review: Releases,role=external,window=_blank]. The steps below install Gerrit 3.0.3:
 
 ....
-wget https://www.gerritcodereview.com/download/gerrit-2.15.1.war
+wget https://gerrit-releases.storage.googleapis.com/gerrit-3.0.3.war
 ....
 
 NOTE: To build and install Gerrit from the source files, see
@@ -43,7 +44,8 @@ link:dev-readme.html[Gerrit Code Review: Developer Setup].
 From the command line, enter:
 
 ....
-java -jar gerrit*.war init --batch --dev -d ~/gerrit_testsite
+export GERRIT_SITE=~/gerrit_testsite
+java -jar gerrit*.war init --batch --dev -d $GERRIT_SITE
 ....
 
 This command takes two parameters:
@@ -78,7 +80,7 @@ To prevent outside connections from contacting your new Gerrit instance
 `localhost`. For example:
 
 ....
-git config --file ~/gerrit_testsite/etc/gerrit.config httpd.listenUrl 'http://localhost:8080'
+git config --file $GERRIT_SITE/etc/gerrit.config httpd.listenUrl 'http://localhost:8080'
 ....
 
 == Restart the Gerrit service
@@ -87,7 +89,7 @@ You must restart the Gerrit service for your authentication type and listen URL
 changes to take effect:
 
 ....
-~/gerrit_testsite/bin/gerrit.sh restart
+$GERRIT_SITE/bin/gerrit.sh restart
 ....
 
 == Viewing Gerrit

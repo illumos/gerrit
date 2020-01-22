@@ -14,7 +14,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 -->
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/iron-input/iron-input.html">
 <link rel="import" href="../../shared/gr-autocomplete/gr-autocomplete.html">
 <link rel="import" href="../../shared/gr-button/gr-button.html">
 <link rel="import" href="../../shared/gr-rest-api-interface/gr-rest-api-interface.html">
@@ -23,11 +24,13 @@ limitations under the License.
 
 <dom-module id="gr-watched-projects-editor">
   <template>
-    <style include="shared-styles"></style>
+    <style include="shared-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <style include="gr-form-styles">
       #watchedProjects .notifType {
         text-align: center;
-        padding: 0 0.4em;
+        padding: 0 var(--spacing-s);
       }
       .notifControl {
         cursor: pointer;
@@ -39,7 +42,7 @@ limitations under the License.
       .projectFilter {
         color: var(--deemphasized-text-color);
         font-style: italic;
-        margin-left: 1em;
+        margin-left: var(--spacing-l);
       }
       .newFilterInput {
         width: 100%;
@@ -73,7 +76,7 @@ limitations under the License.
                   is="dom-repeat"
                   items="[[_getTypes()]]"
                   as="type">
-                <td class="notifControl" on-tap="_handleNotifCellTap">
+                <td class="notifControl" on-click="_handleNotifCellClick">
                   <input
                       type="checkbox"
                       data-index$="[[projectIndex]]"
@@ -86,7 +89,7 @@ limitations under the License.
                 <gr-button
                     link
                     data-index$="[[projectIndex]]"
-                    on-tap="_handleRemoveProject">Delete</gr-button>
+                    on-click="_handleRemoveProject">Delete</gr-button>
               </td>
             </tr>
           </template>
@@ -103,14 +106,18 @@ limitations under the License.
                   placeholder="Repo"></gr-autocomplete>
             </th>
             <th colspan$="[[_getTypeCount()]]">
-              <input
-                  id="newFilter"
+              <iron-input
                   class="newFilterInput"
-                  is="iron-input"
                   placeholder="branch:name, or other search expression">
+                <input
+                    id="newFilter"
+                    class="newFilterInput"
+                    is="iron-input"
+                    placeholder="branch:name, or other search expression">
+              </iron-input>
             </th>
             <th>
-              <gr-button link on-tap="_handleAddProject">Add</gr-button>
+              <gr-button link on-click="_handleAddProject">Add</gr-button>
             </th>
           </tr>
         </tfoot>

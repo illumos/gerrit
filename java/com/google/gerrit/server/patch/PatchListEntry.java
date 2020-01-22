@@ -30,14 +30,13 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
-import com.google.gerrit.reviewdb.client.Patch;
-import com.google.gerrit.reviewdb.client.Patch.ChangeType;
-import com.google.gerrit.reviewdb.client.Patch.PatchType;
-import com.google.gerrit.reviewdb.client.PatchSet;
+import com.google.gerrit.entities.Patch;
+import com.google.gerrit.entities.Patch.ChangeType;
+import com.google.gerrit.entities.Patch.PatchType;
+import com.google.gerrit.entities.PatchSet;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
@@ -214,9 +213,10 @@ public class PatchListEntry {
     return sizeDelta;
   }
 
-  public List<String> getHeaderLines() {
+  public ImmutableList<String> getHeaderLines() {
     final IntList m = RawParseUtils.lineMap(header, 0, header.length);
-    final List<String> headerLines = new ArrayList<>(m.size() - 1);
+    final ImmutableList.Builder<String> headerLines =
+        ImmutableList.builderWithExpectedSize(m.size() - 1);
     for (int i = 1; i < m.size() - 1; i++) {
       final int b = m.get(i);
       int e = m.get(i + 1);
@@ -225,11 +225,11 @@ public class PatchListEntry {
       }
       headerLines.add(RawParseUtils.decode(UTF_8, header, b, e));
     }
-    return headerLines;
+    return headerLines.build();
   }
 
   Patch toPatch(PatchSet.Id setId) {
-    final Patch p = new Patch(new Patch.Key(setId, getNewName()));
+    final Patch p = new Patch(Patch.key(setId, getNewName()));
     p.setChangeType(getChangeType());
     p.setPatchType(getPatchType());
     p.setSourceFileName(getOldName());

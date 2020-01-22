@@ -46,11 +46,15 @@ public class ChangeInfo {
   public Boolean submittable;
   public Integer insertions;
   public Integer deletions;
+  public Integer totalCommentCount;
   public Integer unresolvedCommentCount;
   public Boolean isPrivate;
   public Boolean workInProgress;
   public Boolean hasReviewStarted;
   public Integer revertOf;
+  public String submissionId;
+  public Integer cherryPickOfChange;
+  public Integer cherryPickOfPatchSet;
 
   public int _number;
 

@@ -15,10 +15,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../behaviors/gr-access-behavior/gr-access-behavior.html">
-<link rel="import" href="../../../bower_components/iron-input/iron-input.html">
+<link rel="import" href="/bower_components/iron-input/iron-input.html">
 <link rel="import" href="../../../styles/gr-form-styles.html">
 <link rel="import" href="../../../styles/shared-styles.html">
 <link rel="import" href="../../shared/gr-button/gr-button.html">
@@ -33,7 +34,7 @@ limitations under the License.
     <style include="shared-styles">
       :host {
         display: block;
-        margin-bottom: 1em;
+        margin-bottom: var(--spacing-l);
       }
       fieldset {
         border: 1px solid var(--border-color);
@@ -50,13 +51,13 @@ limitations under the License.
         display: flex;
         justify-content: space-between;
         min-height: 3em;
-        padding: 0 .7em;
+        padding: 0 var(--spacing-m);
       }
       #deletedContainer {
         border-bottom: 0;
       }
       .sectionContent {
-        padding: .7em;
+        padding: var(--spacing-m);
       }
       #editBtn,
       .editing #editBtn.global,
@@ -65,11 +66,11 @@ limitations under the License.
       #addPermission,
       #deleteBtn,
       .editingRef .name,
-      #editRefInput {
+      .editRefInput {
         display: none;
       }
       .editing #editBtn,
-      .editingRef #editRefInput {
+      .editingRef .editRefInput {
         display: flex;
       }
       .deleted #deletedContainer {
@@ -82,10 +83,12 @@ limitations under the License.
       }
       .editing #deleteBtn,
       #undoRemoveBtn {
-        padding-right: .7em;
+        padding-right: var(--spacing-m);
       }
     </style>
-    <style include="gr-form-styles"></style>
+    <style include="gr-form-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <fieldset id="section"
         class$="gr-form-styles [[_computeSectionClass(editing, canUpload, ownerOf, _editingRef, _deleted)]]">
       <div id="mainContainer">
@@ -96,20 +99,26 @@ limitations under the License.
                 id="editBtn"
                 link
                 class$="[[_computeEditBtnClass(section.id)]]"
-                on-tap="editReference">
+                on-click="editReference">
               <iron-icon id="icon" icon="gr-icons:create"></iron-icon>
             </gr-button>
           </div>
-          <input
-              id="editRefInput"
+          <iron-input
+              class="editRefInput"
               bind-value="{{section.id}}"
-              is="iron-input"
               type="text"
               on-input="_handleValueChange">
+            <input
+                class="editRefInput"
+                bind-value="{{section.id}}"
+                is="iron-input"
+                type="text"
+                on-input="_handleValueChange">
+          </iron-input>
           <gr-button
               link
               id="deleteBtn"
-              on-tap="_handleRemoveReference">Remove</gr-button>
+              on-click="_handleRemoveReference">Remove</gr-button>
         </div><!-- end header -->
         <div class="sectionContent">
           <template
@@ -140,7 +149,7 @@ limitations under the License.
             <gr-button
                 link
                 id="addBtn"
-                on-tap="_handleAddPermission">Add</gr-button>
+                on-click="_handleAddPermission">Add</gr-button>
           </div>
           <!-- end addPermission -->
         </div><!-- end sectionContent -->
@@ -150,7 +159,7 @@ limitations under the License.
         <gr-button
             link
             id="undoRemoveBtn"
-            on-tap="_handleUndoRemove">Undo</gr-button>
+            on-click="_handleUndoRemove">Undo</gr-button>
       </div><!-- end deletedContainer -->
     </fieldset>
     <gr-rest-api-interface id="restAPI"></gr-rest-api-interface>

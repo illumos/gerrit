@@ -13,14 +13,14 @@
 // limitations under the License.
 package com.google.gerrit.server.git.validators;
 
-import com.google.common.base.Predicate;
+import static com.google.common.collect.ImmutableList.toImmutableList;
+
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Iterables;
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.events.RefReceivedEvent;
@@ -36,10 +36,14 @@ import java.util.List;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.transport.ReceiveCommand;
 
+/**
+ * Collection of validation listeners that are called before a ref update is performed with the
+ * command to be run. This is called from the git push path as well as Gerrit's handlers for
+ * creating or deleting refs. Calls out to {@link RefOperationValidationListener} provided by
+ * plugins.
+ */
 public class RefOperationValidators {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
-
-  private static final GetErrorMessages GET_ERRORS = new GetErrorMessages();
 
   public interface Factory {
     RefOperationValidators create(Project project, IdentifiedUser user, ReceiveCommand cmd);
@@ -72,12 +76,18 @@ public class RefOperationValidators {
     event.user = user;
   }
 
+  /**
+   * Returns informational validation messages and throws a {@link RefOperationValidationException}
+   * when the first validator fails. Will not process any more validators after the first failure
+   * was encountered.
+   */
   public List<ValidationMessage> validateForRefOperation() throws RefOperationValidationException {
     List<ValidationMessage> messages = new ArrayList<>();
     boolean withException = false;
     try {
       messages.addAll(
-          new DisallowCreationAndDeletionOfUserBranches(perm, allUsersName).onRefOperation(event));
+          new DisallowCreationAndDeletionOfGerritMaintainedBranches(perm, allUsersName)
+              .onRefOperation(event));
       refOperationValidationListeners.runEach(
           l -> l.onRefOperation(event), ValidationException.class);
     } catch (ValidationException e) {
@@ -92,30 +102,23 @@ public class RefOperationValidators {
     return messages;
   }
 
-  private void throwException(Iterable<ValidationMessage> messages, RefReceivedEvent event)
+  private void throwException(List<ValidationMessage> messages, RefReceivedEvent event)
       throws RefOperationValidationException {
-    Iterable<ValidationMessage> errors = Iterables.filter(messages, GET_ERRORS);
     String header =
         String.format(
             "Ref \"%s\" %S in project %s validation failed",
             event.command.getRefName(), event.command.getType(), event.project.getName());
     logger.atSevere().log(header);
-    throw new RefOperationValidationException(header, errors);
+    throw new RefOperationValidationException(
+        header, messages.stream().filter(ValidationMessage::isError).collect(toImmutableList()));
   }
 
-  private static class GetErrorMessages implements Predicate<ValidationMessage> {
-    @Override
-    public boolean apply(ValidationMessage input) {
-      return input.isError();
-    }
-  }
-
-  private static class DisallowCreationAndDeletionOfUserBranches
+  private static class DisallowCreationAndDeletionOfGerritMaintainedBranches
       implements RefOperationValidationListener {
     private final PermissionBackend.WithUser perm;
     private final AllUsersName allUsersName;
 
-    DisallowCreationAndDeletionOfUserBranches(
+    DisallowCreationAndDeletionOfGerritMaintainedBranches(
         PermissionBackend.WithUser perm, AllUsersName allUsersName) {
       this.perm = perm;
       this.allUsersName = allUsersName;

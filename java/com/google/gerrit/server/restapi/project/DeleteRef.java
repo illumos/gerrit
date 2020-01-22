@@ -15,7 +15,7 @@
 package com.google.gerrit.server.restapi.project;
 
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
-import static com.google.gerrit.reviewdb.client.RefNames.isConfigRef;
+import static com.google.gerrit.entities.RefNames.isConfigRef;
 import static java.lang.String.format;
 import static org.eclipse.jgit.lib.Constants.R_REFS;
 import static org.eclipse.jgit.lib.Constants.R_TAGS;
@@ -25,10 +25,12 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.git.LockFailureException;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.GitRepositoryManager;
@@ -38,12 +40,10 @@ import com.google.gerrit.server.permissions.RefPermission;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.project.RefValidationHelper;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
-import org.eclipse.jgit.errors.LockFailedException;
 import org.eclipse.jgit.lib.BatchRefUpdate;
 import org.eclipse.jgit.lib.NullProgressMonitor;
 import org.eclipse.jgit.lib.ObjectId;
@@ -57,9 +57,6 @@ import org.eclipse.jgit.transport.ReceiveCommand.Result;
 @Singleton
 public class DeleteRef {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
-
-  private static final int MAX_LOCK_FAILURE_CALLS = 10;
-  private static final long SLEEP_ON_LOCK_FAILURE_MS = 15;
 
   private final Provider<IdentifiedUser> identifiedUser;
   private final PermissionBackend permissionBackend;
@@ -126,23 +123,7 @@ public class DeleteRef {
       u.setNewObjectId(ObjectId.zeroId());
       u.setForceUpdate(true);
       refDeletionValidator.validateRefOperation(projectState.getName(), identifiedUser.get(), u);
-      int remainingLockFailureCalls = MAX_LOCK_FAILURE_CALLS;
-      for (; ; ) {
-        try {
-          result = u.delete();
-        } catch (LockFailedException e) {
-          result = RefUpdate.Result.LOCK_FAILURE;
-        }
-        if (result == RefUpdate.Result.LOCK_FAILURE && --remainingLockFailureCalls > 0) {
-          try {
-            Thread.sleep(SLEEP_ON_LOCK_FAILURE_MS);
-          } catch (InterruptedException ie) {
-            // ignore
-          }
-        } else {
-          break;
-        }
-      }
+      result = u.delete();
 
       switch (result) {
         case NEW:
@@ -157,19 +138,19 @@ public class DeleteRef {
           break;
 
         case REJECTED_CURRENT_BRANCH:
-          logger.atSevere().log("Cannot delete %s: %s", ref, result.name());
+          logger.atFine().log("Cannot delete current branch %s: %s", ref, result.name());
           throw new ResourceConflictException("cannot delete current branch");
 
-        case IO_FAILURE:
         case LOCK_FAILURE:
+          throw new LockFailureException(String.format("Cannot delete %s", ref), u);
+        case IO_FAILURE:
         case NOT_ATTEMPTED:
         case REJECTED:
         case RENAMED:
         case REJECTED_MISSING_OBJECT:
         case REJECTED_OTHER_REASON:
         default:
-          logger.atSevere().log("Cannot delete %s: %s", ref, result.name());
-          throw new ResourceConflictException("cannot delete: " + result.name());
+          throw new StorageException(String.format("Cannot delete %s: %s", ref, result.name()));
       }
     }
   }
@@ -180,15 +161,13 @@ public class DeleteRef {
    * @param projectState the {@code ProjectState} of the project whose refs are to be deleted.
    * @param refsToDelete the refs to be deleted.
    * @param prefix the prefix of the refs.
-   * @throws OrmException
    * @throws IOException
    * @throws ResourceConflictException
    * @throws PermissionBackendException
    */
   public void deleteMultipleRefs(
       ProjectState projectState, ImmutableSet<String> refsToDelete, String prefix)
-      throws OrmException, IOException, ResourceConflictException, PermissionBackendException,
-          AuthException {
+      throws IOException, ResourceConflictException, PermissionBackendException, AuthException {
     if (refsToDelete.isEmpty()) {
       return;
     }
@@ -229,8 +208,8 @@ public class DeleteRef {
 
   private ReceiveCommand createDeleteCommand(
       ProjectState projectState, Repository r, String refName)
-      throws OrmException, IOException, ResourceConflictException, PermissionBackendException {
-    Ref ref = r.getRefDatabase().getRef(refName);
+      throws IOException, ResourceConflictException, PermissionBackendException {
+    Ref ref = r.getRefDatabase().exactRef(refName);
     ReceiveCommand command;
     if (ref == null) {
       command = new ReceiveCommand(ObjectId.zeroId(), ObjectId.zeroId(), refName);
@@ -263,7 +242,7 @@ public class DeleteRef {
     }
 
     if (!refName.startsWith(R_TAGS)) {
-      Branch.NameKey branchKey = new Branch.NameKey(projectState.getNameKey(), ref.getName());
+      BranchNameKey branchKey = BranchNameKey.create(projectState.getNameKey(), ref.getName());
       if (!queryProvider.get().setLimit(1).byBranchOpen(branchKey).isEmpty()) {
         command.setResult(Result.REJECTED_OTHER_REASON, "it has open changes");
       }

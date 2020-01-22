@@ -21,37 +21,39 @@ import static java.util.stream.Collectors.toList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Streams;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.account.externalids.ExternalId;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.config.AllUsersNameProvider;
 import com.google.gerrit.server.util.time.TimeUtil;
-import com.google.gerrit.testing.GerritBaseTests;
 import java.util.List;
 import org.eclipse.jgit.lib.ObjectId;
 import org.junit.Test;
 
-public class AccountFieldTest extends GerritBaseTests {
+public class AccountFieldTest {
   @Test
   public void refStateFieldValues() throws Exception {
     AllUsersName allUsersName = new AllUsersName(AllUsersNameProvider.DEFAULT);
-    Account account = new Account(new Account.Id(1), TimeUtil.nowTs());
+    Account.Builder account = Account.builder(Account.id(1), TimeUtil.nowTs());
     String metaId = "0e39795bb25dc914118224995c53c5c36923a461";
     account.setMetaId(metaId);
     List<String> values =
-        toStrings(AccountField.REF_STATE.get(AccountState.forAccount(allUsersName, account)));
+        toStrings(AccountField.REF_STATE.get(AccountState.forAccount(account.build())));
     assertThat(values).hasSize(1);
     String expectedValue =
-        allUsersName.get() + ":" + RefNames.refsUsers(account.getId()) + ":" + metaId;
+        allUsersName.get() + ":" + RefNames.refsUsers(account.id()) + ":" + metaId;
     assertThat(Iterables.getOnlyElement(values)).isEqualTo(expectedValue);
   }
 
   @Test
   public void externalIdStateFieldValues() throws Exception {
-    Account.Id id = new Account.Id(1);
-    Account account = new Account(id, TimeUtil.nowTs());
+    Account.Id id = Account.id(1);
+    Account account =
+        Account.builder(id, TimeUtil.nowTs())
+            .setMetaId("1234567812345678123456781234567812345678")
+            .build();
     ExternalId extId1 =
         ExternalId.create(
             ExternalId.Key.create(ExternalId.SCHEME_MAILTO, "foo.bar@example.com"),
@@ -69,7 +71,7 @@ public class AccountFieldTest extends GerritBaseTests {
     List<String> values =
         toStrings(
             AccountField.EXTERNAL_ID_STATE.get(
-                AccountState.forAccount(null, account, ImmutableSet.of(extId1, extId2))));
+                AccountState.forAccount(account, ImmutableSet.of(extId1, extId2))));
     String expectedValue1 = extId1.key().sha1().name() + ":" + extId1.blobId().name();
     String expectedValue2 = extId2.key().sha1().name() + ":" + extId2.blobId().name();
     assertThat(values).containsExactly(expectedValue1, expectedValue2);

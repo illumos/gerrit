@@ -17,69 +17,69 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-selection-action-box',
-
+  /**
+   * @appliesMixin Gerrit.FireMixin
+   * @extends Polymer.Element
+   */
+  class GrSelectionActionBox extends Polymer.mixinBehaviors( [
+    Gerrit.FireBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-selection-action-box'; }
     /**
-     * Fired when the comment creation action was taken (hotkey, click).
+     * Fired when the comment creation action was taken (click).
      *
-     * @event create-comment
+     * @event create-comment-requested
      */
 
-    properties: {
-      keyEventTarget: {
-        type: Object,
-        value() { return document.body; },
-      },
-      range: {
-        type: Object,
-        value: {
-          startLine: NaN,
-          startChar: NaN,
-          endLine: NaN,
-          endChar: NaN,
+    static get properties() {
+      return {
+        keyEventTarget: {
+          type: Object,
+          value() { return document.body; },
         },
-      },
-      positionBelow: Boolean,
-      side: {
-        type: String,
-        value: '',
-      },
-    },
+        positionBelow: Boolean,
+      };
+    }
 
-    behaviors: [
-      Gerrit.KeyboardShortcutBehavior,
-    ],
+    /** @override */
+    created() {
+      super.created();
 
-    listeners: {
-      mousedown: '_handleMouseDown', // See https://crbug.com/gerrit/4767
-    },
-
-    keyBindings: {
-      c: '_handleCKey',
-    },
+      // See https://crbug.com/gerrit/4767
+      this.addEventListener('mousedown',
+          e => this._handleMouseDown(e));
+    }
 
     placeAbove(el) {
       Polymer.dom.flush();
       const rect = this._getTargetBoundingRect(el);
       const boxRect = this.$.tooltip.getBoundingClientRect();
-      const parentRect = this.parentElement.getBoundingClientRect();
+      const parentRect = this._getParentBoundingClientRect();
       this.style.top =
           rect.top - parentRect.top - boxRect.height - 6 + 'px';
       this.style.left =
           rect.left - parentRect.left + (rect.width - boxRect.width) / 2 + 'px';
-    },
+    }
 
     placeBelow(el) {
       Polymer.dom.flush();
       const rect = this._getTargetBoundingRect(el);
       const boxRect = this.$.tooltip.getBoundingClientRect();
-      const parentRect = this.parentElement.getBoundingClientRect();
+      const parentRect = this._getParentBoundingClientRect();
       this.style.top =
-          rect.top - parentRect.top + boxRect.height - 6 + 'px';
+      rect.top - parentRect.top + boxRect.height - 6 + 'px';
       this.style.left =
-          rect.left - parentRect.left + (rect.width - boxRect.width) / 2 + 'px';
-    },
+      rect.left - parentRect.left + (rect.width - boxRect.width) / 2 + 'px';
+    }
+
+    _getParentBoundingClientRect() {
+      // With native shadow DOM, the parent is the shadow root, not the gr-diff
+      // element
+      const parent = this.parentElement || this.parentNode.host;
+      return parent.getBoundingClientRect();
+    }
 
     _getTargetBoundingRect(el) {
       let rect;
@@ -92,25 +92,15 @@
         rect = el.getBoundingClientRect();
       }
       return rect;
-    },
-
-    _handleCKey(e) {
-      if (this.shouldSuppressKeyboardShortcut(e) ||
-          this.modifierPressed(e)) { return; }
-
-      e.preventDefault();
-      this._fireCreateComment();
-    },
+    }
 
     _handleMouseDown(e) {
       if (e.button !== 0) { return; } // 0 = main button
       e.preventDefault();
       e.stopPropagation();
-      this._fireCreateComment();
-    },
+      this.fire('create-comment-requested');
+    }
+  }
 
-    _fireCreateComment() {
-      this.fire('create-comment', {side: this.side, range: this.range});
-    },
-  });
+  customElements.define(GrSelectionActionBox.is, GrSelectionActionBox);
 })();

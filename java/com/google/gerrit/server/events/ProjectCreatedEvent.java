@@ -14,7 +14,7 @@
 
 package com.google.gerrit.server.events;
 
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Project;
 
 public class ProjectCreatedEvent extends ProjectEvent {
   static final String TYPE = "project-created";
@@ -27,7 +27,7 @@ public class ProjectCreatedEvent extends ProjectEvent {
 
   @Override
   public Project.NameKey getProjectNameKey() {
-    return new Project.NameKey(projectName);
+    return Project.nameKey(projectName);
   }
 
   public String getHeadName() {

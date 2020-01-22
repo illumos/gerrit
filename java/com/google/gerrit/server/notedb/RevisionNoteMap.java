@@ -15,37 +15,37 @@
 package com.google.gerrit.server.notedb;
 
 import com.google.common.collect.ImmutableMap;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Comment;
-import com.google.gerrit.reviewdb.client.PatchLineComment;
-import com.google.gerrit.reviewdb.client.RevId;
+import com.google.gerrit.entities.Comment;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import org.eclipse.jgit.errors.ConfigInvalidException;
+import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.notes.Note;
 import org.eclipse.jgit.notes.NoteMap;
 
+/**
+ * A utility class that parses a NoteMap into commit => comment list data.
+ *
+ * @param <T> the RevisionNote for the comment type.
+ */
 class RevisionNoteMap<T extends RevisionNote<? extends Comment>> {
+  // CommitID => blob ID
   final NoteMap noteMap;
-  final ImmutableMap<RevId, T> revisionNotes;
+
+  // CommitID => parsed data, immutable map.
+  final ImmutableMap<ObjectId, T> revisionNotes;
 
   static RevisionNoteMap<ChangeRevisionNote> parse(
-      ChangeNoteJson noteJson,
-      LegacyChangeNoteRead legacyChangeNoteRead,
-      Change.Id changeId,
-      ObjectReader reader,
-      NoteMap noteMap,
-      PatchLineComment.Status status)
+      ChangeNoteJson noteJson, ObjectReader reader, NoteMap noteMap, Comment.Status status)
       throws ConfigInvalidException, IOException {
-    Map<RevId, ChangeRevisionNote> result = new HashMap<>();
+    Map<ObjectId, ChangeRevisionNote> result = new HashMap<>();
     for (Note note : noteMap) {
-      ChangeRevisionNote rn =
-          new ChangeRevisionNote(
-              noteJson, legacyChangeNoteRead, changeId, reader, note.getData(), status);
+      ChangeRevisionNote rn = new ChangeRevisionNote(noteJson, reader, note.getData(), status);
       rn.parse();
-      result.put(new RevId(note.name()), rn);
+
+      result.put(note.copy(), rn);
     }
     return new RevisionNoteMap<>(noteMap, ImmutableMap.copyOf(result));
   }
@@ -53,21 +53,21 @@ class RevisionNoteMap<T extends RevisionNote<? extends Comment>> {
   static RevisionNoteMap<RobotCommentsRevisionNote> parseRobotComments(
       ChangeNoteJson changeNoteJson, ObjectReader reader, NoteMap noteMap)
       throws ConfigInvalidException, IOException {
-    Map<RevId, RobotCommentsRevisionNote> result = new HashMap<>();
+    Map<ObjectId, RobotCommentsRevisionNote> result = new HashMap<>();
     for (Note note : noteMap) {
       RobotCommentsRevisionNote rn =
           new RobotCommentsRevisionNote(changeNoteJson, reader, note.getData());
       rn.parse();
-      result.put(new RevId(note.name()), rn);
+      result.put(note.copy(), rn);
     }
     return new RevisionNoteMap<>(noteMap, ImmutableMap.copyOf(result));
   }
 
   static <T extends RevisionNote<? extends Comment>> RevisionNoteMap<T> emptyMap() {
-    return new RevisionNoteMap<>(NoteMap.newEmptyMap(), ImmutableMap.<RevId, T>of());
+    return new RevisionNoteMap<>(NoteMap.newEmptyMap(), ImmutableMap.of());
   }
 
-  private RevisionNoteMap(NoteMap noteMap, ImmutableMap<RevId, T> revisionNotes) {
+  private RevisionNoteMap(NoteMap noteMap, ImmutableMap<ObjectId, T> revisionNotes) {
     this.noteMap = noteMap;
     this.revisionNotes = revisionNotes;
   }

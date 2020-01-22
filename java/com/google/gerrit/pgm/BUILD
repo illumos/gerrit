@@ -1,17 +1,7 @@
 load("@rules_java//java:defs.bzl", "java_library")
 
-# TODO(davido): This indirection doesn't avoid unwanted depdencies
-# in acceptance-framework and should be removed. Instead, provided_deps
-# should be used, once https://github.com/bazelbuild/bazel/issues/1402
-# is fixed.
-alias(
-    name = "pgm",
-    actual = ":daemon",
-    visibility = ["//visibility:public"],
-)
-
 java_library(
-    name = "daemon",
+    name = "pgm",
     srcs = glob(["**/*.java"]),
     resource_strip_prefix = "resources",
     resources = ["//resources/com/google/gerrit/pgm"],
@@ -20,6 +10,8 @@ java_library(
         "//java/com/google/gerrit/common:annotations",
         "//java/com/google/gerrit/common:server",
         "//java/com/google/gerrit/elasticsearch",
+        "//java/com/google/gerrit/entities",
+        "//java/com/google/gerrit/exceptions",
         "//java/com/google/gerrit/extensions:api",
         "//java/com/google/gerrit/gpg",
         "//java/com/google/gerrit/httpd",
@@ -35,32 +27,28 @@ java_library(
         "//java/com/google/gerrit/pgm/init",
         "//java/com/google/gerrit/pgm/init/api",
         "//java/com/google/gerrit/pgm/util",
-        "//java/com/google/gerrit/reviewdb:server",
         "//java/com/google/gerrit/server",
         "//java/com/google/gerrit/server:module",
         "//java/com/google/gerrit/server/api",
         "//java/com/google/gerrit/server/audit",
         "//java/com/google/gerrit/server/cache/h2",
         "//java/com/google/gerrit/server/cache/mem",
-        "//java/com/google/gerrit/server/git/receive",
         "//java/com/google/gerrit/server/ioutil",
         "//java/com/google/gerrit/server/restapi",
         "//java/com/google/gerrit/server/schema",
         "//java/com/google/gerrit/server/util/time",
         "//java/com/google/gerrit/sshd",
-        "//java/com/google/gerrit/util/http",
         "//lib:args4j",
         "//lib:guava",
-        "//lib:gwtorm",
+        "//lib:jgit",
         "//lib:protobuf",
-        "//lib:servlet-api-3_1-without-neverlink",
+        "//lib:servlet-api-without-neverlink",
         "//lib/auto:auto-value",
         "//lib/auto:auto-value-annotations",
         "//lib/flogger:api",
         "//lib/guice",
         "//lib/guice:guice-assistedinject",
         "//lib/guice:guice-servlet",
-        "//lib/jgit/org.eclipse.jgit:jgit",
         "//lib/log:jsonevent-layout",
         "//lib/log:log4j",
         "//lib/prolog:cafeteria",

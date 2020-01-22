@@ -20,21 +20,26 @@
   const HLJS_PATH = 'bower_components/highlightjs/highlight.min.js';
   const DARK_THEME_PATH = 'styles/themes/dark-theme.html';
 
-  Polymer({
-    is: 'gr-lib-loader',
+  /** @extends Polymer.Element */
+  class GrLibLoader extends Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element)) {
+    static get is() { return 'gr-lib-loader'; }
 
-    properties: {
-      _hljsState: {
-        type: Object,
+    static get properties() {
+      return {
+        _hljsState: {
+          type: Object,
 
-        // NOTE: intended singleton.
-        value: {
-          configured: false,
-          loading: false,
-          callbacks: [],
+          // NOTE: intended singleton.
+          value: {
+            configured: false,
+            loading: false,
+            callbacks: [],
+          },
         },
-      },
-    },
+      };
+    }
 
     /**
      * Get the HLJS library. Returns a promise that resolves with a reference to
@@ -55,28 +60,34 @@
         if (!this._hljsState.loading) {
           this._hljsState.loading = true;
           this._loadScript(this._getHLJSUrl())
-              .then(this._onHLJSLibLoaded.bind(this)).catch(reject);
+              .then(this._onHLJSLibLoaded.bind(this))
+              .catch(reject);
         }
 
         this._hljsState.callbacks.push(resolve);
       });
-    },
+    }
 
     /**
      * Loads the dark theme document. Returns a promise that resolves with a
      * custom-style DOM element.
      *
      * @return {!Promise<Element>}
+     * @suppress {checkTypes}
      */
     getDarkTheme() {
       return new Promise((resolve, reject) => {
-        this.importHref(this._getLibRoot() + DARK_THEME_PATH, () => {
-          const module = document.createElement('style', 'custom-style');
-          module.setAttribute('include', 'dark-theme');
-          resolve(module);
-        });
+        (this.importHref || Polymer.importHref)(
+            this._getLibRoot() + DARK_THEME_PATH, () => {
+              const module = document.createElement('style');
+              module.setAttribute('include', 'dark-theme');
+              const cs = document.createElement('custom-style');
+              cs.appendChild(module);
+
+              resolve(cs);
+            });
       });
-    },
+    }
 
     /**
      * Execute callbacks awaiting the HLJS lib load.
@@ -84,11 +95,14 @@
     _onHLJSLibLoaded() {
       const lib = this._getHighlightLib();
       this._hljsState.loading = false;
+      this.$.jsAPI.handleEvent(this.$.jsAPI.EventType.HIGHLIGHTJS_LOADED, {
+        hljs: lib,
+      });
       for (const cb of this._hljsState.callbacks) {
         cb(lib);
       }
       this._hljsState.callbacks = [];
-    },
+    }
 
     /**
      * Get the HLJS library, assuming it has been loaded. Configure the library
@@ -104,7 +118,7 @@
         lib.configure({classPrefix: 'gr-diff gr-syntax gr-syntax-'});
       }
       return lib;
-    },
+    }
 
     /**
      * Get the resource path used to load the application. If the application
@@ -117,7 +131,7 @@
         return window.STATIC_RESOURCE_PATH + '/';
       }
       return '/';
-    },
+    }
 
     /**
      * Load and execute a JS file from the lib root.
@@ -135,17 +149,19 @@
           return;
         }
 
-        script.src = src;
+        script.setAttribute('src', src);
         script.onload = resolve;
         script.onerror = reject;
         Polymer.dom(document.head).appendChild(script);
       });
-    },
+    }
 
     _getHLJSUrl() {
       const root = this._getLibRoot();
       if (!root) { return null; }
       return root + HLJS_PATH;
-    },
-  });
+    }
+  }
+
+  customElements.define(GrLibLoader.is, GrLibLoader);
 })();

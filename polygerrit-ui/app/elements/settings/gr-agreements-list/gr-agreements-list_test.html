@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-settings-view</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-agreements-list.html">
 
@@ -45,7 +47,7 @@ limitations under the License.
       }];
 
       stub('gr-rest-api-interface', {
-        getAccountGroups() { return Promise.resolve(agreements); },
+        getAccountAgreements() { return Promise.resolve(agreements); },
       });
 
       element = fixture('basic');
@@ -56,10 +58,10 @@ limitations under the License.
     test('renders', () => {
       const rows = Polymer.dom(element.root).querySelectorAll('tbody tr');
 
-      assert.equal(rows.length, 3);
+      assert.equal(rows.length, 1);
 
-      const nameCells = rows.map(row =>
-        row.querySelectorAll('td')[0].textContent
+      const nameCells = Array.from(rows).map(row =>
+        row.querySelectorAll('td')[0].textContent.trim()
       );
 
       assert.equal(nameCells[0], 'Agreements 1');

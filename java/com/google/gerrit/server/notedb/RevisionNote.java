@@ -18,7 +18,7 @@ import static com.google.common.base.Preconditions.checkState;
 import static org.eclipse.jgit.lib.Constants.OBJ_BLOB;
 
 import com.google.common.collect.ImmutableList;
-import com.google.gerrit.reviewdb.client.Comment;
+import com.google.gerrit.common.UsedAt;
 import java.io.IOException;
 import java.util.List;
 import org.eclipse.jgit.errors.ConfigInvalidException;
@@ -26,7 +26,12 @@ import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.util.MutableInteger;
 
-abstract class RevisionNote<T extends Comment> {
+/**
+ * Data stored in a note, parsed on demand. The data type to parse into is a generic list of type T.
+ * The source of the data is a array of raw bytes
+ */
+@UsedAt(UsedAt.Project.PLUGIN_CHECKS)
+public abstract class RevisionNote<T> {
   static final int MAX_NOTE_SZ = 25 << 20;
 
   protected static void trimLeadingEmptyLines(byte[] bytes, MutableInteger p) {
@@ -39,9 +44,9 @@ abstract class RevisionNote<T extends Comment> {
   private final ObjectId noteId;
 
   private byte[] raw;
-  private ImmutableList<T> comments;
+  private ImmutableList<T> entities;
 
-  RevisionNote(ObjectReader reader, ObjectId noteId) {
+  public RevisionNote(ObjectReader reader, ObjectId noteId) {
     this.reader = reader;
     this.noteId = noteId;
   }
@@ -51,21 +56,29 @@ abstract class RevisionNote<T extends Comment> {
     return raw;
   }
 
-  public ImmutableList<T> getComments() {
+  @UsedAt(UsedAt.Project.PLUGIN_CHECKS)
+  public T getOnlyEntity() {
     checkParsed();
-    return comments;
+    checkState(entities.size() == 1, "expected exactly one entity");
+    return entities.get(0);
   }
 
+  public ImmutableList<T> getEntities() {
+    checkParsed();
+    return entities;
+  }
+
+  /** Reads the raw data, and delegates parsing to the {@link #parse(byte[], int)} method. */
   public void parse() throws IOException, ConfigInvalidException {
     raw = reader.open(noteId, OBJ_BLOB).getCachedBytes(MAX_NOTE_SZ);
     MutableInteger p = new MutableInteger();
     trimLeadingEmptyLines(raw, p);
     if (p.value >= raw.length) {
-      comments = ImmutableList.of();
+      entities = ImmutableList.of();
       return;
     }
 
-    comments = ImmutableList.copyOf(parse(raw, p.value));
+    entities = ImmutableList.copyOf(parse(raw, p.value));
   }
 
   protected abstract List<T> parse(byte[] raw, int offset)

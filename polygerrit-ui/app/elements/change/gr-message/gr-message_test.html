@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-message</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-message.html">
 
@@ -162,6 +164,24 @@ limitations under the License.
         assert.isNotOk(
             Polymer.dom(element.root).querySelector('.positiveVote'));
       });
+    });
+
+    test('clicking on date link fires event', () => {
+      element.message = {
+        type: 'REVIEWER_UPDATE',
+        updated: '2016-01-12 20:24:49.448000000',
+        reviewer: {},
+        id: '47c43261_55aa2c41',
+      };
+      flushAsynchronousOperations();
+      const stub = sinon.stub();
+      element.addEventListener('message-anchor-tap', stub);
+      const dateEl = element.$$('.date');
+      assert.ok(dateEl);
+      MockInteractions.tap(dateEl);
+
+      assert.isTrue(stub.called);
+      assert.deepEqual(stub.lastCall.args[0].detail, {id: element.message.id});
     });
 
     test('votes', () => {

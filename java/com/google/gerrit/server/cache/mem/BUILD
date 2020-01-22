@@ -11,7 +11,7 @@ java_library(
         "//lib:caffeine",
         "//lib:caffeine-guava",
         "//lib:guava",
+        "//lib:jgit",
         "//lib/guice",
-        "//lib/jgit/org.eclipse.jgit:jgit",
     ],
 )

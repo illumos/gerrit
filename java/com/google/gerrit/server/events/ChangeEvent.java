@@ -15,9 +15,9 @@
 package com.google.gerrit.server.events;
 
 import com.google.common.base.Supplier;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.server.data.ChangeAttribute;
 
 public abstract class ChangeEvent extends RefEvent {
@@ -29,7 +29,7 @@ public abstract class ChangeEvent extends RefEvent {
   protected ChangeEvent(String type, Change change) {
     super(type);
     this.project = change.getProject();
-    this.refName = RefNames.fullName(change.getDest().get());
+    this.refName = RefNames.fullName(change.getDest().branch());
     this.changeKey = change.getKey();
   }
 

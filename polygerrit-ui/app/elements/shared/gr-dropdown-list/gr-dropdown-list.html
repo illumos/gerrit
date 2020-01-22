@@ -14,11 +14,11 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 -->
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 
-<link rel="import" href="../../../bower_components/iron-dropdown/iron-dropdown.html">
-<link rel="import" href="../../../bower_components/paper-item/paper-item.html">
-<link rel="import" href="../../../bower_components/paper-listbox/paper-listbox.html">
+<link rel="import" href="/bower_components/iron-dropdown/iron-dropdown.html">
+<link rel="import" href="/bower_components/paper-item/paper-item.html">
+<link rel="import" href="/bower_components/paper-listbox/paper-listbox.html">
 
 <link rel="import" href="../../../styles/shared-styles.html">
 <link rel="import" href="../../shared/gr-button/gr-button.html">
@@ -44,11 +44,11 @@ limitations under the License.
       }
       .dropdown-content {
         background-color: var(--dropdown-background-color);
-        box-shadow: 0 1px 5px rgba(0, 0, 0, .3);
+        box-shadow: var(--elevation-level-2);
         max-height: 70vh;
-        margin-top: 2em;
+        margin-top: var(--spacing-xxl);
         min-width: 266px;
-        @apply --dropdown-content-style
+        @apply --dropdown-content-style;
       }
       paper-listbox {
         --paper-listbox: {
@@ -58,7 +58,7 @@ limitations under the License.
       paper-item {
         cursor: pointer;
         flex-direction: column;
-        font-size: var(--font-size-normal);
+        font-size: inherit;
         --paper-item: {
           min-height: 0;
           padding: 10px 16px;
@@ -78,20 +78,10 @@ limitations under the License.
       }
       .bottomContent {
         color: var(--deemphasized-text-color);
-        /*
-         * Should be 16px when the base font size is 13px (browser default of
-         * 16px.
-         */
-        line-height: 1.37rem;
       }
       .bottomContent,
       .topContent {
         display: flex;
-        /*
-         * Should be 16px when the base font size is 13px (browser default of
-         * 16px.
-         */
-        line-height: 1.37rem;
         justify-content: space-between;
         flex-direction: row;
         width: 100%;
@@ -103,7 +93,7 @@ limitations under the License.
       }
       gr-date-formatter {
         color: var(--deemphasized-text-color);
-        margin-left: 2em;
+        margin-left: var(--spacing-xxl);
         white-space: nowrap;
       }
       gr-select {
@@ -135,11 +125,12 @@ limitations under the License.
       }
     </style>
     <gr-button
+        disabled="[[disabled]]"
         down-arrow
         link
         id="trigger"
         class="dropdown-trigger"
-        on-tap="_showDropdownTapHandler"
+        on-click="_showDropdownTapHandler"
         slot="dropdown-trigger">
       <span id="triggerText">[[text]]</span>
     </gr-button>
@@ -151,7 +142,7 @@ limitations under the License.
       <paper-listbox
           class="dropdown-content"
           slot="dropdown-content"
-          attr-for-selected="value"
+          attr-for-selected="data-value"
           selected="{{value}}"
           on-tap="_handleDropdownTap">
         <template is="dom-repeat"
@@ -159,7 +150,7 @@ limitations under the License.
             initial-count="[[initialCount]]">
           <paper-item
               disabled="[[item.disabled]]"
-              value="[[item.value]]">
+              data-value$="[[item.value]]">
             <div class="topContent">
               <div>[[item.text]]</div>
               <template is="dom-if" if="[[item.date]]">

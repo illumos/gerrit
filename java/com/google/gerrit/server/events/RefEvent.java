@@ -14,15 +14,15 @@
 
 package com.google.gerrit.server.events;
 
-import com.google.gerrit.reviewdb.client.Branch;
+import com.google.gerrit.entities.BranchNameKey;
 
 public abstract class RefEvent extends ProjectEvent {
   protected RefEvent(String type) {
     super(type);
   }
 
-  public Branch.NameKey getBranchNameKey() {
-    return new Branch.NameKey(getProjectNameKey(), getRefName());
+  public BranchNameKey getBranchNameKey() {
+    return BranchNameKey.create(getProjectNameKey(), getRefName());
   }
 
   public abstract String getRefName();

@@ -93,7 +93,6 @@ public final class GerritLauncher {
       System.err.println("  init            Initialize a Gerrit installation");
       System.err.println("  reindex         Rebuild the secondary index");
       System.err.println("  daemon          Run the Gerrit network daemons");
-      System.err.println("  gsql            Run the interactive query console");
       System.err.println("  version         Display the build version number");
       System.err.println("  passwd          Set or change password in secure.config");
 
@@ -324,7 +323,7 @@ public final class GerritLauncher {
     }
 
     String name = ze.getName();
-    jars.put(name.substring(name.lastIndexOf('/'), name.length()), tmp.toURI().toURL());
+    jars.put(name.substring(name.lastIndexOf('/')), tmp.toURI().toURL());
   }
 
   private static void move(SortedMap<String, URL> jars, String prefix, List<URL> extapi) {

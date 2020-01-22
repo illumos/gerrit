@@ -17,39 +17,47 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-user-header',
-    properties: {
-      /** @type {?String} */
-      userId: {
-        type: String,
-        observer: '_accountChanged',
-      },
+  /**
+   * @extends Polymer.Element
+   */
+  class GrUserHeader extends Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element)) {
+    static get is() { return 'gr-user-header'; }
 
-      showDashboardLink: {
-        type: Boolean,
-        value: false,
-      },
+    static get properties() {
+      return {
+      /** @type {?string} */
+        userId: {
+          type: String,
+          observer: '_accountChanged',
+        },
 
-      loggedIn: {
-        type: Boolean,
-        value: false,
-      },
+        showDashboardLink: {
+          type: Boolean,
+          value: false,
+        },
 
-      /**
-       * @type {?{name: ?, email: ?, registered_on: ?}}
-       */
-      _accountDetails: {
-        type: Object,
-        value: null,
-      },
+        loggedIn: {
+          type: Boolean,
+          value: false,
+        },
 
-      /** @type {?String} */
-      _status: {
-        type: String,
-        value: null,
-      },
-    },
+        /**
+         * @type {?{name: ?, email: ?, registered_on: ?}}
+         */
+        _accountDetails: {
+          type: Object,
+          value: null,
+        },
+
+        /** @type {?string} */
+        _status: {
+          type: String,
+          value: null,
+        },
+      };
+    }
 
     _accountChanged(userId) {
       if (!userId) {
@@ -64,28 +72,33 @@
       this.$.restAPI.getAccountStatus(userId).then(status => {
         this._status = status;
       });
-    },
+    }
 
     _computeDisplayClass(status) {
       return status ? ' ' : 'hide';
-    },
+    }
 
     _computeDetail(accountDetails, name) {
       return accountDetails ? accountDetails[name] : '';
-    },
+    }
 
     _computeStatusClass(accountDetails) {
       return this._computeDetail(accountDetails, 'status') ? '' : 'hide';
-    },
+    }
 
     _computeDashboardUrl(accountDetails) {
-      if (!accountDetails || !accountDetails.email) { return null; }
-      return Gerrit.Nav.getUrlForUserDashboard(accountDetails.email);
-    },
+      if (!accountDetails) { return null; }
+      const id = accountDetails._account_id;
+      const email = accountDetails.email;
+      if (!id && !email ) { return null; }
+      return Gerrit.Nav.getUrlForUserDashboard(id ? id : email);
+    }
 
     _computeDashboardLinkClass(showDashboardLink, loggedIn) {
       return showDashboardLink && loggedIn ?
         'dashboardLink' : 'dashboardLink hide';
-    },
-  });
+    }
+  }
+
+  customElements.define(GrUserHeader.is, GrUserHeader);
 })();

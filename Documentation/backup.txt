@@ -1,3 +1,4 @@
+:linkattrs:
 = Gerrit Code Review - Backup
 
 A Gerrit Code Review site contains data that needs to be backed up regularly.
@@ -47,7 +48,7 @@ for production installations.
 +
 If you have chosen to use _Elastic Search_ for indexing,
 refer to its
-link:https://www.elastic.co/guide/en/elasticsearch/reference/current/modules-snapshots.html[backup documentation].
+link:https://www.elastic.co/guide/en/elasticsearch/reference/current/modules-snapshots.html[backup documentation,role=external,window=_blank].
 
 [#optional-backup-cache]
 Caches::
@@ -70,7 +71,7 @@ directory also contains secrets which should be handled separately
 * public and private SSH host keys
 +
 You may consider to use the
-link:https://gerrit.googlesource.com/plugins/secure-config/[secure-config plugin]
+link:https://gerrit.googlesource.com/plugins/secure-config/[secure-config plugin,role=external,window=_blank]
 to encrypt these secrets.
 
 [#optional-backup-plugin-data]
@@ -139,12 +140,13 @@ Use a file system supporting snapshots to keep the period where the gerrit
 server is read-only or down as short as possible.
 
 [#cons-backup-read-only]
-=== Turn master read-only for backup
+=== Turn primary server read-only for backup
 
-Make the server read-only before taking the backup. This means read-access
-is still available during backup, because only write operations have to be
-stopped to ensure consistency. This can be implemented using the
-link:https://gerrit.googlesource.com/plugins/readonly/[_readonly_] plugin.
+Make the primary server handling write operations read-only before taking the
+backup. This means read-access is still available from replica servers during
+backup, because only write operations have to be stopped to ensure consistency.
+This can be implemented using the
+link:https://gerrit.googlesource.com/plugins/readonly/[_readonly_,role=external,window=_blank] plugin.
 
 [#cons-backup-replicate]
 === Replicate data for backup
@@ -156,15 +158,15 @@ file, ref-logs, git configs, and alternate configs.
 Replicate all git repositories to another file system using
 `git clone --mirror`,
 or the
-link:https://gerrit.googlesource.com/plugins/replication[replication plugin]
+link:https://gerrit.googlesource.com/plugins/replication[replication plugin,role=external,window=_blank]
 or the
-link:https://gerrit.googlesource.com/plugins/pull-replication[pull-replication plugin].
+link:https://gerrit.googlesource.com/plugins/pull-replication[pull-replication plugin,role=external,window=_blank].
 Best you use a filesystem supporting snapshots to create a backup archive
 of such a replica.
 
-For 2.x Gerrit versions also set up a database slave for the data stored in the
+For 2.x Gerrit versions also set up a database replica for the data stored in the
 SQL database. If you are using 2.16 and migrated to _NoteDb_ you may consider to
-skip setting up a database slave, instead take a backup of the database which only
+skip setting up a database replica, instead take a backup of the database which only
 contains the current schema version in this case.
 In addition you need to ensure that no write operations are in flight before you
 take the replica offline. Otherwise the database backup might be inconsistent
@@ -173,18 +175,19 @@ with the backup of the git repositories.
 Do not skip backing up the replica, the replica alone IS NOT a backup.
 Imagine someone deleted a project by mistake and this deletion got replicated.
 Replication of repository deletions can be switched off using the
-link:https://gerrit.googlesource.com/plugins/replication/+/refs/heads/master/src/main/resources/Documentation/config.md[server option]
+link:https://gerrit.googlesource.com/plugins/replication/+/refs/heads/master/src/main/resources/Documentation/config.md[server option,role=external,window=_blank]
 `remote.NAME.replicateProjectDeletions`.
 
-If you are using Gerrit slaves to offload read traffic you can use one of these
-slaves for creating backups.
+If you are using Gerrit replica to offload read traffic you can use one of these
+replica for creating backups.
 
 [#cons-backup-offline]
-=== Take master offline for backup
+=== Take primary server offline for backup
 
-Shutdown the server before taking a backup. This is simple but means downtime
-for the users. Also crons and currently running cron jobs (e.g. repacking
-repositories) which affect the repositories may need to be shut down.
+Shut down the primary server handling write operations before taking a backup.
+This is simple but means downtime for the users. Also crons and currently
+running cron jobs (e.g. repacking repositories) which affect the repositories
+may need to be shut down.
 
 [#backup-methods]
 == Backup methods
@@ -195,13 +198,13 @@ repositories) which affect the repositories may need to be shut down.
 Filesystems supporting copy on write snapshots::
 +
 Use a file system supporting copy-on-write snapshots like
-link:https://btrfs.wiki.kernel.org/index.php/SysadminGuide#Snapshots[btrfs]
+link:https://btrfs.wiki.kernel.org/index.php/SysadminGuide#Snapshots[btrfs,role=external,window=_blank]
 or
-https://wiki.debian.org/ZFS#Snapshots[zfs].
+https://wiki.debian.org/ZFS#Snapshots[zfs,role=external,window=_blank].
 
 
 Other filesystems supporting snapshots::
-https://wiki.archlinux.org/index.php/LVM#Snapshots[lvm] or nfs.
+https://wiki.archlinux.org/index.php/LVM#Snapshots[lvm,role=external,window=_blank] or nfs.
 +
 Create a snapshot and then archive the snapshot to another storage.
 +
@@ -257,7 +260,7 @@ And fire drill restoring a new site using the backup.
 [#backup-dr-multi-site]
 === Multi-site setup
 
-Use the https://gerrit.googlesource.com/plugins/multi-site[multi-site plugin]
+Use the https://gerrit.googlesource.com/plugins/multi-site[multi-site plugin,role=external,window=_blank]
 to install Gerrit with multiple sites installed in different datacenters
 across different regions. This ensures that in case of a severe problem with
 one of the sites, the other sites can still serve your repositories.

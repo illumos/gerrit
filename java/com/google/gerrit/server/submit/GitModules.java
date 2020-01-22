@@ -16,9 +16,9 @@ package com.google.gerrit.server.submit;
 
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.SubmoduleSubscription;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.SubmoduleSubscription;
 import com.google.gerrit.server.config.CanonicalWebUrl;
 import com.google.gerrit.server.project.NoSuchProjectException;
 import com.google.gerrit.server.submit.MergeOpRepoManager.OpenRepo;
@@ -45,7 +45,7 @@ public class GitModules {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
   public interface Factory {
-    GitModules create(Branch.NameKey project, MergeOpRepoManager m);
+    GitModules create(BranchNameKey project, MergeOpRepoManager m);
   }
 
   private static final String GIT_MODULES = ".gitmodules";
@@ -55,16 +55,16 @@ public class GitModules {
   @Inject
   GitModules(
       @CanonicalWebUrl @Nullable String canonicalWebUrl,
-      @Assisted Branch.NameKey branch,
+      @Assisted BranchNameKey branch,
       @Assisted MergeOpRepoManager orm)
       throws IOException {
-    Project.NameKey project = branch.getParentKey();
+    Project.NameKey project = branch.project();
     logger.atFine().log("Loading .gitmodules of %s for project %s", branch, project);
     try {
       OpenRepo or = orm.getRepo(project);
-      ObjectId id = or.repo.resolve(branch.get());
+      ObjectId id = or.repo.resolve(branch.branch());
       if (id == null) {
-        throw new IOException("Cannot open branch " + branch.get());
+        throw new IOException("Cannot open branch " + branch.branch());
       }
       RevCommit commit = or.rw.parseCommit(id);
 
@@ -80,7 +80,7 @@ public class GitModules {
         config = new BlobBasedConfig(null, or.repo, commit, GIT_MODULES);
       } catch (ConfigInvalidException e) {
         throw new IOException(
-            "Could not read .gitmodules of super project: " + branch.getParentKey(), e);
+            "Could not read .gitmodules of super project: " + branch.project(), e);
       }
       subscriptions =
           new SubmoduleSectionParser(config, canonicalWebUrl, branch).parseAllSections();
@@ -89,7 +89,7 @@ public class GitModules {
     }
   }
 
-  Collection<SubmoduleSubscription> subscribedTo(Branch.NameKey src) {
+  Collection<SubmoduleSubscription> subscribedTo(BranchNameKey src) {
     Collection<SubmoduleSubscription> ret = new ArrayList<>();
     for (SubmoduleSubscription s : subscriptions) {
       if (s.getSubmodule().equals(src)) {

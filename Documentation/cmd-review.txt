@@ -25,7 +25,7 @@ _ssh_ -p <port> <host> _gerrit review_
 == DESCRIPTION
 Updates the current user's approval status of the specified patch
 sets and/or submits them for merging, sending out email
-notifications and updating the database.
+notifications and updating code review metadata.
 
 Patch sets may be specified in 'CHANGEID,PATCHSET' format, such as
 '8242,2', or 'COMMIT' format.
@@ -142,7 +142,7 @@ This command is intended to be used in scripts.
 
 Approve the change with commit c0ff33 as "Verified +1"
 ----
-$ ssh -p 29418 review.example.com gerrit review --verified +1 c0ff33
+$ ssh -p 29418 review.example.com gerrit review --verified +1 8242,2
 ----
 
 Approve the change with change number 8242 and patch set 2 as "Code-Review +2"

@@ -18,11 +18,16 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 
 import com.google.common.base.MoreObjects;
 import com.google.common.collect.ImmutableList;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Project;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * Representation of a Gerrit project in the project index.
+ *
+ * <p>Includes information about all parent projects.
+ */
 public class ProjectData {
   private final Project project;
   private final Optional<ProjectData> parent;

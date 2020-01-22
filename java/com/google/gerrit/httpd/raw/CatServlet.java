@@ -14,13 +14,12 @@
 
 package com.google.gerrit.httpd.raw;
 
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Patch;
+import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.Url;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Patch;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.edit.ChangeEdit;
 import com.google.gerrit.server.edit.ChangeEditUtil;
@@ -30,9 +29,7 @@ import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.NoSuchChangeException;
 import com.google.gerrit.server.project.ProjectCache;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import java.util.Optional;
@@ -53,7 +50,6 @@ import org.eclipse.jgit.lib.ObjectId;
 public class CatServlet extends HttpServlet {
   private static final long serialVersionUID = 1L;
 
-  private final Provider<ReviewDb> requestDb;
   private final ChangeEditUtil changeEditUtil;
   private final PatchSetUtil psUtil;
   private final ChangeNotes.Factory changeNotesFactory;
@@ -62,13 +58,11 @@ public class CatServlet extends HttpServlet {
 
   @Inject
   CatServlet(
-      Provider<ReviewDb> sf,
       ChangeEditUtil ceu,
       PatchSetUtil psu,
       ChangeNotes.Factory cnf,
       PermissionBackend pb,
       ProjectCache pc) {
-    requestDb = sf;
     changeEditUtil = ceu;
     psUtil = psu;
     changeNotesFactory = cnf;
@@ -124,17 +118,13 @@ public class CatServlet extends HttpServlet {
       }
     }
 
-    final Change.Id changeId = patchKey.getParentKey().getParentKey();
+    final Change.Id changeId = patchKey.patchSetId().changeId();
     String revision;
     try {
       ChangeNotes notes = changeNotesFactory.createChecked(changeId);
-      permissionBackend
-          .currentUser()
-          .change(notes)
-          .database(requestDb)
-          .check(ChangePermission.READ);
+      permissionBackend.currentUser().change(notes).check(ChangePermission.READ);
       projectCache.checkedGet(notes.getProjectName()).checkStatePermitsRead();
-      if (patchKey.getParentKey().get() == 0) {
+      if (patchKey.patchSetId().get() == 0) {
         // change edit
         Optional<ChangeEdit> edit = changeEditUtil.byChange(notes);
         if (edit.isPresent()) {
@@ -144,23 +134,23 @@ public class CatServlet extends HttpServlet {
           return;
         }
       } else {
-        PatchSet patchSet = psUtil.get(requestDb.get(), notes, patchKey.getParentKey());
+        PatchSet patchSet = psUtil.get(notes, patchKey.patchSetId());
         if (patchSet == null) {
           rsp.sendError(HttpServletResponse.SC_NOT_FOUND);
           return;
         }
-        revision = patchSet.getRevision().get();
+        revision = patchSet.commitId().name();
       }
     } catch (ResourceConflictException | NoSuchChangeException | AuthException e) {
       rsp.sendError(HttpServletResponse.SC_NOT_FOUND);
       return;
-    } catch (OrmException | PermissionBackendException | IOException e) {
+    } catch (PermissionBackendException | IOException e) {
       getServletContext().log("Cannot query database", e);
       rsp.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
       return;
     }
 
-    String path = patchKey.getFileName();
+    String path = patchKey.fileName();
     String restUrl =
         String.format(
             "%s/changes/%d/revisions/%s/files/%s/download?parent=%d",

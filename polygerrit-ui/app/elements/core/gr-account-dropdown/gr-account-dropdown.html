@@ -15,18 +15,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../behaviors/gr-anonymous-name-behavior/gr-anonymous-name-behavior.html">
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="../../../behaviors/gr-display-name-behavior/gr-display-name-behavior.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 <link rel="import" href="../../shared/gr-button/gr-button.html">
 <link rel="import" href="../../shared/gr-dropdown/gr-dropdown.html">
 <link rel="import" href="../../shared/gr-rest-api-interface/gr-rest-api-interface.html">
 <link rel="import" href="../../../styles/shared-styles.html">
+<link rel="import" href="../../shared/gr-avatar/gr-avatar.html">
 
 <dom-module id="gr-account-dropdown">
   <template>
     <style include="shared-styles">
       gr-dropdown {
-        padding: 0 .5em;
+        padding: 0 var(--spacing-m);
         --gr-button: {
           color: var(--header-text-color);
         }

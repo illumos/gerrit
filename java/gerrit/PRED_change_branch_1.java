@@ -14,7 +14,7 @@
 
 package gerrit;
 
-import com.google.gerrit.reviewdb.client.Branch;
+import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.server.rules.StoredValues;
 import com.googlecode.prolog_cafe.exceptions.PrologException;
 import com.googlecode.prolog_cafe.lang.Operation;
@@ -23,6 +23,16 @@ import com.googlecode.prolog_cafe.lang.Prolog;
 import com.googlecode.prolog_cafe.lang.SymbolTerm;
 import com.googlecode.prolog_cafe.lang.Term;
 
+/**
+ * Prolog predicate for the destination branch of a change.
+ *
+ * <p>Checks that the term that is provided as input to this Prolog predicate is a string atom that
+ * matches the destination branch of the change.
+ *
+ * <pre>
+ *   'change_branch'(-Branch)
+ * </pre>
+ */
 public class PRED_change_branch_1 extends Predicate.P1 {
   public PRED_change_branch_1(Term a1, Operation n) {
     arg1 = a1;
@@ -34,9 +44,9 @@ public class PRED_change_branch_1 extends Predicate.P1 {
     engine.setB0();
     Term a1 = arg1.dereference();
 
-    Branch.NameKey name = StoredValues.getChange(engine).getDest();
+    BranchNameKey name = StoredValues.getChange(engine).getDest();
 
-    if (!a1.unify(SymbolTerm.create(name.get()), engine.trail)) {
+    if (!a1.unify(SymbolTerm.create(name.branch()), engine.trail)) {
       return engine.fail();
     }
     return cont;

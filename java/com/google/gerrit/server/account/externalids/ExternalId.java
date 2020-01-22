@@ -26,8 +26,9 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.hash.Hashing;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.client.AuthType;
-import com.google.gerrit.reviewdb.client.Account;
+import com.google.gerrit.git.ObjectIds;
 import com.google.gerrit.server.account.HashedPassword;
 import java.io.Serializable;
 import java.util.Collection;
@@ -38,7 +39,6 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.Config;
-import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 
 @AutoValue
@@ -193,7 +193,7 @@ public abstract class ExternalId implements Serializable {
     }
 
     @Override
-    public String toString() {
+    public final String toString() {
       return get();
     }
 
@@ -361,7 +361,7 @@ public abstract class ExternalId implements Serializable {
 
     return create(
         externalIdKey,
-        new Account.Id(accountId),
+        Account.id(accountId),
         Strings.emptyToNull(email),
         Strings.emptyToNull(password),
         blobId);
@@ -428,10 +428,10 @@ public abstract class ExternalId implements Serializable {
 
   public byte[] toByteArray() {
     checkState(blobId() != null, "Missing blobId in external ID %s", key().get());
-    byte[] b = new byte[2 * Constants.OBJECT_ID_STRING_LENGTH + 1];
+    byte[] b = new byte[2 * ObjectIds.STR_LEN + 1];
     key().sha1().copyTo(b, 0);
-    b[Constants.OBJECT_ID_STRING_LENGTH] = ':';
-    blobId().copyTo(b, Constants.OBJECT_ID_STRING_LENGTH + 1);
+    b[ObjectIds.STR_LEN] = ':';
+    blobId().copyTo(b, ObjectIds.STR_LEN + 1);
     return b;
   }
 
@@ -441,7 +441,7 @@ public abstract class ExternalId implements Serializable {
    * that was loaded from Git can be equal with an external ID that was created from code.
    */
   @Override
-  public boolean equals(Object obj) {
+  public final boolean equals(Object obj) {
     if (!(obj instanceof ExternalId)) {
       return false;
     }
@@ -453,7 +453,7 @@ public abstract class ExternalId implements Serializable {
   }
 
   @Override
-  public int hashCode() {
+  public final int hashCode() {
     return Objects.hash(key(), accountId(), email(), password());
   }
 
@@ -471,7 +471,7 @@ public abstract class ExternalId implements Serializable {
    * </pre>
    */
   @Override
-  public String toString() {
+  public final String toString() {
     Config c = new Config();
     writeToConfig(c);
     return c.toText();

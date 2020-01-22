@@ -17,9 +17,16 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-dialog',
-
+  /**
+   * @appliesMixin Gerrit.FireMixin
+   * @extends Polymer.Element
+   */
+  class GrDialog extends Polymer.mixinBehaviors( [
+    Gerrit.FireBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-dialog'; }
     /**
      * Fired when the confirm button is pressed.
      *
@@ -32,52 +39,60 @@
      * @event cancel
      */
 
-    properties: {
-      confirmLabel: {
-        type: String,
-        value: 'Confirm',
-      },
-      // Supplying an empty cancel label will hide the button completely.
-      cancelLabel: {
-        type: String,
-        value: 'Cancel',
-      },
-      disabled: {
-        type: Boolean,
-        value: false,
-      },
-      confirmOnEnter: {
-        type: Boolean,
-        value: false,
-      },
-    },
+    static get properties() {
+      return {
+        confirmLabel: {
+          type: String,
+          value: 'Confirm',
+        },
+        // Supplying an empty cancel label will hide the button completely.
+        cancelLabel: {
+          type: String,
+          value: 'Cancel',
+        },
+        disabled: {
+          type: Boolean,
+          value: false,
+        },
+        confirmOnEnter: {
+          type: Boolean,
+          value: false,
+        },
+      };
+    }
 
-    hostAttributes: {
-      role: 'dialog',
-    },
+    /** @override */
+    ready() {
+      super.ready();
+      this._ensureAttribute('role', 'dialog');
+    }
 
     _handleConfirm(e) {
       if (this.disabled) { return; }
 
       e.preventDefault();
+      e.stopPropagation();
       this.fire('confirm', null, {bubbles: false});
-    },
+    }
 
     _handleCancelTap(e) {
       e.preventDefault();
+      e.stopPropagation();
       this.fire('cancel', null, {bubbles: false});
-    },
+    }
 
     _handleKeydown(e) {
       if (this.confirmOnEnter && e.keyCode === 13) { this._handleConfirm(e); }
-    },
+    }
 
     resetFocus() {
       this.$.confirm.focus();
-    },
+    }
 
     _computeCancelClass(cancelLabel) {
       return cancelLabel.length ? '' : 'hidden';
-    },
-  });
+    }
+  }
+
+  customElements.define(GrDialog.is, GrDialog);
 })();

@@ -26,6 +26,12 @@ public abstract class Response<T> {
     return new Impl<>(200, value);
   }
 
+  /** HTTP 200 OK: with empty value. */
+  public static Response<String> ok() {
+    return ok("");
+  }
+
+  /** HTTP 200 OK: with forced revalidation of cache. */
   public static <T> Response<T> withMustRevalidate(T value) {
     return ok(value).caching(CacheControl.PRIVATE(0, TimeUnit.SECONDS).setMustRevalidate());
   }
@@ -33,6 +39,11 @@ public abstract class Response<T> {
   /** HTTP 201 Created: typically used when a new resource is made. */
   public static <T> Response<T> created(T value) {
     return new Impl<>(201, value);
+  }
+
+  /** HTTP 201 Created: with empty value. */
+  public static Response<String> created() {
+    return created("");
   }
 
   /** HTTP 202 Accepted: accepted as background task. */
@@ -154,11 +165,36 @@ public abstract class Response<T> {
   }
 
   /** An HTTP redirect to another location. */
-  public static final class Redirect {
+  public static final class Redirect extends Response<Object> {
     private final String location;
 
     private Redirect(String url) {
       this.location = url;
+    }
+
+    @Override
+    public boolean isNone() {
+      return false;
+    }
+
+    @Override
+    public int statusCode() {
+      return 302;
+    }
+
+    @Override
+    public Object value() {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CacheControl caching() {
+      return CacheControl.NONE;
+    }
+
+    @Override
+    public Response<Object> caching(CacheControl c) {
+      throw new UnsupportedOperationException();
     }
 
     public String location() {
@@ -182,11 +218,36 @@ public abstract class Response<T> {
   }
 
   /** Accepted as task for asynchronous execution. */
-  public static final class Accepted {
+  public static final class Accepted extends Response<Object> {
     private final String location;
 
     private Accepted(String url) {
       this.location = url;
+    }
+
+    @Override
+    public boolean isNone() {
+      return false;
+    }
+
+    @Override
+    public int statusCode() {
+      return 202;
+    }
+
+    @Override
+    public Object value() {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CacheControl caching() {
+      return CacheControl.NONE;
+    }
+
+    @Override
+    public Response<Object> caching(CacheControl c) {
+      throw new UnsupportedOperationException();
     }
 
     public String location() {

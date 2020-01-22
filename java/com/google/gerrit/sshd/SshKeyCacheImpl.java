@@ -24,6 +24,7 @@ import com.google.gerrit.server.account.VersionedAuthorizedKeys;
 import com.google.gerrit.server.account.externalids.ExternalId;
 import com.google.gerrit.server.account.externalids.ExternalIds;
 import com.google.gerrit.server.cache.CacheModule;
+import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.logging.TraceContext.TraceTimer;
 import com.google.gerrit.server.ssh.SshKeyCache;
@@ -106,7 +107,9 @@ public class SshKeyCacheImpl implements SshKeyCache {
     @Override
     public Iterable<SshKeyCacheEntry> load(String username) throws Exception {
       try (TraceTimer timer =
-          TraceContext.newTimer("Loading SSH keys for account with username %s", username)) {
+          TraceContext.newTimer(
+              "Loading SSH keys for account with username",
+              Metadata.builder().username(username).build())) {
         Optional<ExternalId> user =
             externalIds.get(ExternalId.Key.create(SCHEME_USERNAME, username));
         if (!user.isPresent()) {

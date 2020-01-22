@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-event-helper</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-event-helper.html"/>
 
@@ -30,12 +32,17 @@ limitations under the License.
   <script>
     Polymer({
       is: 'some-element',
+
       properties: {
         fooBar: {
           type: Object,
           notify: true,
         },
       },
+
+      behaviors: [
+        Gerrit.FireBehavior,
+      ],
     });
   </script>
 </dom-element>
@@ -66,14 +73,23 @@ limitations under the License.
       instance.onTap(() => {
         done();
       });
-      element.fire('tap');
+      MockInteractions.tap(element);
     });
 
     test('onTap() cancel', () => {
       const tapStub = sandbox.stub();
-      element.parentElement.addEventListener('tap', tapStub);
+      Polymer.Gestures.addListener(element.parentElement, 'tap', tapStub);
       instance.onTap(() => false);
-      element.fire('tap');
+      MockInteractions.tap(element);
+      flushAsynchronousOperations();
+      assert.isFalse(tapStub.called);
+    });
+
+    test('onClick() cancel', () => {
+      const tapStub = sandbox.stub();
+      element.parentElement.addEventListener('click', tapStub);
+      instance.onTap(() => false);
+      MockInteractions.tap(element);
       flushAsynchronousOperations();
       assert.isFalse(tapStub.called);
     });
@@ -82,14 +98,30 @@ limitations under the License.
       instance.captureTap(() => {
         done();
       });
-      element.fire('tap');
+      MockInteractions.tap(element);
+    });
+
+    test('captureClick()', done => {
+      instance.captureClick(() => {
+        done();
+      });
+      MockInteractions.tap(element);
     });
 
     test('captureTap() cancels tap()', () => {
       const tapStub = sandbox.stub();
-      element.addEventListener('tap', tapStub);
+      Polymer.Gestures.addListener(element.parentElement, 'tap', tapStub);
       instance.captureTap(() => false);
-      element.fire('tap');
+      MockInteractions.tap(element);
+      flushAsynchronousOperations();
+      assert.isFalse(tapStub.called);
+    });
+
+    test('captureClick() cancels click()', () => {
+      const tapStub = sandbox.stub();
+      element.addEventListener('click', tapStub);
+      instance.captureTap(() => false);
+      MockInteractions.tap(element);
       flushAsynchronousOperations();
       assert.isFalse(tapStub.called);
     });

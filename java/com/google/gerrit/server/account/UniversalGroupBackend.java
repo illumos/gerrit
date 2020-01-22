@@ -26,7 +26,7 @@ import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.data.GroupDescription;
 import com.google.gerrit.common.data.GroupReference;
-import com.google.gerrit.reviewdb.client.AccountGroup;
+import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.StartupCheck;
 import com.google.gerrit.server.StartupException;
@@ -221,7 +221,7 @@ public class UniversalGroupBackend implements GroupBackend {
           cfg.getSubsections("groups").stream()
               .filter(
                   sub -> {
-                    AccountGroup.UUID uuid = new AccountGroup.UUID(sub);
+                    AccountGroup.UUID uuid = AccountGroup.uuid(sub);
                     GroupBackend groupBackend = universalGroupBackend.backend(uuid);
                     return groupBackend == null || groupBackend.get(uuid) == null;
                   })

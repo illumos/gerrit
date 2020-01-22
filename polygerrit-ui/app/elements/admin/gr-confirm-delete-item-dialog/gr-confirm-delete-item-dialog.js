@@ -23,9 +23,16 @@
     TAGS: 'tags',
   };
 
-  Polymer({
-    is: 'gr-confirm-delete-item-dialog',
-
+  /**
+   * @appliesMixin Gerrit.FireMixin
+   * @extends Polymer.Element
+   */
+  class GrConfirmDeleteItemDialog extends Polymer.mixinBehaviors( [
+    Gerrit.FireBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-confirm-delete-item-dialog'; }
     /**
      * Fired when the confirm button is pressed.
      *
@@ -38,22 +45,24 @@
      * @event cancel
      */
 
-    properties: {
-      item: String,
-      itemType: String,
-    },
+    static get properties() {
+      return {
+        item: String,
+        itemType: String,
+      };
+    }
 
     _handleConfirmTap(e) {
       e.preventDefault();
       e.stopPropagation();
       this.fire('confirm', null, {bubbles: false});
-    },
+    }
 
     _handleCancelTap(e) {
       e.preventDefault();
       e.stopPropagation();
       this.fire('cancel', null, {bubbles: false});
-    },
+    }
 
     _computeItemName(detailType) {
       if (detailType === DETAIL_TYPES.BRANCHES) {
@@ -63,6 +72,9 @@
       } else if (detailType === DETAIL_TYPES.ID) {
         return 'ID';
       }
-    },
-  });
+    }
+  }
+
+  customElements.define(GrConfirmDeleteItemDialog.is,
+      GrConfirmDeleteItemDialog);
 })();

@@ -15,25 +15,26 @@
 package com.google.gerrit.server.extensions.events;
 
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.common.AccountInfo;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.RevisionInfo;
 import com.google.gerrit.extensions.events.ChangeMergedListener;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSet;
 import com.google.gerrit.server.GpgException;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.patch.PatchListNotAvailableException;
 import com.google.gerrit.server.patch.PatchListObjectTooLargeException;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import java.sql.Timestamp;
 
+/** Helper class to fire an event when a change has been merged. */
 @Singleton
 public class ChangeMerged {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
@@ -66,12 +67,13 @@ public class ChangeMerged {
     } catch (PatchListNotAvailableException
         | GpgException
         | IOException
-        | OrmException
+        | StorageException
         | PermissionBackendException e) {
       logger.atSevere().withCause(e).log("Couldn't fire event");
     }
   }
 
+  /** Event to be fired when a change has been merged. */
   private static class Event extends AbstractRevisionEvent implements ChangeMergedListener.Event {
     private final String newRevisionId;
 

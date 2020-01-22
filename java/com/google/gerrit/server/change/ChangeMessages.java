@@ -23,11 +23,12 @@ public class ChangeMessages extends TranslationBundle {
   }
 
   public String revertChangeDefaultMessage;
+  public String revertSubmissionDefaultMessage;
+  public String revertSubmissionUserMessage;
+  public String revertSubmissionOfRevertSubmissionUserMessage;
 
   public String reviewerCantSeeChange;
-  public String reviewerInactive;
   public String reviewerInvalid;
-  public String reviewerNotFoundUser;
   public String reviewerNotFoundUserOrGroup;
 
   public String groupIsNotAllowed;

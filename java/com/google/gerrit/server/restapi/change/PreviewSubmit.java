@@ -15,18 +15,18 @@
 package com.google.gerrit.server.restapi.change;
 
 import com.google.common.base.Strings;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.changes.SubmitInput;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.BinaryResult;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
 import com.google.gerrit.extensions.restapi.NotImplementedException;
 import com.google.gerrit.extensions.restapi.PreconditionFailedException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestReadView;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.change.ArchiveFormat;
@@ -40,7 +40,6 @@ import com.google.gerrit.server.submit.MergeOp;
 import com.google.gerrit.server.submit.MergeOpRepoManager;
 import com.google.gerrit.server.submit.MergeOpRepoManager.OpenRepo;
 import com.google.gerrit.server.update.UpdateException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -61,7 +60,6 @@ import org.kohsuke.args4j.Option;
 public class PreviewSubmit implements RestReadView<RevisionResource> {
   private static final int MAX_DEFAULT_BUNDLE_SIZE = 100 * 1024 * 1024;
 
-  private final Provider<ReviewDb> dbProvider;
   private final Provider<MergeOp> mergeOpProvider;
   private final AllowedFormats allowedFormats;
   private int maxBundleSize;
@@ -74,19 +72,17 @@ public class PreviewSubmit implements RestReadView<RevisionResource> {
 
   @Inject
   PreviewSubmit(
-      Provider<ReviewDb> dbProvider,
       Provider<MergeOp> mergeOpProvider,
       AllowedFormats allowedFormats,
       @GerritServerConfig Config cfg) {
-    this.dbProvider = dbProvider;
     this.mergeOpProvider = mergeOpProvider;
     this.allowedFormats = allowedFormats;
     this.maxBundleSize = cfg.getInt("download", "maxBundleSize", MAX_DEFAULT_BUNDLE_SIZE);
   }
 
   @Override
-  public BinaryResult apply(RevisionResource rsrc)
-      throws OrmException, RestApiException, UpdateException, IOException, ConfigInvalidException,
+  public Response<BinaryResult> apply(RevisionResource rsrc)
+      throws RestApiException, UpdateException, IOException, ConfigInvalidException,
           PermissionBackendException {
     if (Strings.isNullOrEmpty(format)) {
       throw new BadRequestException("format is not specified");
@@ -103,34 +99,32 @@ public class PreviewSubmit implements RestReadView<RevisionResource> {
     }
 
     Change change = rsrc.getChange();
-    if (!change.getStatus().isOpen()) {
+    if (!change.isNew()) {
       throw new PreconditionFailedException("change is " + ChangeUtil.status(change));
     }
     if (!rsrc.getUser().isIdentifiedUser()) {
       throw new MethodNotAllowedException("Anonymous users cannot submit");
     }
 
-    return getBundles(rsrc, f);
+    return Response.ok(getBundles(rsrc, f));
   }
 
   private BinaryResult getBundles(RevisionResource rsrc, ArchiveFormat f)
-      throws OrmException, RestApiException, UpdateException, IOException, ConfigInvalidException,
+      throws RestApiException, UpdateException, IOException, ConfigInvalidException,
           PermissionBackendException {
-    ReviewDb db = dbProvider.get();
     IdentifiedUser caller = rsrc.getUser().asIdentifiedUser();
     Change change = rsrc.getChange();
 
     @SuppressWarnings("resource") // Returned BinaryResult takes ownership and handles closing.
     MergeOp op = mergeOpProvider.get();
     try {
-      op.merge(db, change, caller, false, new SubmitInput(), true);
+      op.merge(change, caller, false, new SubmitInput(), true);
       BinaryResult bin = new SubmitPreviewResult(op, f, maxBundleSize);
       bin.disableGzip()
           .setContentType(f.getMimeType())
           .setAttachmentName("submit-preview-" + change.getChangeId() + "." + format);
       return bin;
-    } catch (OrmException
-        | RestApiException
+    } catch (RestApiException
         | UpdateException
         | IOException
         | ConfigInvalidException

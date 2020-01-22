@@ -14,17 +14,20 @@
 
 package com.google.gerrit.server.extensions.events;
 
+import com.google.gerrit.common.UsedAt;
 import com.google.gerrit.extensions.events.PluginEventListener;
-import com.google.gerrit.extensions.registration.DynamicSet;
+import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 
+/** Helper class to let plugins fire a plugin-specific event. */
 @Singleton
+@UsedAt(UsedAt.Project.PLUGINS_ALL)
 public class PluginEvent {
-  private final DynamicSet<PluginEventListener> listeners;
+  private final PluginSetContext<PluginEventListener> listeners;
 
   @Inject
-  PluginEvent(DynamicSet<PluginEventListener> listeners) {
+  PluginEvent(PluginSetContext<PluginEventListener> listeners) {
     this.listeners = listeners;
   }
 
@@ -33,11 +36,10 @@ public class PluginEvent {
       return;
     }
     Event e = new Event(pluginName, type, data);
-    for (PluginEventListener l : listeners) {
-      l.onPluginEvent(e);
-    }
+    listeners.runEach(l -> l.onPluginEvent(e));
   }
 
+  /** Event to be fired by plugins. */
   private static class Event extends AbstractNoNotifyEvent implements PluginEventListener.Event {
     private final String pluginName;
     private final String type;

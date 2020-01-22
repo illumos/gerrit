@@ -14,22 +14,17 @@
 
 package com.google.gerrit.testing;
 
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.lifecycle.LifecycleManager;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.server.ReviewDb;
-import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.AccountManager;
 import com.google.gerrit.server.account.AuthRequest;
 import com.google.gerrit.server.schema.SchemaCreator;
-import com.google.gerrit.server.util.RequestContext;
 import com.google.gerrit.server.util.ThreadLocalRequestContext;
-import com.google.gwtorm.server.SchemaFactory;
 import com.google.inject.Guice;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.Provider;
-import com.google.inject.util.Providers;
 import org.eclipse.jgit.lib.Config;
 import org.junit.rules.MethodRule;
 import org.junit.runners.model.FrameworkMethod;
@@ -39,7 +34,7 @@ import org.junit.runners.model.Statement;
  * An in-memory test environment for integration tests.
  *
  * <p>This test environment emulates the internals of a Gerrit server without starting a Gerrit
- * site. ReviewDb as well as NoteDb are represented by in-memory representations.
+ * site. Git repositories, including NoteDb, are stored in memory.
  *
  * <p>Each test is executed with a fresh and clean test environment. Hence, modifications applied in
  * one test don't carry over to subsequent ones.
@@ -49,13 +44,9 @@ public final class InMemoryTestEnvironment implements MethodRule {
 
   @Inject private AccountManager accountManager;
   @Inject private IdentifiedUser.GenericFactory userFactory;
-  @Inject private SchemaFactory<ReviewDb> schemaFactory;
   @Inject private SchemaCreator schemaCreator;
   @Inject private ThreadLocalRequestContext requestContext;
-  // Only for use in setting up/tearing down injector.
-  @Inject private InMemoryDatabase inMemoryDatabase;
 
-  private ReviewDb db;
   private LifecycleManager lifecycle;
 
   /** Create a test environment using an empty base config. */
@@ -92,40 +83,26 @@ public final class InMemoryTestEnvironment implements MethodRule {
 
   public void setApiUser(Account.Id id) {
     IdentifiedUser user = userFactory.create(id);
-    requestContext.setContext(
-        new RequestContext() {
-          @Override
-          public CurrentUser getUser() {
-            return user;
-          }
-
-          @Override
-          public Provider<ReviewDb> getReviewDbProvider() {
-            return Providers.of(db);
-          }
-        });
+    requestContext.setContext(() -> user);
   }
 
   private void setUp(Object target) throws Exception {
     Config cfg = configProvider.get();
     InMemoryModule.setDefaults(cfg);
 
-    Injector injector =
-        Guice.createInjector(new InMemoryModule(cfg, NoteDbMode.newNotesMigrationFromEnv()));
+    Injector injector = Guice.createInjector(new InMemoryModule(cfg));
     injector.injectMembers(this);
     lifecycle = new LifecycleManager();
     lifecycle.add(injector);
     lifecycle.start();
 
-    try (ReviewDb underlyingDb = inMemoryDatabase.getDatabase().open()) {
-      schemaCreator.create(underlyingDb);
-    }
-    db = schemaFactory.open();
+    schemaCreator.create();
 
     // The first user is added to the "Administrators" group. See AccountManager#create().
     setApiUser(accountManager.authenticate(AuthRequest.forUser("admin")).getAccountId());
 
-    // Inject target members after setting API user, so it can @Inject a ReviewDb if it wants.
+    // Inject target members after setting API user, so it can @Inject request-scoped objects if it
+    // wants.
     injector.injectMembers(target);
   }
 
@@ -136,9 +113,5 @@ public final class InMemoryTestEnvironment implements MethodRule {
     if (requestContext != null) {
       requestContext.setContext(null);
     }
-    if (db != null) {
-      db.close();
-    }
-    InMemoryDatabase.drop(inMemoryDatabase);
   }
 }

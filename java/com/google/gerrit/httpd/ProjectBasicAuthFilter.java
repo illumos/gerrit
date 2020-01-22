@@ -20,9 +20,10 @@ import static javax.servlet.http.HttpServletResponse.SC_UNAUTHORIZED;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Strings;
 import com.google.common.flogger.FluentLogger;
+import com.google.common.io.BaseEncoding;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.client.GitBasicAuthPolicy;
 import com.google.gerrit.extensions.registration.DynamicItem;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.AccessPath;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountException;
@@ -31,6 +32,7 @@ import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.account.AuthRequest;
 import com.google.gerrit.server.account.AuthResult;
 import com.google.gerrit.server.account.AuthenticationFailedException;
+import com.google.gerrit.server.account.externalids.PasswordVerifier;
 import com.google.gerrit.server.auth.NoSuchUserException;
 import com.google.gerrit.server.config.AuthConfig;
 import com.google.inject.Inject;
@@ -47,7 +49,6 @@ import javax.servlet.ServletResponse;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.servlet.http.HttpServletResponseWrapper;
-import org.apache.commons.codec.binary.Base64;
 
 /**
  * Authenticates the current user by HTTP basic authentication.
@@ -109,7 +110,7 @@ class ProjectBasicAuthFilter implements Filter {
       return true;
     }
 
-    final byte[] decoded = Base64.decodeBase64(hdr.substring(LIT_BASIC.length()));
+    final byte[] decoded = BaseEncoding.base64().decode(hdr.substring(LIT_BASIC.length()));
     String usernamePassword = new String(decoded, encoding(req));
     int splitPos = usernamePassword.indexOf(':');
     if (splitPos < 1) {
@@ -128,7 +129,7 @@ class ProjectBasicAuthFilter implements Filter {
     }
 
     Optional<AccountState> accountState =
-        accountCache.getByUsername(username).filter(a -> a.getAccount().isActive());
+        accountCache.getByUsername(username).filter(a -> a.account().isActive());
     if (!accountState.isPresent()) {
       logger.atWarning().log(
           "Authentication failed for %s: account inactive or not provisioned in Gerrit", username);
@@ -140,7 +141,7 @@ class ProjectBasicAuthFilter implements Filter {
     GitBasicAuthPolicy gitBasicAuthPolicy = authConfig.getGitBasicAuthPolicy();
     if (gitBasicAuthPolicy == GitBasicAuthPolicy.HTTP
         || gitBasicAuthPolicy == GitBasicAuthPolicy.HTTP_LDAP) {
-      if (who.checkPassword(password, username)) {
+      if (PasswordVerifier.checkPassword(who.externalIds(), username, password)) {
         return succeedAuthentication(who);
       }
     }
@@ -157,7 +158,7 @@ class ProjectBasicAuthFilter implements Filter {
       setUserIdentified(whoAuthResult.getAccountId());
       return true;
     } catch (NoSuchUserException e) {
-      if (who.checkPassword(password, username)) {
+      if (PasswordVerifier.checkPassword(who.externalIds(), username, password)) {
         return succeedAuthentication(who);
       }
       logger.atWarning().withCause(e).log(authenticationFailedMsg(username, req));
@@ -177,7 +178,7 @@ class ProjectBasicAuthFilter implements Filter {
   }
 
   private boolean succeedAuthentication(AccountState who) {
-    setUserIdentified(who.getAccount().getId());
+    setUserIdentified(who.account().id());
     return true;
   }
 

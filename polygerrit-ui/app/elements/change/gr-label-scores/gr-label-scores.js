@@ -17,21 +17,30 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-label-scores',
-    properties: {
-      _labels: {
-        type: Array,
-        computed: '_computeLabels(change.labels.*, account)',
-      },
-      permittedLabels: {
-        type: Object,
-        observer: '_computeColumns',
-      },
-      /** @type {?} */
-      change: Object,
-      _labelValues: Object,
-    },
+  /** @extends Polymer.Element */
+  class GrLabelScores extends Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element)) {
+    static get is() { return 'gr-label-scores'; }
+
+    static get properties() {
+      return {
+        _labels: {
+          type: Array,
+          computed: '_computeLabels(change.labels.*, account)',
+        },
+        permittedLabels: {
+          type: Object,
+          observer: '_computeColumns',
+        },
+        /** @type {?} */
+        change: Object,
+        /** @type {?} */
+        account: Object,
+
+        _labelValues: Object,
+      };
+    }
 
     getLabelValues() {
       const labels = {};
@@ -57,7 +66,7 @@
         }
       }
       return labels;
-    },
+    }
 
     _getStringLabelValue(labels, labelName, numberValue) {
       for (const k in labels[labelName].values) {
@@ -66,7 +75,7 @@
         }
       }
       return numberValue;
-    },
+    }
 
     _getVoteForAccount(labels, labelName, account) {
       const votes = labels[labelName];
@@ -79,18 +88,24 @@
         }
       }
       return null;
-    },
+    }
 
-    _computeLabels(labelRecord) {
+    _computeLabels(labelRecord, account) {
+      // Polymer 2: check for undefined
+      if ([labelRecord, account].some(arg => arg === undefined)) {
+        return undefined;
+      }
+
       const labelsObj = labelRecord.base;
       if (!labelsObj) { return []; }
-      return Object.keys(labelsObj).sort().map(key => {
-        return {
-          name: key,
-          value: this._getVoteForAccount(labelsObj, key, this.account),
-        };
-      });
-    },
+      return Object.keys(labelsObj).sort()
+          .map(key => {
+            return {
+              name: key,
+              value: this._getVoteForAccount(labelsObj, key, this.account),
+            };
+          });
+    }
 
     _computeColumns(permittedLabels) {
       const labels = Object.keys(permittedLabels);
@@ -101,18 +116,32 @@
         }
       }
 
-      const orderedValues = Object.keys(values).sort((a, b) => {
-        return a - b;
-      });
+      const orderedValues = Object.keys(values).sort((a, b) => a - b);
 
       for (let i = 0; i < orderedValues.length; i++) {
         values[orderedValues[i]] = i;
       }
       this._labelValues = values;
-    },
+    }
 
     _changeIsMerged(changeStatus) {
       return changeStatus === 'MERGED';
-    },
-  });
+    }
+
+    /**
+     * @param {string|undefined} label
+     * @param {Object|undefined} permittedLabels
+     * @return {string}
+     */
+    _computeLabelAccessClass(label, permittedLabels) {
+      if (label == null || permittedLabels == null) {
+        return '';
+      }
+
+      return permittedLabels.hasOwnProperty(label) &&
+        permittedLabels[label].length ? 'access' : 'no-access';
+    }
+  }
+
+  customElements.define(GrLabelScores.is, GrLabelScores);
 })();

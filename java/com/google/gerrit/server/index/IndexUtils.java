@@ -16,73 +16,66 @@ package com.google.gerrit.server.index;
 
 import static com.google.gerrit.server.index.change.ChangeField.CHANGE;
 import static com.google.gerrit.server.index.change.ChangeField.LEGACY_ID;
+import static com.google.gerrit.server.index.change.ChangeField.LEGACY_ID_STR;
 import static com.google.gerrit.server.index.change.ChangeField.PROJECT;
 
-import com.google.common.base.Function;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
+import com.google.gerrit.exceptions.StorageException;
+import com.google.gerrit.index.FieldDef;
 import com.google.gerrit.index.QueryOptions;
 import com.google.gerrit.index.project.ProjectField;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.config.SitePaths;
 import com.google.gerrit.server.index.account.AccountField;
 import com.google.gerrit.server.index.group.GroupField;
+import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.SingleGroupUser;
 import java.io.IOException;
 import java.util.Set;
-import java.util.concurrent.ExecutionException;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 
+/** Set of index-related utility methods. */
 public final class IndexUtils {
-  public static final ImmutableMap<String, String> CUSTOM_CHAR_MAPPING =
-      ImmutableMap.of("_", " ", ".", " ");
 
-  public static final Function<Exception, IOException> MAPPER =
-      new Function<Exception, IOException>() {
-        @Override
-        public IOException apply(Exception in) {
-          if (in instanceof IOException) {
-            return (IOException) in;
-          } else if (in instanceof ExecutionException && in.getCause() instanceof IOException) {
-            return (IOException) in.getCause();
-          } else {
-            return new IOException(in);
-          }
-        }
-      };
-
-  public static void setReady(SitePaths sitePaths, String name, int version, boolean ready)
-      throws IOException {
+  /** Mark an index version as ready to serve queries. */
+  public static void setReady(SitePaths sitePaths, String name, int version, boolean ready) {
     try {
       GerritIndexStatus cfg = new GerritIndexStatus(sitePaths);
       cfg.setReady(name, version, ready);
       cfg.save();
-    } catch (ConfigInvalidException e) {
-      throw new IOException(e);
+    } catch (ConfigInvalidException | IOException e) {
+      throw new StorageException(e);
     }
   }
 
-  public static boolean getReady(SitePaths sitePaths, String name, int version) throws IOException {
-    try {
-      GerritIndexStatus cfg = new GerritIndexStatus(sitePaths);
-      return cfg.getReady(name, version);
-    } catch (ConfigInvalidException e) {
-      throw new IOException(e);
-    }
+  /**
+   * Returns a sanitized set of fields for account index queries by removing fields that the current
+   * index version doesn't support and accounting for numeric vs. string primary keys. The primary
+   * key situation is temporary and should be removed after the migration is done.
+   */
+  public static Set<String> accountFields(QueryOptions opts, boolean useLegacyNumericFields) {
+    return accountFields(opts.fields(), useLegacyNumericFields);
   }
 
-  public static Set<String> accountFields(QueryOptions opts) {
-    return accountFields(opts.fields());
+  /**
+   * Returns a sanitized set of fields for account index queries by removing fields that the current
+   * index version doesn't support and accounting for numeric vs. string primary keys. The primary
+   * key situation is temporary and should be removed after the migration is done.
+   */
+  public static Set<String> accountFields(Set<String> fields, boolean useLegacyNumericFields) {
+    String idFieldName =
+        useLegacyNumericFields ? AccountField.ID.getName() : AccountField.ID_STR.getName();
+    return fields.contains(idFieldName) ? fields : Sets.union(fields, ImmutableSet.of(idFieldName));
   }
 
-  public static Set<String> accountFields(Set<String> fields) {
-    return fields.contains(AccountField.ID.getName())
-        ? fields
-        : Sets.union(fields, ImmutableSet.of(AccountField.ID.getName()));
-  }
-
-  public static Set<String> changeFields(QueryOptions opts) {
+  /**
+   * Returns a sanitized set of fields for change index queries by removing fields that the current
+   * index version doesn't support and accounting for numeric vs. string primary keys. The primary
+   * key situation is temporary and should be removed after the migration is done.
+   */
+  public static Set<String> changeFields(QueryOptions opts, boolean useLegacyNumericFields) {
+    FieldDef<ChangeData, ?> idField = useLegacyNumericFields ? LEGACY_ID : LEGACY_ID_STR;
     // Ensure we request enough fields to construct a ChangeData. We need both
     // change ID and project, which can either come via the Change field or
     // separate fields.
@@ -91,12 +84,17 @@ public final class IndexUtils {
       // A Change is always sufficient.
       return fs;
     }
-    if (fs.contains(PROJECT.getName()) && fs.contains(LEGACY_ID.getName())) {
+    if (fs.contains(PROJECT.getName()) && fs.contains(idField.getName())) {
       return fs;
     }
-    return Sets.union(fs, ImmutableSet.of(LEGACY_ID.getName(), PROJECT.getName()));
+    return Sets.union(fs, ImmutableSet.of(idField.getName(), PROJECT.getName()));
   }
 
+  /**
+   * Returns a sanitized set of fields for group index queries by removing fields that the index
+   * doesn't support and accounting for numeric vs. string primary keys. The primary key situation
+   * is temporary and should be removed after the migration is done.
+   */
   public static Set<String> groupFields(QueryOptions opts) {
     Set<String> fs = opts.fields();
     return fs.contains(GroupField.UUID.getName())
@@ -104,6 +102,7 @@ public final class IndexUtils {
         : Sets.union(fs, ImmutableSet.of(GroupField.UUID.getName()));
   }
 
+  /** Returns a index-friendly representation of a {@link CurrentUser} to be used in queries. */
   public static String describe(CurrentUser user) {
     if (user.isIdentifiedUser()) {
       return user.getAccountId().toString();
@@ -114,6 +113,10 @@ public final class IndexUtils {
     return user.toString();
   }
 
+  /**
+   * Returns a sanitized set of fields for project index queries by removing fields that the index
+   * doesn't support.
+   */
   public static Set<String> projectFields(QueryOptions opts) {
     Set<String> fs = opts.fields();
     return fs.contains(ProjectField.NAME.getName())

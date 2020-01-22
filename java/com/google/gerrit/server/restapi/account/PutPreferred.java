@@ -34,7 +34,6 @@ import com.google.gerrit.server.account.externalids.ExternalIds;
 import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -46,6 +45,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 
+/**
+ * REST endpoint to set an email address as preferred email address for an account.
+ *
+ * <p>This REST endpoint handles {@code PUT
+ * /accounts/<account-identifier>/emails/<email-identifier>/preferred} requests.
+ *
+ * <p>Users can only set an email address as preferred that is assigned to their account as external
+ * ID.
+ */
 @Singleton
 public class PutPreferred implements RestModifyView<AccountResource.Email, Input> {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
@@ -69,8 +77,7 @@ public class PutPreferred implements RestModifyView<AccountResource.Email, Input
 
   @Override
   public Response<String> apply(AccountResource.Email rsrc, Input input)
-      throws RestApiException, OrmException, IOException, PermissionBackendException,
-          ConfigInvalidException {
+      throws RestApiException, IOException, PermissionBackendException, ConfigInvalidException {
     if (!self.get().hasSameAccountId(rsrc.getUser())) {
       permissionBackend.currentUser().check(GlobalPermission.MODIFY_ACCOUNT);
     }
@@ -78,7 +85,7 @@ public class PutPreferred implements RestModifyView<AccountResource.Email, Input
   }
 
   public Response<String> apply(IdentifiedUser user, String preferredEmail)
-      throws RestApiException, IOException, ConfigInvalidException, OrmException {
+      throws RestApiException, IOException, ConfigInvalidException {
     AtomicReference<Optional<RestApiException>> exception = new AtomicReference<>(Optional.empty());
     AtomicBoolean alreadyPreferred = new AtomicBoolean(false);
     accountsUpdateProvider
@@ -87,13 +94,13 @@ public class PutPreferred implements RestModifyView<AccountResource.Email, Input
             "Set Preferred Email via API",
             user.getAccountId(),
             (a, u) -> {
-              if (preferredEmail.equals(a.getAccount().getPreferredEmail())) {
+              if (preferredEmail.equals(a.account().preferredEmail())) {
                 alreadyPreferred.set(true);
               } else {
                 // check if the user has a matching email
                 String matchingEmail = null;
                 for (String email :
-                    a.getExternalIds().stream()
+                    a.externalIds().stream()
                         .map(ExternalId::email)
                         .filter(Objects::nonNull)
                         .collect(toSet())) {
@@ -130,7 +137,7 @@ public class PutPreferred implements RestModifyView<AccountResource.Email, Input
                     }
 
                     // claim the email now
-                    u.addExternalId(ExternalId.createEmail(a.getAccount().getId(), preferredEmail));
+                    u.addExternalId(ExternalId.createEmail(a.account().id(), preferredEmail));
                     matchingEmail = preferredEmail;
                   } else {
                     // Realm says that the email doesn't belong to the user. This can only happen as
@@ -147,6 +154,6 @@ public class PutPreferred implements RestModifyView<AccountResource.Email, Input
     if (exception.get().isPresent()) {
       throw exception.get().get();
     }
-    return alreadyPreferred.get() ? Response.ok("") : Response.created("");
+    return alreadyPreferred.get() ? Response.ok() : Response.created();
   }
 }

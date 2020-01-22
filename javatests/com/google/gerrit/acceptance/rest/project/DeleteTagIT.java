@@ -15,23 +15,32 @@
 package com.google.gerrit.acceptance.rest.project;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.block;
 import static com.google.gerrit.server.group.SystemGroupBackend.ANONYMOUS_USERS;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static org.eclipse.jgit.lib.Constants.R_TAGS;
 
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.RestResponse;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.common.data.Permission;
 import com.google.gerrit.extensions.api.projects.TagApi;
 import com.google.gerrit.extensions.api.projects.TagInfo;
 import com.google.gerrit.extensions.api.projects.TagInput;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.inject.Inject;
 import org.junit.Before;
 import org.junit.Test;
 
 public class DeleteTagIT extends AbstractDaemonTest {
   private static final String TAG = "refs/tags/test";
+
+  @Inject private ProjectOperations projectOperations;
+  @Inject private RequestScopeOperations requestScopeOperations;
 
   @Before
   public void setUp() throws Exception {
@@ -40,7 +49,7 @@ public class DeleteTagIT extends AbstractDaemonTest {
 
   @Test
   public void deleteTag_Forbidden() throws Exception {
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     assertDeleteForbidden();
   }
 
@@ -52,7 +61,7 @@ public class DeleteTagIT extends AbstractDaemonTest {
   @Test
   public void deleteTagByProjectOwner() throws Exception {
     grantOwner();
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     assertDeleteSucceeds();
   }
 
@@ -66,21 +75,21 @@ public class DeleteTagIT extends AbstractDaemonTest {
   public void deleteTagByProjectOwnerForcePushBlocked_Forbidden() throws Exception {
     grantOwner();
     blockForcePush();
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     assertDeleteForbidden();
   }
 
   @Test
   public void deleteTagByUserWithForcePushPermission() throws Exception {
     grantForcePush();
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     assertDeleteSucceeds();
   }
 
   @Test
   public void deleteTagByUserWithDeletePermission() throws Exception {
     grantDelete();
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     assertDeleteSucceeds();
   }
 
@@ -93,19 +102,35 @@ public class DeleteTagIT extends AbstractDaemonTest {
   }
 
   private void blockForcePush() throws Exception {
-    block("refs/tags/*", Permission.PUSH, ANONYMOUS_USERS).setForce(true);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(Permission.PUSH).ref("refs/tags/*").group(ANONYMOUS_USERS).force(true))
+        .update();
   }
 
   private void grantForcePush() throws Exception {
-    grant(project, "refs/tags/*", Permission.PUSH, true, ANONYMOUS_USERS);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.PUSH).ref("refs/tags/*").group(ANONYMOUS_USERS).force(true))
+        .update();
   }
 
   private void grantDelete() throws Exception {
-    allow("refs/tags/*", Permission.DELETE, ANONYMOUS_USERS);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.DELETE).ref("refs/tags/*").group(ANONYMOUS_USERS))
+        .update();
   }
 
   private void grantOwner() throws Exception {
-    allow("refs/tags/*", Permission.OWNER, REGISTERED_USERS);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.OWNER).ref("refs/tags/*").group(REGISTERED_USERS))
+        .update();
   }
 
   private TagApi tag() throws Exception {
@@ -118,14 +143,12 @@ public class DeleteTagIT extends AbstractDaemonTest {
     String tagRev = tagInfo.revision;
     tag().delete();
     eventRecorder.assertRefUpdatedEvents(project.get(), TAG, null, tagRev, tagRev, null);
-    exception.expect(ResourceNotFoundException.class);
-    tag().get();
+    assertThrows(ResourceNotFoundException.class, () -> tag().get());
   }
 
   private void assertDeleteForbidden() throws Exception {
     assertThat(tag().get().canDelete).isNull();
-    exception.expect(AuthException.class);
-    exception.expectMessage("not permitted: delete");
-    tag().delete();
+    AuthException thrown = assertThrows(AuthException.class, () -> tag().delete());
+    assertThat(thrown).hasMessageThat().contains("not permitted: delete");
   }
 }

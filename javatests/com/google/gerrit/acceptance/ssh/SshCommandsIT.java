@@ -17,7 +17,6 @@ package com.google.gerrit.acceptance.ssh;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
-import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -27,7 +26,6 @@ import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.Sandboxed;
 import com.google.gerrit.acceptance.UseSsh;
-import com.google.gerrit.common.data.GlobalCapability;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -64,12 +62,12 @@ public class SshCommandsIT extends AbstractDaemonTest {
           "create-branch",
           "create-group",
           "create-project",
-          "gsql",
           "index",
           "query",
           "receive-pack",
           "rename-group",
           "review",
+          "sequence",
           "set-account",
           "set-head",
           "set-members",
@@ -99,6 +97,7 @@ public class SshCommandsIT extends AbstractDaemonTest {
               "gerrit plugin",
               ImmutableList.of("add", "enable", "install", "ls", "reload", "remove", "rm"))
           .put("gerrit test-submit", ImmutableList.of("rule", "type"))
+          .put("gerrit sequence", ImmutableList.of("set", "show"))
           .build();
 
   private static final ImmutableMap<String, List<String>> SLAVE_COMMANDS =
@@ -113,9 +112,6 @@ public class SshCommandsIT extends AbstractDaemonTest {
   @Test
   @Sandboxed
   public void sshCommandCanBeExecuted() throws Exception {
-    // Access Database capability is required to run the "gerrit gsql" command
-    allowGlobalCapabilities(REGISTERED_USERS, GlobalCapability.ACCESS_DATABASE);
-
     testCommandExecution(MASTER_COMMANDS);
 
     restartAsSlave();

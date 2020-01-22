@@ -14,12 +14,14 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 -->
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 
 <link rel="import" href="../../../behaviors/keyboard-shortcut-behavior/keyboard-shortcut-behavior.html">
-<link rel="import" href="../../../bower_components/iron-dropdown/iron-dropdown.html">
-<link rel="import" href="../../../bower_components/paper-input/paper-input.html">
+<link rel="import" href="/bower_components/iron-dropdown/iron-dropdown.html">
+<link rel="import" href="/bower_components/paper-input/paper-input.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../styles/shared-styles.html">
+<link rel="import" href="../gr-button/gr-button.html">
 
 <dom-module id="gr-editable-label">
   <template>
@@ -35,13 +37,9 @@ limitations under the License.
       label {
         width: 100%;
       }
-      input {
-        font: inherit;
-      }
       label {
         color: var(--deemphasized-text-color);
         display: inline-block;
-        font-weight: var(--font-weight-bold);
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -52,21 +50,21 @@ limitations under the License.
         cursor: pointer;
       }
       #dropdown {
-        box-shadow: rgba(0, 0, 0, 0.3) 0 1px 3px;
+        box-shadow: var(--elevation-level-2);
       }
       .inputContainer {
         background-color: var(--dialog-background-color);
-        padding: .8em;
+        padding: var(--spacing-m);
         @apply --input-style;
       }
       .buttons {
         display: flex;
         justify-content: flex-end;
-        padding-top: 1.2em;
+        padding-top: var(--spacing-l);
         width: 100%;
       }
       .buttons gr-button {
-        margin-left: .5em;
+        margin-left: var(--spacing-m);
       }
       paper-input {
         --paper-input-container: {
@@ -74,7 +72,7 @@ limitations under the License.
           min-width: 15em;
         }
         --paper-input-container-input: {
-          font-size: var(--font-size-normal);
+          font-size: inherit;
         }
         --paper-input-container-focus-color: var(--link-color);
       }
@@ -82,7 +80,7 @@ limitations under the License.
       <label
           class$="[[_computeLabelClass(readOnly, value, placeholder)]]"
           title$="[[_computeLabel(value, placeholder)]]"
-          on-tap="_showDropdown">[[_computeLabel(value, placeholder)]]</label>
+          on-click="_showDropdown">[[_computeLabel(value, placeholder)]]</label>
       <iron-dropdown id="dropdown"
           vertical-align="auto"
           horizontal-align="auto"
@@ -97,8 +95,8 @@ limitations under the License.
                 maxlength="[[maxLength]]"
                 value="{{_inputText}}"></paper-input>
             <div class="buttons">
-              <gr-button link id="cancelBtn" on-tap="_cancel">cancel</gr-button>
-              <gr-button link id="saveBtn" on-tap="_save">save</gr-button>
+              <gr-button link id="cancelBtn" on-click="_cancel">cancel</gr-button>
+              <gr-button link id="saveBtn" on-click="_save">save</gr-button>
             </div>
           </div>
         </div>

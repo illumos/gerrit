@@ -21,27 +21,29 @@ limitations under the License.
 
   window.Gerrit = window.Gerrit || {};
 
-  const PROJECT_DASHBOARD_PATTERN = /\/p\/(.+)\/\+\/dashboard\/(.*)/;
-  const REPO_URL_PATTERN = /^\/admin\/repos/;
-  const PROJECT_URL = '/admin/projects';
   /** @polymerBehavior Gerrit.BaseUrlBehavior */
   Gerrit.BaseUrlBehavior = {
     /** @return {string} */
     getBaseUrl() {
       return window.CANONICAL_PATH || '';
     },
-
-    computeGwtUrl(path) {
-      const base = this.getBaseUrl();
-      let clientPath = path.substring(base.length);
-      const match = clientPath.match(PROJECT_DASHBOARD_PATTERN);
-      if (match) {
-        clientPath = `/projects/${match[1]},dashboards/${match[2]}`;
-      }
-      // Replace any '/admin/project' links to '/admin/repo'
-      clientPath = clientPath.replace(REPO_URL_PATTERN, PROJECT_URL);
-      return base + '/?polygerrit=0#' + clientPath;
-    },
   };
+
+  // eslint-disable-next-line no-unused-vars
+  function defineEmptyMixin() {
+    // This is a temporary function.
+    // Polymer linter doesn't process correctly the following code:
+    // class MyElement extends Polymer.mixinBehaviors([legacyBehaviors], ...) {...}
+    // To workaround this issue, the mock mixin is declared in this method.
+    // In the following changes, legacy behaviors will be converted to mixins.
+
+    /**
+     * @polymer
+     * @mixinFunction
+     */
+    Gerrit.BaseUrlMixin = base =>
+      class extends base {
+      };
+  }
 })(window);
 </script>

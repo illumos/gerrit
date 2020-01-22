@@ -16,19 +16,20 @@ package com.google.gerrit.server.restapi.group;
 
 import com.google.common.base.Strings;
 import com.google.gerrit.common.data.GroupDescription;
-import com.google.gerrit.common.errors.NoSuchGroupException;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.exceptions.DuplicateKeyException;
+import com.google.gerrit.exceptions.NoSuchGroupException;
 import com.google.gerrit.extensions.common.NameInput;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestModifyView;
-import com.google.gerrit.reviewdb.client.AccountGroup;
 import com.google.gerrit.server.UserInitiated;
 import com.google.gerrit.server.group.GroupResource;
 import com.google.gerrit.server.group.db.GroupsUpdate;
 import com.google.gerrit.server.group.db.InternalGroupUpdate;
-import com.google.gwtorm.server.OrmDuplicateKeyException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -45,7 +46,7 @@ public class PutName implements RestModifyView<GroupResource, NameInput> {
   }
 
   @Override
-  public String apply(GroupResource rsrc, NameInput input)
+  public Response<String> apply(GroupResource rsrc, NameInput input)
       throws NotInternalGroupException, AuthException, BadRequestException,
           ResourceConflictException, ResourceNotFoundException, IOException,
           ConfigInvalidException {
@@ -62,11 +63,11 @@ public class PutName implements RestModifyView<GroupResource, NameInput> {
     }
 
     if (internalGroup.getName().equals(newName)) {
-      return newName;
+      return Response.ok(newName);
     }
 
     renameGroup(internalGroup, newName);
-    return newName;
+    return Response.ok(newName);
   }
 
   private void renameGroup(GroupDescription.Internal group, String newName)
@@ -74,12 +75,12 @@ public class PutName implements RestModifyView<GroupResource, NameInput> {
           ConfigInvalidException {
     AccountGroup.UUID groupUuid = group.getGroupUUID();
     InternalGroupUpdate groupUpdate =
-        InternalGroupUpdate.builder().setName(new AccountGroup.NameKey(newName)).build();
+        InternalGroupUpdate.builder().setName(AccountGroup.nameKey(newName)).build();
     try {
       groupsUpdateProvider.get().updateGroup(groupUuid, groupUpdate);
     } catch (NoSuchGroupException e) {
       throw new ResourceNotFoundException(String.format("Group %s not found", groupUuid));
-    } catch (OrmDuplicateKeyException e) {
+    } catch (DuplicateKeyException e) {
       throw new ResourceConflictException("group with name " + newName + " already exists");
     }
   }

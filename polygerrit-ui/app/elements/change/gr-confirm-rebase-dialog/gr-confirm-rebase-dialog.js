@@ -17,9 +17,11 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-confirm-rebase-dialog',
-
+  /** @extends Polymer.Element */
+  class GrConfirmRebaseDialog extends Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element)) {
+    static get is() { return 'gr-confirm-rebase-dialog'; }
     /**
      * Fired when the confirm button is pressed.
      *
@@ -32,24 +34,28 @@
      * @event cancel
      */
 
-    properties: {
-      branch: String,
-      changeNumber: Number,
-      hasParent: Boolean,
-      rebaseOnCurrent: Boolean,
-      _text: String,
-      _query: {
-        type: Function,
-        value() {
-          return this._getChangeSuggestions.bind(this);
+    static get properties() {
+      return {
+        branch: String,
+        changeNumber: Number,
+        hasParent: Boolean,
+        rebaseOnCurrent: Boolean,
+        _text: String,
+        _query: {
+          type: Function,
+          value() {
+            return this._getChangeSuggestions.bind(this);
+          },
         },
-      },
-      _recentChanges: Array,
-    },
+        _recentChanges: Array,
+      };
+    }
 
-    observers: [
-      '_updateSelectedOption(rebaseOnCurrent, hasParent)',
-    ],
+    static get observers() {
+      return [
+        '_updateSelectedOption(rebaseOnCurrent, hasParent)',
+      ];
+    }
 
     // This is called by gr-change-actions every time the rebase dialog is
     // re-opened. Unlike other autocompletes that make a request with each
@@ -71,36 +77,36 @@
             this._recentChanges = changes;
             return this._recentChanges;
           });
-    },
+    }
 
     _getRecentChanges() {
       if (this._recentChanges) {
         return Promise.resolve(this._recentChanges);
       }
       return this.fetchRecentChanges();
-    },
+    }
 
     _getChangeSuggestions(input) {
       return this._getRecentChanges().then(changes =>
         this._filterChanges(input, changes));
-    },
+    }
 
     _filterChanges(input, changes) {
       return changes.filter(change => change.name.includes(input) &&
           change.value !== this.changeNumber);
-    },
+    }
 
     _displayParentOption(rebaseOnCurrent, hasParent) {
       return hasParent && rebaseOnCurrent;
-    },
+    }
 
     _displayParentUpToDateMsg(rebaseOnCurrent, hasParent) {
       return hasParent && !rebaseOnCurrent;
-    },
+    }
 
     _displayTipOption(rebaseOnCurrent, hasParent) {
       return !(!rebaseOnCurrent && !hasParent);
-    },
+    }
 
     /**
      * There is a subtle but important difference between setting the base to an
@@ -115,34 +121,41 @@
       // Change numbers will have their description appended by the
       // autocomplete.
       return this._text.split(':')[0];
-    },
+    }
 
     _handleConfirmTap(e) {
       e.preventDefault();
+      e.stopPropagation();
       this.dispatchEvent(new CustomEvent('confirm',
           {detail: {base: this._getSelectedBase()}}));
       this._text = '';
-    },
+    }
 
     _handleCancelTap(e) {
       e.preventDefault();
+      e.stopPropagation();
       this.dispatchEvent(new CustomEvent('cancel'));
       this._text = '';
-    },
+    }
 
     _handleRebaseOnOther() {
       this.$.parentInput.focus();
-    },
+    }
 
-    _handleEnterChangeNumberTap() {
+    _handleEnterChangeNumberClick() {
       this.$.rebaseOnOtherInput.checked = true;
-    },
+    }
 
     /**
      * Sets the default radio button based on the state of the app and
      * the corresponding value to be submitted.
      */
     _updateSelectedOption(rebaseOnCurrent, hasParent) {
+      // Polymer 2: check for undefined
+      if ([rebaseOnCurrent, hasParent].some(arg => arg === undefined)) {
+        return;
+      }
+
       if (this._displayParentOption(rebaseOnCurrent, hasParent)) {
         this.$.rebaseOnParentInput.checked = true;
       } else if (this._displayTipOption(rebaseOnCurrent, hasParent)) {
@@ -150,6 +163,8 @@
       } else {
         this.$.rebaseOnOtherInput.checked = true;
       }
-    },
-  });
+    }
+  }
+
+  customElements.define(GrConfirmRebaseDialog.is, GrConfirmRebaseDialog);
 })();

@@ -15,21 +15,27 @@
 package com.google.gerrit.server.notedb;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.eclipse.jgit.lib.Constants.OBJ_BLOB;
-import static org.junit.Assert.fail;
 
+import com.github.rholder.retry.BlockStrategy;
 import com.github.rholder.retry.Retryer;
 import com.github.rholder.retry.RetryerBuilder;
 import com.github.rholder.retry.StopStrategies;
+import com.google.common.collect.ImmutableList;
+import com.google.common.truth.Expect;
 import com.google.common.util.concurrent.Runnables;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.testing.InMemoryRepositoryManager;
-import com.google.gwtorm.server.OrmException;
 import java.io.IOException;
-import java.util.concurrent.ExecutionException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.jgit.errors.IncorrectObjectTypeException;
@@ -42,14 +48,13 @@ import org.eclipse.jgit.revwalk.RevWalk;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.ExpectedException;
 
 public class RepoSequenceTest {
-  // Don't sleep in tests.
-  private static final Retryer<RefUpdate.Result> RETRYER =
-      RepoSequence.retryerBuilder().withBlockStrategy(t -> {}).build();
+  @Rule public final Expect expect = Expect.create();
 
-  @Rule public ExpectedException exception = ExpectedException.none();
+  // Don't sleep in tests.
+  private static final Retryer<ImmutableList<Integer>> RETRYER =
+      RepoSequence.retryerBuilder().withBlockStrategy(t -> {}).build();
 
   private InMemoryRepositoryManager repoManager;
   private Project.NameKey project;
@@ -57,7 +62,7 @@ public class RepoSequenceTest {
   @Before
   public void setUp() throws Exception {
     repoManager = new InMemoryRepositoryManager();
-    project = new Project.NameKey("project");
+    project = Project.nameKey("project");
     repoManager.createRepository(project);
   }
 
@@ -69,13 +74,13 @@ public class RepoSequenceTest {
       RepoSequence s = newSequence(name, 1, batchSize);
       for (int i = 1; i <= max; i++) {
         try {
-          assertThat(s.next()).named("i=" + i + " for " + name).isEqualTo(i);
-        } catch (OrmException e) {
+          assertWithMessage("i=" + i + " for " + name).that(s.next()).isEqualTo(i);
+        } catch (StorageException e) {
           throw new AssertionError("failed batchSize=" + batchSize + ", i=" + i, e);
         }
       }
-      assertThat(s.acquireCount)
-          .named("acquireCount for " + name)
+      assertWithMessage("acquireCount for " + name)
+          .that(s.acquireCount)
           .isEqualTo(divCeil(max, batchSize));
     }
   }
@@ -163,7 +168,7 @@ public class RepoSequenceTest {
     RepoSequence s = newSequence("id", 1, 10, bgUpdate, RETRYER);
     assertThat(doneBgUpdate.get()).isFalse();
     assertThat(s.next()).isEqualTo(1234);
-    // Single acquire call that results in 2 ref reads.
+    // Two acquire calls, but only one successful.
     assertThat(s.acquireCount).isEqualTo(1);
     assertThat(doneBgUpdate.get()).isTrue();
   }
@@ -171,23 +176,21 @@ public class RepoSequenceTest {
   @Test
   public void failOnInvalidValue() throws Exception {
     ObjectId id = writeBlob("id", "not a number");
-    exception.expect(OrmException.class);
-    exception.expectMessage("invalid value in refs/sequences/id blob at " + id.name());
-    newSequence("id", 1, 3).next();
+    StorageException thrown =
+        assertThrows(StorageException.class, () -> newSequence("id", 1, 3).next());
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains("invalid value in refs/sequences/id blob at " + id.name());
   }
 
   @Test
   public void failOnWrongType() throws Exception {
-    try (Repository repo = repoManager.openRepository(project)) {
-      TestRepository<Repository> tr = new TestRepository<>(repo);
+    try (Repository repo = repoManager.openRepository(project);
+        TestRepository<Repository> tr = new TestRepository<>(repo)) {
       tr.branch(RefNames.REFS_SEQUENCES + "id").commit().create();
-      try {
-        newSequence("id", 1, 3).next();
-        fail();
-      } catch (OrmException e) {
-        assertThat(e.getCause()).isInstanceOf(ExecutionException.class);
-        assertThat(e.getCause().getCause()).isInstanceOf(IncorrectObjectTypeException.class);
-      }
+      StorageException e =
+          assertThrows(StorageException.class, () -> newSequence("id", 1, 3).next());
+      assertThat(e.getCause()).isInstanceOf(IncorrectObjectTypeException.class);
     }
   }
 
@@ -200,12 +203,84 @@ public class RepoSequenceTest {
             1,
             10,
             () -> writeBlob("id", Integer.toString(bgCounter.getAndAdd(1000))),
-            RetryerBuilder.<RefUpdate.Result>newBuilder()
+            RetryerBuilder.<ImmutableList<Integer>>newBuilder()
                 .withStopStrategy(StopStrategies.stopAfterAttempt(3))
                 .build());
-    exception.expect(OrmException.class);
-    exception.expectMessage("failed to update refs/sequences/id: LOCK_FAILURE");
-    s.next();
+    StorageException thrown = assertThrows(StorageException.class, () -> s.next());
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains("Failed to update refs/sequences/id: LOCK_FAILURE");
+  }
+
+  @Test
+  public void idCanBeRetrievedFromOtherThreadWhileWaitingToRetry() throws Exception {
+    // Seed existing ref value.
+    writeBlob("id", "1");
+
+    // Let the first update of the sequence fail with LOCK_FAILURE, so that the update is retried.
+    CountDownLatch lockFailure = new CountDownLatch(1);
+    CountDownLatch parallelSuccessfulSequenceGeneration = new CountDownLatch(1);
+    AtomicBoolean doneBgUpdate = new AtomicBoolean(false);
+    Runnable bgUpdate =
+        () -> {
+          if (!doneBgUpdate.getAndSet(true)) {
+            writeBlob("id", "1234");
+          }
+        };
+
+    BlockStrategy blockStrategy =
+        t -> {
+          // Keep blocking until we verified that another thread can retrieve a sequence number
+          // while we are blocking here.
+          lockFailure.countDown();
+          parallelSuccessfulSequenceGeneration.await();
+        };
+
+    // Use batch size = 1 to make each call go to NoteDb.
+    RepoSequence s =
+        newSequence(
+            "id",
+            1,
+            1,
+            bgUpdate,
+            RepoSequence.retryerBuilder().withBlockStrategy(blockStrategy).build());
+
+    assertThat(doneBgUpdate.get()).isFalse();
+
+    // Start a thread to get a sequence number. This thread needs to update the sequence in NoteDb,
+    // but due to the background update (see bgUpdate) the first attempt to update NoteDb fails
+    // with LOCK_FAILURE. RepoSequence uses a retryer to retry the NoteDb update on LOCK_FAILURE,
+    // but our block strategy ensures that this retry only happens after isBlocking was set to
+    // false.
+    Future<?> future =
+        Executors.newFixedThreadPool(1)
+            .submit(
+                () -> {
+                  // The background update sets the next available sequence number to 1234. Then the
+                  // test thread retrieves one sequence number, so that the next available sequence
+                  // number for this thread is 1235.
+                  expect.that(s.next()).isEqualTo(1235);
+                });
+
+    // Wait until the LOCK_FAILURE has happened and the block strategy was entered.
+    lockFailure.await();
+
+    // Verify that the background update was done now.
+    assertThat(doneBgUpdate.get()).isTrue();
+
+    // Verify that we can retrieve a sequence number while the other thread is blocked. If the
+    // s.next() call hangs it means that the RepoSequence.counterLock was not released before the
+    // background thread started to block for retry. In this case the test would time out.
+    assertThat(s.next()).isEqualTo(1234);
+
+    // Stop blocking the retry of the background thread (and verify that it was still blocked).
+    parallelSuccessfulSequenceGeneration.countDown();
+
+    // Wait until the background thread is done.
+    future.get();
+
+    // Two successful acquire calls (because batch size == 1).
+    assertThat(s.acquireCount).isEqualTo(2);
   }
 
   @Test
@@ -254,95 +329,6 @@ public class RepoSequenceTest {
     assertThat(s2.acquireCount).isEqualTo(1);
   }
 
-  @Test
-  public void increaseTo() throws Exception {
-    // Seed existing ref value.
-    writeBlob("id", "1");
-
-    RepoSequence s = newSequence("id", 1, 10);
-
-    s.increaseTo(2);
-    assertThat(s.next()).isEqualTo(2);
-  }
-
-  @Test
-  public void increaseToLowerValueIsIgnored() throws Exception {
-    // Seed existing ref value.
-    writeBlob("id", "2");
-
-    RepoSequence s = newSequence("id", 1, 10);
-
-    s.increaseTo(1);
-    assertThat(s.next()).isEqualTo(2);
-  }
-
-  @Test
-  public void increaseToRetryOnLockFailureV1() throws Exception {
-    // Seed existing ref value.
-    writeBlob("id", "1");
-
-    AtomicBoolean doneBgUpdate = new AtomicBoolean(false);
-    Runnable bgUpdate =
-        () -> {
-          if (!doneBgUpdate.getAndSet(true)) {
-            writeBlob("id", "2");
-          }
-        };
-
-    RepoSequence s = newSequence("id", 1, 10, bgUpdate, RETRYER);
-    assertThat(doneBgUpdate.get()).isFalse();
-
-    // Increase the value to 3. The background thread increases the value to 2, which makes the
-    // increase to value 3 fail once with LockFailure. The increase to 3 is then retried and is
-    // expected to succeed.
-    s.increaseTo(3);
-    assertThat(s.next()).isEqualTo(3);
-
-    assertThat(doneBgUpdate.get()).isTrue();
-  }
-
-  @Test
-  public void increaseToRetryOnLockFailureV2() throws Exception {
-    // Seed existing ref value.
-    writeBlob("id", "1");
-
-    AtomicBoolean doneBgUpdate = new AtomicBoolean(false);
-    Runnable bgUpdate =
-        () -> {
-          if (!doneBgUpdate.getAndSet(true)) {
-            writeBlob("id", "3");
-          }
-        };
-
-    RepoSequence s = newSequence("id", 1, 10, bgUpdate, RETRYER);
-    assertThat(doneBgUpdate.get()).isFalse();
-
-    // Increase the value to 2. The background thread increases the value to 3, which makes the
-    // increase to value 2 fail with LockFailure. The increase to 2 is then not retried because the
-    // current value is already higher and it should be preserved.
-    s.increaseTo(2);
-    assertThat(s.next()).isEqualTo(3);
-
-    assertThat(doneBgUpdate.get()).isTrue();
-  }
-
-  @Test
-  public void increaseToFailAfterRetryerGivesUp() throws Exception {
-    AtomicInteger bgCounter = new AtomicInteger(1234);
-    RepoSequence s =
-        newSequence(
-            "id",
-            1,
-            10,
-            () -> writeBlob("id", Integer.toString(bgCounter.getAndAdd(1000))),
-            RetryerBuilder.<RefUpdate.Result>newBuilder()
-                .withStopStrategy(StopStrategies.stopAfterAttempt(3))
-                .build());
-    exception.expect(OrmException.class);
-    exception.expectMessage("failed to update refs/sequences/id: LOCK_FAILURE");
-    s.increaseTo(2);
-  }
-
   private RepoSequence newSequence(String name, int start, int batchSize) {
     return newSequence(name, start, batchSize, Runnables.doNothing(), RETRYER);
   }
@@ -352,7 +338,7 @@ public class RepoSequenceTest {
       final int start,
       int batchSize,
       Runnable afterReadRef,
-      Retryer<RefUpdate.Result> retryer) {
+      Retryer<ImmutableList<Integer>> retryer) {
     return new RepoSequence(
         repoManager,
         GitReferenceUpdated.DISABLED,

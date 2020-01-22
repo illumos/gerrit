@@ -15,43 +15,37 @@
 package com.google.gerrit.acceptance.rest.change;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.TruthJUnit.assume;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static com.google.gerrit.extensions.client.ListChangesOption.DETAILED_LABELS;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
-import static java.util.concurrent.TimeUnit.SECONDS;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
 import com.google.common.collect.Iterables;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.PushOneCommit;
+import com.google.gerrit.acceptance.UseClockStep;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.common.data.Permission;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.changes.AssigneeInput;
 import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.extensions.common.AccountInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.gerrit.server.account.AccountResolver.UnresolvableAccountException;
 import com.google.gerrit.testing.FakeEmailSender.Message;
-import com.google.gerrit.testing.TestTimeUtil;
+import com.google.inject.Inject;
 import java.util.Iterator;
 import java.util.List;
 import org.eclipse.jgit.transport.RefSpec;
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 @NoHttpd
+@UseClockStep
 public class AssigneeIT extends AbstractDaemonTest {
-
-  @BeforeClass
-  public static void setTimeForTesting() {
-    TestTimeUtil.resetWithClockStep(1, SECONDS);
-  }
-
-  @AfterClass
-  public static void restoreTime() {
-    TestTimeUtil.useSystemTime();
-  }
+  @Inject private ProjectOperations projectOperations;
+  @Inject private RequestScopeOperations requestScopeOperations;
 
   @Test
   public void getNoAssignee() throws Exception {
@@ -62,66 +56,74 @@ public class AssigneeIT extends AbstractDaemonTest {
   @Test
   public void addGetAssignee() throws Exception {
     PushOneCommit.Result r = createChange();
-    assertThat(setAssignee(r, user.email)._accountId).isEqualTo(user.getId().get());
-    assertThat(getAssignee(r)._accountId).isEqualTo(user.getId().get());
+    assertThat(setAssignee(r, user.email())._accountId).isEqualTo(user.id().get());
+    assertThat(getAssignee(r)._accountId).isEqualTo(user.id().get());
 
     assertThat(sender.getMessages()).hasSize(1);
     Message m = sender.getMessages().get(0);
-    assertThat(m.rcpt()).containsExactly(user.emailAddress);
+    assertThat(m.rcpt()).containsExactly(user.getEmailAddress());
   }
 
   @Test
   public void setNewAssigneeWhenExists() throws Exception {
     PushOneCommit.Result r = createChange();
-    setAssignee(r, user.email);
-    assertThat(setAssignee(r, user.email)._accountId).isEqualTo(user.getId().get());
+    setAssignee(r, user.email());
+    assertThat(setAssignee(r, user.email())._accountId).isEqualTo(user.id().get());
   }
 
   @Test
   public void getPastAssignees() throws Exception {
-    assume().that(notesMigration.readChanges()).isTrue();
     PushOneCommit.Result r = createChange();
-    setAssignee(r, user.email);
-    setAssignee(r, admin.email);
+    setAssignee(r, user.email());
+    setAssignee(r, admin.email());
     List<AccountInfo> assignees = getPastAssignees(r);
     assertThat(assignees).hasSize(2);
     Iterator<AccountInfo> itr = assignees.iterator();
-    assertThat(itr.next()._accountId).isEqualTo(user.getId().get());
-    assertThat(itr.next()._accountId).isEqualTo(admin.getId().get());
+    assertThat(itr.next()._accountId).isEqualTo(user.id().get());
+    assertThat(itr.next()._accountId).isEqualTo(admin.id().get());
   }
 
   @Test
-  public void assigneeAddedAsReviewer() throws Exception {
-    ReviewerState state;
-    // Assignee is added as CC, if back-end is reviewDb (that does not support
-    // CC) CC is stored as REVIEWER
-    if (notesMigration.readChanges()) {
-      state = ReviewerState.CC;
-    } else {
-      state = ReviewerState.REVIEWER;
-    }
+  public void assigneeAddedAsCc() throws Exception {
     PushOneCommit.Result r = createChange();
-    Iterable<AccountInfo> reviewers = getReviewers(r, state);
+    Iterable<AccountInfo> reviewers = getReviewers(r, ReviewerState.CC);
     assertThat(reviewers).isNull();
-    assertThat(setAssignee(r, user.email)._accountId).isEqualTo(user.getId().get());
-    reviewers = getReviewers(r, state);
+
+    assertThat(setAssignee(r, user.email())._accountId).isEqualTo(user.id().get());
+    reviewers = getReviewers(r, ReviewerState.CC);
     assertThat(reviewers).hasSize(1);
-    AccountInfo reviewer = Iterables.getFirst(reviewers, null);
-    assertThat(reviewer._accountId).isEqualTo(user.getId().get());
+    assertThat(Iterables.getFirst(reviewers, null)._accountId).isEqualTo(user.id().get());
+    assertThat(getReviewers(r, ReviewerState.REVIEWER)).isNull();
+  }
+
+  @Test
+  public void assigneeStaysReviewer() throws Exception {
+    PushOneCommit.Result r = createChange();
+    gApi.changes().id(r.getChangeId()).addReviewer(user.email());
+    Iterable<AccountInfo> reviewers = getReviewers(r, ReviewerState.REVIEWER);
+    assertThat(reviewers).hasSize(1);
+    assertThat(Iterables.getFirst(reviewers, null)._accountId).isEqualTo(user.id().get());
+    assertThat(getReviewers(r, ReviewerState.CC)).isNull();
+
+    assertThat(setAssignee(r, user.email())._accountId).isEqualTo(user.id().get());
+    reviewers = getReviewers(r, ReviewerState.REVIEWER);
+    assertThat(reviewers).hasSize(1);
+    assertThat(Iterables.getFirst(reviewers, null)._accountId).isEqualTo(user.id().get());
+    assertThat(getReviewers(r, ReviewerState.CC)).isNull();
   }
 
   @Test
   public void setAlreadyExistingAssignee() throws Exception {
     PushOneCommit.Result r = createChange();
-    setAssignee(r, user.email);
-    assertThat(setAssignee(r, user.email)._accountId).isEqualTo(user.getId().get());
+    setAssignee(r, user.email());
+    assertThat(setAssignee(r, user.email())._accountId).isEqualTo(user.id().get());
   }
 
   @Test
   public void deleteAssignee() throws Exception {
     PushOneCommit.Result r = createChange();
-    assertThat(setAssignee(r, user.email)._accountId).isEqualTo(user.getId().get());
-    assertThat(deleteAssignee(r)._accountId).isEqualTo(user.getId().get());
+    assertThat(setAssignee(r, user.email())._accountId).isEqualTo(user.id().get());
+    assertThat(deleteAssignee(r)._accountId).isEqualTo(user.id().get());
     assertThat(getAssignee(r)).isNull();
   }
 
@@ -134,10 +136,26 @@ public class AssigneeIT extends AbstractDaemonTest {
   @Test
   public void setAssigneeToInactiveUser() throws Exception {
     PushOneCommit.Result r = createChange();
-    gApi.accounts().id(user.getId().get()).setActive(false);
-    exception.expect(UnprocessableEntityException.class);
-    exception.expectMessage("is not active");
-    setAssignee(r, user.email);
+    gApi.accounts().id(user.id().get()).setActive(false);
+    UnresolvableAccountException thrown =
+        assertThrows(UnresolvableAccountException.class, () -> setAssignee(r, user.email()));
+    assertThat(thrown)
+        .hasMessageThat()
+        .isEqualTo(
+            "Account '"
+                + user.email()
+                + "' only matches inactive accounts. To use an inactive account, retry with one"
+                + " of the following exact account IDs:\n"
+                + user.id()
+                + ": User <user@example.com>");
+  }
+
+  @Test
+  public void setAssigneeToInactiveUserById() throws Exception {
+    PushOneCommit.Result r = createChange();
+    gApi.accounts().id(user.id().get()).setActive(false);
+    setAssignee(r, user.id().toString());
+    assertThat(getAssignee(r)._accountId).isEqualTo(user.id().get());
   }
 
   @Test
@@ -145,26 +163,28 @@ public class AssigneeIT extends AbstractDaemonTest {
     git().fetch().setRefSpecs(new RefSpec("refs/meta/config:refs/meta/config")).call();
     testRepo.reset(RefNames.REFS_CONFIG);
     PushOneCommit.Result r = createChange("refs/for/refs/meta/config");
-    exception.expect(AuthException.class);
-    exception.expectMessage("read not permitted");
-    setAssignee(r, user.email);
+    AuthException thrown = assertThrows(AuthException.class, () -> setAssignee(r, user.email()));
+    assertThat(thrown).hasMessageThat().contains("read not permitted");
   }
 
   @Test
   public void setAssigneeNotAllowedWithoutPermission() throws Exception {
     PushOneCommit.Result r = createChange();
-    setApiUser(user);
-    exception.expect(AuthException.class);
-    exception.expectMessage("not permitted");
-    setAssignee(r, user.email);
+    requestScopeOperations.setApiUser(user.id());
+    AuthException thrown = assertThrows(AuthException.class, () -> setAssignee(r, user.email()));
+    assertThat(thrown).hasMessageThat().contains("not permitted");
   }
 
   @Test
   public void setAssigneeAllowedWithPermission() throws Exception {
     PushOneCommit.Result r = createChange();
-    grant(project, "refs/heads/master", Permission.EDIT_ASSIGNEE, false, REGISTERED_USERS);
-    setApiUser(user);
-    assertThat(setAssignee(r, user.email)._accountId).isEqualTo(user.getId().get());
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.EDIT_ASSIGNEE).ref("refs/heads/master").group(REGISTERED_USERS))
+        .update();
+    requestScopeOperations.setApiUser(user.id());
+    assertThat(setAssignee(r, user.email())._accountId).isEqualTo(user.id().get());
   }
 
   private AccountInfo getAssignee(PushOneCommit.Result r) throws Exception {

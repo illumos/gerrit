@@ -15,14 +15,14 @@
 package com.google.gerrit.server.restapi.change;
 
 import com.google.common.base.Strings;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.ChangeMessage;
 import com.google.gerrit.extensions.api.changes.TopicInput;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
+import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.extensions.webui.UiAction;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.ChangeMessage;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.change.ChangeResource;
@@ -34,37 +34,27 @@ import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
 import com.google.gerrit.server.update.Context;
-import com.google.gerrit.server.update.RetryHelper;
-import com.google.gerrit.server.update.RetryingRestModifyView;
 import com.google.gerrit.server.update.UpdateException;
 import com.google.gerrit.server.util.time.TimeUtil;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 
 @Singleton
-public class PutTopic extends RetryingRestModifyView<ChangeResource, TopicInput, Response<String>>
-    implements UiAction<ChangeResource> {
-  private final Provider<ReviewDb> dbProvider;
+public class PutTopic
+    implements RestModifyView<ChangeResource, TopicInput>, UiAction<ChangeResource> {
+  private final BatchUpdate.Factory updateFactory;
   private final ChangeMessagesUtil cmUtil;
   private final TopicEdited topicEdited;
 
   @Inject
-  PutTopic(
-      Provider<ReviewDb> dbProvider,
-      ChangeMessagesUtil cmUtil,
-      RetryHelper retryHelper,
-      TopicEdited topicEdited) {
-    super(retryHelper);
-    this.dbProvider = dbProvider;
+  PutTopic(BatchUpdate.Factory updateFactory, ChangeMessagesUtil cmUtil, TopicEdited topicEdited) {
+    this.updateFactory = updateFactory;
     this.cmUtil = cmUtil;
     this.topicEdited = topicEdited;
   }
 
   @Override
-  protected Response<String> applyImpl(
-      BatchUpdate.Factory updateFactory, ChangeResource req, TopicInput input)
+  public Response<String> apply(ChangeResource req, TopicInput input)
       throws UpdateException, RestApiException, PermissionBackendException {
     req.permissions().check(ChangePermission.EDIT_TOPIC_NAME);
 
@@ -82,8 +72,7 @@ public class PutTopic extends RetryingRestModifyView<ChangeResource, TopicInput,
 
     Op op = new Op(sanitizedInput);
     try (BatchUpdate u =
-        updateFactory.create(
-            dbProvider.get(), req.getChange().getProject(), req.getUser(), TimeUtil.nowTs())) {
+        updateFactory.create(req.getChange().getProject(), req.getUser(), TimeUtil.nowTs())) {
       u.addOp(req.getId(), op);
       u.execute();
     }
@@ -102,7 +91,7 @@ public class PutTopic extends RetryingRestModifyView<ChangeResource, TopicInput,
     }
 
     @Override
-    public boolean updateChange(ChangeContext ctx) throws OrmException {
+    public boolean updateChange(ChangeContext ctx) {
       change = ctx.getChange();
       ChangeUpdate update = ctx.getUpdate(change.currentPatchSetId());
       newTopicName = Strings.nullToEmpty(input.topic);
@@ -123,7 +112,7 @@ public class PutTopic extends RetryingRestModifyView<ChangeResource, TopicInput,
 
       ChangeMessage cmsg =
           ChangeMessagesUtil.newMessage(ctx, summary, ChangeMessagesUtil.TAG_SET_TOPIC);
-      cmUtil.addChangeMessage(ctx.getDb(), update, cmsg);
+      cmUtil.addChangeMessage(update, cmsg);
       return true;
     }
 

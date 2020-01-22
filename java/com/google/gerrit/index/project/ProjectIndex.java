@@ -14,11 +14,15 @@
 
 package com.google.gerrit.index.project;
 
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.index.Index;
 import com.google.gerrit.index.IndexDefinition;
 import com.google.gerrit.index.query.Predicate;
-import com.google.gerrit.reviewdb.client.Project;
 
+/**
+ * Index for Gerrit projects (repositories). This class is mainly used for typing the generic parent
+ * class that contains actual implementations.
+ */
 public interface ProjectIndex extends Index<Project.NameKey, ProjectData> {
 
   public interface Factory

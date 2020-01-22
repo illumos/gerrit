@@ -91,13 +91,13 @@ iron-a11y-keys-behavior's keyBindings attribute to implement the binding in the
 element. An example of this is in comment threads. A diff view supports actions
 on comment threads, but there may be zero or many comment threads attached at
 any given point. So the shortcut is declared as doc-only by the diff view and
-by gr-app, and actually implemented by gr-diff-comment-thread.
+by gr-app, and actually implemented by gr-comment-thread.
 
 NOTE: doc-only shortcuts will not be customizable in the same way that other
 shortcuts are.
 -->
-<link rel="import" href="../../bower_components/polymer/polymer.html">
-<link rel="import" href="../../bower_components/iron-a11y-keys-behavior/iron-a11y-keys-behavior.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/iron-a11y-keys-behavior/iron-a11y-keys-behavior.html">
 
 <script>
 (function(window) {
@@ -180,6 +180,7 @@ shortcuts are.
 
     SEARCH: 'SEARCH',
     SEND_REPLY: 'SEND_REPLY',
+    EMOJI_DROPDOWN: 'EMOJI_DROPDOWN',
   };
 
   const _help = new Map();
@@ -292,6 +293,8 @@ shortcuts are.
       'Show/hide selected inline diff');
 
   _describe(Shortcut.SEND_REPLY, ShortcutSection.REPLY_DIALOG, 'Send reply');
+  _describe(Shortcut.EMOJI_DROPDOWN, ShortcutSection.REPLY_DIALOG,
+      'Emoji dropdown');
 
   // Must be declared outside behavior implementation to be accessed inside
   // behavior functions.
@@ -423,6 +426,9 @@ shortcuts are.
     }
 
     describeBinding(binding) {
+      if (binding.length === 1) {
+        return [binding];
+      }
       return binding.split(':')[0].split('+').map(part => {
         switch (part) {
           case 'shift':
@@ -457,7 +463,7 @@ shortcuts are.
 
   window.Gerrit = window.Gerrit || {};
 
-  /** @polymerBehavior KeyboardShortcutBehavior */
+  /** @polymerBehavior Gerrit.KeyboardShortcutBehavior*/
   Gerrit.KeyboardShortcutBehavior = [
     Polymer.IronA11yKeysBehavior,
     {
@@ -506,7 +512,7 @@ shortcuts are.
       },
 
       // Alias for getKeyboardEvent.
-      /** @return {!(Event|PolymerDomApi|PolymerEventApi)} */
+      /** @return {!Event} */
       getKeyboardEvent(e) {
         return getKeyboardEvent(e);
       },
@@ -534,6 +540,7 @@ shortcuts are.
         }
       },
 
+      /** @override */
       attached() {
         const shortcuts = shortcutManager.attachHost(this);
         if (!shortcuts) { return; }
@@ -553,6 +560,7 @@ shortcuts are.
         }
       },
 
+      /** @override */
       detached() {
         if (shortcutManager.detachHost(this)) {
           this.removeOwnKeyBindings();
@@ -606,5 +614,22 @@ shortcuts are.
       shortcutManager.bindShortcut(shortcut, ...bindings);
     },
   };
+
+  // eslint-disable-next-line no-unused-vars
+  function defineEmptyMixin() {
+    // This is a temporary function.
+    // Polymer linter doesn't process correctly the following code:
+    // class MyElement extends Polymer.mixinBehaviors([legacyBehaviors], ...) {...}
+    // To workaround this issue, the mock mixin is declared in this method.
+    // In the following changes, legacy behaviors will be converted to mixins.
+
+    /**
+     * @polymer
+     * @mixinFunction
+     */
+    Gerrit.KeyboardShortcutMixin = base =>
+      class extends base {
+      };
+  }
 })(window);
 </script>

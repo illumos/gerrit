@@ -21,12 +21,12 @@ import com.google.common.cache.LoadingCache;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.reviewdb.client.Account;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.server.FanOutExecutor;
 import com.google.gerrit.server.account.externalids.ExternalId;
 import com.google.gerrit.server.account.externalids.ExternalIds;
 import com.google.gerrit.server.cache.CacheModule;
-import com.google.gerrit.server.config.AllUsersName;
+import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.logging.TraceContext.TraceTimer;
 import com.google.gerrit.server.util.time.TimeUtil;
@@ -59,7 +59,7 @@ public class AccountCacheImpl implements AccountCache {
     return new CacheModule() {
       @Override
       protected void configure() {
-        cache(BYID_NAME, Account.Id.class, new TypeLiteral<Optional<AccountState>>() {})
+        cache(BYID_NAME, Account.Id.class, new TypeLiteral<AccountState>() {})
             .loader(ByIdLoader.class);
 
         bind(AccountCacheImpl.class);
@@ -68,18 +68,15 @@ public class AccountCacheImpl implements AccountCache {
     };
   }
 
-  private final AllUsersName allUsersName;
   private final ExternalIds externalIds;
-  private final LoadingCache<Account.Id, Optional<AccountState>> byId;
+  private final LoadingCache<Account.Id, AccountState> byId;
   private final ExecutorService executor;
 
   @Inject
   AccountCacheImpl(
-      AllUsersName allUsersName,
       ExternalIds externalIds,
-      @Named(BYID_NAME) LoadingCache<Account.Id, Optional<AccountState>> byId,
+      @Named(BYID_NAME) LoadingCache<Account.Id, AccountState> byId,
       @FanOutExecutor ExecutorService executor) {
-    this.allUsersName = allUsersName;
     this.externalIds = externalIds;
     this.byId = byId;
     this.executor = executor;
@@ -88,9 +85,11 @@ public class AccountCacheImpl implements AccountCache {
   @Override
   public AccountState getEvenIfMissing(Account.Id accountId) {
     try {
-      return byId.get(accountId).orElse(missing(accountId));
+      return byId.get(accountId);
     } catch (ExecutionException e) {
-      logger.atWarning().withCause(e).log("Cannot load AccountState for %s", accountId);
+      if (!(e.getCause() instanceof AccountNotFoundException)) {
+        logger.atWarning().withCause(e).log("Cannot load AccountState for %s", accountId);
+      }
       return missing(accountId);
     }
   }
@@ -98,9 +97,11 @@ public class AccountCacheImpl implements AccountCache {
   @Override
   public Optional<AccountState> get(Account.Id accountId) {
     try {
-      return byId.get(accountId);
+      return Optional.ofNullable(byId.get(accountId));
     } catch (ExecutionException e) {
-      logger.atWarning().withCause(e).log("Cannot load AccountState for ID %s", accountId);
+      if (!(e.getCause() instanceof AccountNotFoundException)) {
+        logger.atWarning().withCause(e).log("Cannot load AccountState for %s", accountId);
+      }
       return Optional.empty();
     }
   }
@@ -110,10 +111,10 @@ public class AccountCacheImpl implements AccountCache {
     Map<Account.Id, AccountState> accountStates = new HashMap<>(accountIds.size());
     List<Callable<Optional<AccountState>>> callables = new ArrayList<>();
     for (Account.Id accountId : accountIds) {
-      Optional<AccountState> state = byId.getIfPresent(accountId);
+      AccountState state = byId.getIfPresent(accountId);
       if (state != null) {
         // The value is in-memory, so we just get the state
-        state.ifPresent(s -> accountStates.put(accountId, s));
+        accountStates.put(accountId, state);
       } else {
         // Queue up a callable so that we can load accounts in parallel
         callables.add(() -> get(accountId));
@@ -132,7 +133,7 @@ public class AccountCacheImpl implements AccountCache {
     }
     for (Future<Optional<AccountState>> f : futures) {
       try {
-        f.get().ifPresent(s -> accountStates.put(s.getAccount().getId(), s));
+        f.get().ifPresent(s -> accountStates.put(s.account().id(), s));
       } catch (InterruptedException | ExecutionException e) {
         logger.atSevere().withCause(e).log("Cannot load AccountState");
       }
@@ -168,12 +169,12 @@ public class AccountCacheImpl implements AccountCache {
   }
 
   private AccountState missing(Account.Id accountId) {
-    Account account = new Account(accountId, TimeUtil.nowTs());
+    Account.Builder account = Account.builder(accountId, TimeUtil.nowTs());
     account.setActive(false);
-    return AccountState.forAccount(allUsersName, account);
+    return AccountState.forAccount(account.build());
   }
 
-  static class ByIdLoader extends CacheLoader<Account.Id, Optional<AccountState>> {
+  static class ByIdLoader extends CacheLoader<Account.Id, AccountState> {
     private final Accounts accounts;
 
     @Inject
@@ -182,10 +183,23 @@ public class AccountCacheImpl implements AccountCache {
     }
 
     @Override
-    public Optional<AccountState> load(Account.Id who) throws Exception {
-      try (TraceTimer timer = TraceContext.newTimer("Loading account %s", who)) {
-        return accounts.get(who);
+    public AccountState load(Account.Id who) throws Exception {
+      try (TraceTimer timer =
+          TraceContext.newTimer(
+              "Loading account", Metadata.builder().accountId(who.get()).build())) {
+        return accounts
+            .get(who)
+            .orElseThrow(() -> new AccountNotFoundException(who + " not found"));
       }
+    }
+  }
+
+  /** Signals that the account was not found in the primary storage. */
+  private static class AccountNotFoundException extends Exception {
+    private static final long serialVersionUID = 1L;
+
+    public AccountNotFoundException(String message) {
+      super(message);
     }
   }
 }

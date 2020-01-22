@@ -15,11 +15,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../behaviors/keyboard-shortcut-behavior/keyboard-shortcut-behavior.html">
-<link rel="import" href="../../../bower_components/iron-dropdown/iron-dropdown.html">
+<link rel="import" href="/bower_components/iron-dropdown/iron-dropdown.html">
+<link rel="import" href="/bower_components/iron-fit-behavior/iron-fit-behavior.html">
 <link rel="import" href="../../shared/gr-cursor-manager/gr-cursor-manager.html">
+<script src="../../../types/polymer-behaviors.js"></script>
 <script src="../../../scripts/rootElement.js"></script>
 <link rel="import" href="../../../styles/shared-styles.html">
 
@@ -40,7 +43,7 @@ limitations under the License.
         cursor: pointer;
         display: flex;
         justify-content: space-between;
-        padding: .5em .75em;
+        padding: var(--spacing-m) var(--spacing-l);
       }
       li:last-of-type {
         border: none;
@@ -56,7 +59,8 @@ limitations under the License.
       }
       .dropdown-content {
         background: var(--dropdown-background-color);
-        box-shadow: rgba(0, 0, 0, 0.3) 0 1px 3px;
+        box-shadow: var(--elevation-level-2);
+        border-radius: var(--border-radius);
         max-height: 50vh;
         overflow: auto;
       }
@@ -67,7 +71,7 @@ limitations under the License.
       }
       .label {
         color: var(--deemphasized-text-color);
-        padding-left: 1em;
+        padding-left: var(--spacing-l);
       }
       .hide {
         display: none;
@@ -86,7 +90,7 @@ limitations under the License.
               aria-label$="[[item.name]]"
               class="autocompleteOption"
               role="option"
-              on-tap="_handleTapItem">
+              on-click="_handleClickItem">
             <span>[[item.text]]</span>
             <span class$="label [[_computeLabelClass(item)]]">[[item.label]]</span>
           </li>

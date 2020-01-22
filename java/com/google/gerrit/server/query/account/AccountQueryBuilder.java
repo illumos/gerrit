@@ -1,5 +1,4 @@
 // Copyright (C) 2016 The Android Open Source Project
-//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -18,7 +17,9 @@ import com.google.common.base.Splitter;
 import com.google.common.collect.Lists;
 import com.google.common.flogger.FluentLogger;
 import com.google.common.primitives.Ints;
-import com.google.gerrit.common.errors.NotSignedInException;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.exceptions.NotSignedInException;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.index.Index;
 import com.google.gerrit.index.Schema;
@@ -26,8 +27,6 @@ import com.google.gerrit.index.query.LimitPredicate;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryBuilder;
 import com.google.gerrit.index.query.QueryParseException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.AccountState;
@@ -39,13 +38,12 @@ import com.google.gerrit.server.permissions.ChangePermission;
 import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.ProvisionException;
 
 /** Parses a query string meant to be applied to account objects. */
-public class AccountQueryBuilder extends QueryBuilder<AccountState> {
+public class AccountQueryBuilder extends QueryBuilder<AccountState, AccountQueryBuilder> {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
   public static final String FIELD_ACCOUNT = "account";
@@ -62,7 +60,6 @@ public class AccountQueryBuilder extends QueryBuilder<AccountState> {
       new QueryBuilder.Definition<>(AccountQueryBuilder.class);
 
   public static class Arguments {
-    final Provider<ReviewDb> db;
     final ChangeFinder changeFinder;
     final PermissionBackend permissionBackend;
 
@@ -73,12 +70,10 @@ public class AccountQueryBuilder extends QueryBuilder<AccountState> {
     public Arguments(
         Provider<CurrentUser> self,
         AccountIndexCollection indexes,
-        Provider<ReviewDb> db,
         ChangeFinder changeFinder,
         PermissionBackend permissionBackend) {
       this.self = self;
       this.indexes = indexes;
-      this.db = db;
       this.changeFinder = changeFinder;
       this.permissionBackend = permissionBackend;
     }
@@ -113,24 +108,20 @@ public class AccountQueryBuilder extends QueryBuilder<AccountState> {
 
   @Inject
   AccountQueryBuilder(Arguments args) {
-    super(mydef);
+    super(mydef, null);
     this.args = args;
   }
 
   @Operator
   public Predicate<AccountState> cansee(String change)
-      throws QueryParseException, OrmException, PermissionBackendException {
+      throws QueryParseException, PermissionBackendException {
     ChangeNotes changeNotes = args.changeFinder.findOne(change);
     if (changeNotes == null) {
       throw error(String.format("change %s not found", change));
     }
 
     try {
-      args.permissionBackend
-          .user(args.getUser())
-          .database(args.db)
-          .change(changeNotes)
-          .check(ChangePermission.READ);
+      args.permissionBackend.user(args.getUser()).change(changeNotes).check(ChangePermission.READ);
     } catch (AuthException e) {
       throw error(String.format("change %s not found", change));
     }
@@ -204,14 +195,14 @@ public class AccountQueryBuilder extends QueryBuilder<AccountState> {
     if (query.startsWith("cansee:")) {
       try {
         return cansee(query.substring(7));
-      } catch (OrmException | QueryParseException | PermissionBackendException e) {
+      } catch (StorageException | QueryParseException | PermissionBackendException e) {
         // Ignore, fall back to default query
       }
     }
 
     if ("self".equalsIgnoreCase(query) || "me".equalsIgnoreCase(query)) {
       try {
-        return Predicate.or(defaultPredicate, AccountPredicates.id(self()));
+        return Predicate.or(defaultPredicate, AccountPredicates.id(args.schema(), self()));
       } catch (QueryParseException e) {
         // Skip.
       }

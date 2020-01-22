@@ -14,76 +14,67 @@
 
 package com.google.gerrit.server.restapi.change;
 
-import com.google.common.collect.ImmutableListMultimap;
-import com.google.common.collect.ListMultimap;
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.changes.AbandonInput;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
-import com.google.gerrit.extensions.api.changes.RecipientType;
 import com.google.gerrit.extensions.common.ChangeInfo;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
+import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.extensions.webui.UiAction;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.change.AbandonOp;
 import com.google.gerrit.server.change.ChangeJson;
 import com.google.gerrit.server.change.ChangeResource;
-import com.google.gerrit.server.change.NotifyUtil;
+import com.google.gerrit.server.change.NotifyResolver;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.permissions.ChangePermission;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.update.BatchUpdate;
-import com.google.gerrit.server.update.RetryHelper;
-import com.google.gerrit.server.update.RetryingRestModifyView;
 import com.google.gerrit.server.update.UpdateException;
 import com.google.gerrit.server.util.time.TimeUtil;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 
 @Singleton
-public class Abandon extends RetryingRestModifyView<ChangeResource, AbandonInput, ChangeInfo>
-    implements UiAction<ChangeResource> {
+public class Abandon
+    implements RestModifyView<ChangeResource, AbandonInput>, UiAction<ChangeResource> {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
-  private final Provider<ReviewDb> dbProvider;
+  private final BatchUpdate.Factory updateFactory;
   private final ChangeJson.Factory json;
   private final AbandonOp.Factory abandonOpFactory;
-  private final NotifyUtil notifyUtil;
+  private final NotifyResolver notifyResolver;
   private final PatchSetUtil patchSetUtil;
 
   @Inject
   Abandon(
-      Provider<ReviewDb> dbProvider,
+      BatchUpdate.Factory updateFactory,
       ChangeJson.Factory json,
-      RetryHelper retryHelper,
       AbandonOp.Factory abandonOpFactory,
-      NotifyUtil notifyUtil,
+      NotifyResolver notifyResolver,
       PatchSetUtil patchSetUtil) {
-    super(retryHelper);
-    this.dbProvider = dbProvider;
+    this.updateFactory = updateFactory;
     this.json = json;
     this.abandonOpFactory = abandonOpFactory;
-    this.notifyUtil = notifyUtil;
+    this.notifyResolver = notifyResolver;
     this.patchSetUtil = patchSetUtil;
   }
 
   @Override
-  protected ChangeInfo applyImpl(
-      BatchUpdate.Factory updateFactory, ChangeResource rsrc, AbandonInput input)
-      throws RestApiException, UpdateException, OrmException, PermissionBackendException,
-          IOException, ConfigInvalidException {
+  public Response<ChangeInfo> apply(ChangeResource rsrc, AbandonInput input)
+      throws RestApiException, UpdateException, PermissionBackendException, IOException,
+          ConfigInvalidException {
     // Not allowed to abandon if the current patch set is locked.
     patchSetUtil.checkPatchSetNotLocked(rsrc.getNotes());
 
-    rsrc.permissions().database(dbProvider).check(ChangePermission.ABANDON);
+    rsrc.permissions().check(ChangePermission.ABANDON);
 
     NotifyHandling notify = input.notify == null ? defaultNotify(rsrc.getChange()) : input.notify;
     Change change =
@@ -92,9 +83,8 @@ public class Abandon extends RetryingRestModifyView<ChangeResource, AbandonInput
             rsrc.getNotes(),
             rsrc.getUser(),
             input.message,
-            notify,
-            notifyUtil.resolveAccounts(input.notifyDetails));
-    return json.noOptions().format(change);
+            notifyResolver.resolve(notify, input.notifyDetails));
+    return Response.ok(json.noOptions().format(change));
   }
 
   private NotifyHandling defaultNotify(Change change) {
@@ -108,8 +98,7 @@ public class Abandon extends RetryingRestModifyView<ChangeResource, AbandonInput
         notes,
         user,
         "",
-        defaultNotify(notes.getChange()),
-        ImmutableListMultimap.of());
+        NotifyResolver.Result.create(defaultNotify(notes.getChange())));
   }
 
   public Change abandon(
@@ -120,8 +109,7 @@ public class Abandon extends RetryingRestModifyView<ChangeResource, AbandonInput
         notes,
         user,
         msgTxt,
-        defaultNotify(notes.getChange()),
-        ImmutableListMultimap.of());
+        NotifyResolver.Result.create(defaultNotify(notes.getChange())));
   }
 
   public Change abandon(
@@ -129,13 +117,12 @@ public class Abandon extends RetryingRestModifyView<ChangeResource, AbandonInput
       ChangeNotes notes,
       CurrentUser user,
       String msgTxt,
-      NotifyHandling notifyHandling,
-      ListMultimap<RecipientType, Account.Id> accountsToNotify)
+      NotifyResolver.Result notify)
       throws RestApiException, UpdateException {
     AccountState accountState = user.isIdentifiedUser() ? user.asIdentifiedUser().state() : null;
-    AbandonOp op = abandonOpFactory.create(accountState, msgTxt, notifyHandling, accountsToNotify);
-    try (BatchUpdate u =
-        updateFactory.create(dbProvider.get(), notes.getProjectName(), user, TimeUtil.nowTs())) {
+    AbandonOp op = abandonOpFactory.create(accountState, msgTxt);
+    try (BatchUpdate u = updateFactory.create(notes.getProjectName(), user, TimeUtil.nowTs())) {
+      u.setNotify(notify);
       u.addOp(notes.getChangeId(), op).execute();
     }
     return op.getChange();
@@ -150,7 +137,7 @@ public class Abandon extends RetryingRestModifyView<ChangeResource, AbandonInput
             .setVisible(false);
 
     Change change = rsrc.getChange();
-    if (!change.getStatus().isOpen()) {
+    if (!change.isNew()) {
       return description;
     }
 
@@ -158,7 +145,7 @@ public class Abandon extends RetryingRestModifyView<ChangeResource, AbandonInput
       if (patchSetUtil.isPatchSetLocked(rsrc.getNotes())) {
         return description;
       }
-    } catch (OrmException | IOException e) {
+    } catch (StorageException | IOException e) {
       logger.atSevere().withCause(e).log(
           "Failed to check if the current patch set of change %s is locked", change.getId());
       return description;

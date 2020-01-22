@@ -17,113 +17,15 @@
 (function() {
   'use strict';
 
-  const Defs = {};
-
-  /**
-   * @typedef {{
-   *    basePatchNum: (string|number),
-   *    patchNum: (number),
-   * }}
-   */
-  Defs.patchRange;
-
-  /**
-   * @typedef {{
-   *    url: string,
-   *    fetchOptions: (Object|null|undefined),
-   *    anonymizedUrl: (string|undefined),
-   * }}
-   */
-  Defs.FetchRequest;
-
-  /**
-   * Object to describe a request for passing into _fetchJSON or _fetchRawJSON.
-   * - url is the URL for the request (excluding get params)
-   * - errFn is a function to invoke when the request fails.
-   * - cancelCondition is a function that, if provided and returns true, will
-   *     cancel the response after it resolves.
-   * - params is a key-value hash to specify get params for the request URL.
-   *
-   * @typedef {{
-   *    url: string,
-   *    errFn: (function(?Response, string=)|null|undefined),
-   *    cancelCondition: (function()|null|undefined),
-   *    params: (Object|null|undefined),
-   *    fetchOptions: (Object|null|undefined),
-   *    anonymizedUrl: (string|undefined),
-   *    reportUrlAsIs: (boolean|undefined),
-   * }}
-   */
-  Defs.FetchJSONRequest;
-
-  /**
-   * @typedef {{
-   *   changeNum: (string|number),
-   *   endpoint: string,
-   *   patchNum: (string|number|null|undefined),
-   *   errFn: (function(?Response, string=)|null|undefined),
-   *   params: (Object|null|undefined),
-   *   fetchOptions: (Object|null|undefined),
-   *   anonymizedEndpoint: (string|undefined),
-   *   reportEndpointAsIs: (boolean|undefined),
-   * }}
-   */
-  Defs.ChangeFetchRequest;
-
-  /**
-   * Object to describe a request for passing into _send.
-   * - method is the HTTP method to use in the request.
-   * - url is the URL for the request
-   * - body is a request payload.
-   *     TODO (beckysiegel) remove need for number at least.
-   * - errFn is a function to invoke when the request fails.
-   * - cancelCondition is a function that, if provided and returns true, will
-   *   cancel the response after it resolves.
-   * - contentType is the content type of the body.
-   * - headers is a key-value hash to describe HTTP headers for the request.
-   * - parseResponse states whether the result should be parsed as a JSON
-   *     object using getResponseObject.
-   *
-   * @typedef {{
-   *   method: string,
-   *   url: string,
-   *   body: (string|number|Object|null|undefined),
-   *   errFn: (function(?Response, string=)|null|undefined),
-   *   contentType: (string|null|undefined),
-   *   headers: (Object|undefined),
-   *   parseResponse: (boolean|undefined),
-   *   anonymizedUrl: (string|undefined),
-   *   reportUrlAsIs: (boolean|undefined),
-   * }}
-   */
-  Defs.SendRequest;
-
-  /**
-   * @typedef {{
-   *   changeNum: (string|number),
-   *   method: string,
-   *   patchNum: (string|number|undefined),
-   *   endpoint: string,
-   *   body: (string|number|Object|null|undefined),
-   *   errFn: (function(?Response, string=)|null|undefined),
-   *   contentType: (string|null|undefined),
-   *   headers: (Object|undefined),
-   *   parseResponse: (boolean|undefined),
-   *   anonymizedEndpoint: (string|undefined),
-   *   reportEndpointAsIs: (boolean|undefined),
-   * }}
-   */
-  Defs.ChangeSendRequest;
-
   const DiffViewMode = {
     SIDE_BY_SIDE: 'SIDE_BY_SIDE',
     UNIFIED: 'UNIFIED_DIFF',
   };
   const JSON_PREFIX = ')]}\'';
   const MAX_PROJECT_RESULTS = 25;
-  const MAX_UNIFIED_DEFAULT_WINDOW_WIDTH_PX = 900;
+  // This value is somewhat arbitrary and not based on research or calculations.
+  const MAX_UNIFIED_DEFAULT_WINDOW_WIDTH_PX = 850;
   const PARENT_PATCH_NUM = 'PARENT';
-  const FAILED_TO_FETCH_ERROR = 'Failed to fetch';
 
   const Requests = {
     SEND_DIFF_DRAFT: 'sendDiffDraft',
@@ -138,60 +40,21 @@
       '/revisions/*';
 
   /**
-   * Wrapper around Map for caching server responses. Site-based so that
-   * changes to CANONICAL_PATH will result in a different cache going into
-   * effect.
+   * @appliesMixin Gerrit.FireMixin
+   * @appliesMixin Gerrit.PathListMixin
+   * @appliesMixin Gerrit.PatchSetMixin
+   * @appliesMixin Gerrit.RESTClientMixin
+   * @extends Polymer.Element
    */
-  class SiteBasedCache {
-    constructor() {
-      // Container of per-canonical-path caches.
-      this._data = new Map();
-    }
-
-    // Returns the cache for the current canonical path.
-    _cache() {
-      if (!this._data.has(window.CANONICAL_PATH)) {
-        this._data.set(window.CANONICAL_PATH, new Map());
-      }
-      return this._data.get(window.CANONICAL_PATH);
-    }
-
-    has(key) {
-      return this._cache().has(key);
-    }
-
-    get(key) {
-      return this._cache().get(key);
-    }
-
-    set(key, value) {
-      this._cache().set(key, value);
-    }
-
-    delete(key) {
-      this._cache().delete(key);
-    }
-
-    invalidatePrefix(prefix) {
-      const newMap = new Map();
-      for (const [key, value] of this._cache().entries()) {
-        if (!key.startsWith(prefix)) {
-          newMap.set(key, value);
-        }
-      }
-      this._data.set(window.CANONICAL_PATH, newMap);
-    }
-  }
-
-  Polymer({
-    is: 'gr-rest-api-interface',
-
-    behaviors: [
-      Gerrit.PathListBehavior,
-      Gerrit.PatchSetBehavior,
-      Gerrit.RESTClientBehavior,
-    ],
-
+  class GrRestApiInterface extends Polymer.mixinBehaviors( [
+    Gerrit.FireBehavior,
+    Gerrit.PathListBehavior,
+    Gerrit.PatchSetBehavior,
+    Gerrit.RESTClientBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-rest-api-interface'; }
     /**
      * Fired when an server error occurs.
      *
@@ -205,212 +68,73 @@
      */
 
     /**
-     * Fired when credentials were rejected by server (e.g. expired).
-     *
-     * @event auth-error
-     */
-
-    /**
      * Fired after an RPC completes.
      *
      * @event rpc-log
      */
 
-    properties: {
-      _cache: {
-        type: Object,
-        value: new SiteBasedCache(), // Shared across instances.
-      },
-      _credentialCheck: {
-        type: Object,
-        value: {checking: false}, // Shared across instances.
-      },
-      _sharedFetchPromises: {
-        type: Object,
-        value: {}, // Intentional to share the object across instances.
-      },
-      _pendingRequests: {
-        type: Object,
-        value: {}, // Intentional to share the object across instances.
-      },
-      _etags: {
-        type: Object,
-        value: new GrEtagDecorator(), // Share across instances.
-      },
-      /**
-       * Used to maintain a mapping of changeNums to project names.
-       */
-      _projectLookup: {
-        type: Object,
-        value: {}, // Intentional to share the object across instances.
-      },
-      _auth: {
-        type: Object,
-        value: Gerrit.Auth, // Share across instances.
-      },
-    },
+    constructor() {
+      super();
+      this.JSON_PREFIX = JSON_PREFIX;
+    }
 
-    JSON_PREFIX,
-
-    /**
-     * Wraps calls to the underlying authenticated fetch function (_auth.fetch)
-     * with timing and logging.
-     *
-     * @param {Defs.FetchRequest} req
-     */
-    _fetch(req) {
-      const start = Date.now();
-      const xhr = this._auth.fetch(req.url, req.fetchOptions);
-
-      // Log the call after it completes.
-      xhr.then(res => this._logCall(req, start, res.status));
-
-      // Return the XHR directly (without the log).
-      return xhr;
-    },
-
-    /**
-     * Log information about a REST call. Because the elapsed time is determined
-     * by this method, it should be called immediately after the request
-     * finishes.
-     *
-     * @param {Defs.FetchRequest} req
-     * @param {number} startTime the time that the request was started.
-     * @param {number} status the HTTP status of the response. The status value
-     *     is used here rather than the response object so there is no way this
-     *     method can read the body stream.
-     */
-    _logCall(req, startTime, status) {
-      const method = (req.fetchOptions && req.fetchOptions.method) ?
-        req.fetchOptions.method : 'GET';
-      const elapsed = (Date.now() - startTime);
-      console.log([
-        'HTTP',
-        status,
-        method,
-        elapsed + 'ms',
-        req.anonymizedUrl || req.url,
-      ].join(' '));
-      if (req.anonymizedUrl) {
-        this.fire('rpc-log',
-            {status, method, elapsed, anonymizedUrl: req.anonymizedUrl});
-      }
-    },
-
-    /**
-     * Fetch JSON from url provided.
-     * Returns a Promise that resolves to a native Response.
-     * Doesn't do error checking. Supports cancel condition. Performs auth.
-     * Validates auth expiry errors.
-     *
-     * @param {Defs.FetchJSONRequest} req
-     */
-    _fetchRawJSON(req) {
-      const urlWithParams = this._urlWithParams(req.url, req.params);
-      const fetchReq = {
-        url: urlWithParams,
-        fetchOptions: req.fetchOptions,
-        anonymizedUrl: req.reportUrlAsIs ? urlWithParams : req.anonymizedUrl,
+    static get properties() {
+      return {
+        _cache: {
+          type: Object,
+          value: new SiteBasedCache(), // Shared across instances.
+        },
+        _sharedFetchPromises: {
+          type: Object,
+          value: new FetchPromisesCache(), // Shared across instances.
+        },
+        _pendingRequests: {
+          type: Object,
+          value: {}, // Intentional to share the object across instances.
+        },
+        _etags: {
+          type: Object,
+          value: new GrEtagDecorator(), // Share across instances.
+        },
+        /**
+         * Used to maintain a mapping of changeNums to project names.
+         */
+        _projectLookup: {
+          type: Object,
+          value: {}, // Intentional to share the object across instances.
+        },
       };
-      return this._fetch(fetchReq).then(res => {
-        if (req.cancelCondition && req.cancelCondition()) {
-          res.body.cancel();
-          return;
-        }
-        return res;
-      }).catch(err => {
-        const isLoggedIn = !!this._cache.get('/accounts/self/detail');
-        if (isLoggedIn && err && err.message === FAILED_TO_FETCH_ERROR) {
-          this.checkCredentials();
-          return;
-        }
-        if (req.errFn) {
-          req.errFn.call(undefined, null, err);
-        } else {
-          this.fire('network-error', {error: err});
-        }
-        throw err;
-      });
-    },
+    }
 
-    /**
-     * Fetch JSON from url provided.
-     * Returns a Promise that resolves to a parsed response.
-     * Same as {@link _fetchRawJSON}, plus error handling.
-     *
-     * @param {Defs.FetchJSONRequest} req
-     */
-    _fetchJSON(req) {
-      return this._fetchRawJSON(req).then(response => {
-        if (!response) {
-          return;
-        }
-        if (!response.ok) {
-          if (req.errFn) {
-            req.errFn.call(null, response);
-            return;
-          }
-          this.fire('server-error', {request: req, response});
-          return;
-        }
-        return response && this.getResponseObject(response);
-      });
-    },
+    /** @override */
+    created() {
+      super.created();
+      this._auth = Gerrit.Auth;
+      this._initRestApiHelper();
+    }
 
-    /**
-     * @param {string} url
-     * @param {?Object=} opt_params URL params, key-value hash.
-     * @return {string}
-     */
-    _urlWithParams(url, opt_params) {
-      if (!opt_params) { return this.getBaseUrl() + url; }
-
-      const params = [];
-      for (const p in opt_params) {
-        if (!opt_params.hasOwnProperty(p)) { continue; }
-        if (opt_params[p] == null) {
-          params.push(encodeURIComponent(p));
-          continue;
-        }
-        for (const value of [].concat(opt_params[p])) {
-          params.push(`${encodeURIComponent(p)}=${encodeURIComponent(value)}`);
-        }
+    _initRestApiHelper() {
+      if (this._restApiHelper) {
+        return;
       }
-      return this.getBaseUrl() + url + '?' + params.join('&');
-    },
+      if (this._cache && this._auth && this._sharedFetchPromises) {
+        this._restApiHelper = new GrRestApiHelper(this._cache, this._auth,
+            this._sharedFetchPromises, this);
+      }
+    }
+
+    _fetchSharedCacheURL(req) {
+      // Cache is shared across instances
+      return this._restApiHelper.fetchCacheURL(req);
+    }
 
     /**
      * @param {!Object} response
      * @return {?}
      */
     getResponseObject(response) {
-      return this._readResponsePayload(response)
-          .then(payload => payload.parsed);
-    },
-
-    /**
-     * @param {!Object} response
-     * @return {!Object}
-     */
-    _readResponsePayload(response) {
-      return response.text().then(text => {
-        let result;
-        try {
-          result = this._parsePrefixedJSON(text);
-        } catch (_) {
-          result = null;
-        }
-        return {parsed: result, raw: text};
-      });
-    },
-
-    /**
-     * @param {string} source
-     * @return {?}
-     */
-    _parsePrefixedJSON(source) {
-      return JSON.parse(source.substring(JSON_PREFIX.length));
-    },
+      return this._restApiHelper.getResponseObject(response);
+    }
 
     getConfig(noCache) {
       if (!noCache) {
@@ -420,11 +144,11 @@
         });
       }
 
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url: '/config/server/info',
         reportUrlAsIs: true,
       });
-    },
+    }
 
     getRepo(repo, opt_errFn) {
       // TODO(kaspern): Rename rest api from /projects/ to /repos/ once backend
@@ -434,7 +158,7 @@
         errFn: opt_errFn,
         anonymizedUrl: '/projects/*',
       });
-    },
+    }
 
     getProjectConfig(repo, opt_errFn) {
       // TODO(kaspern): Rename rest api from /projects/ to /repos/ once backend
@@ -444,7 +168,7 @@
         errFn: opt_errFn,
         anonymizedUrl: '/projects/*/config',
       });
-    },
+    }
 
     getRepoAccess(repo) {
       // TODO(kaspern): Rename rest api from /projects/ to /repos/ once backend
@@ -453,7 +177,7 @@
         url: '/access/?project=' + encodeURIComponent(repo),
         anonymizedUrl: '/access/?project=*',
       });
-    },
+    }
 
     getRepoDashboards(repo, opt_errFn) {
       // TODO(kaspern): Rename rest api from /projects/ to /repos/ once backend
@@ -463,34 +187,35 @@
         errFn: opt_errFn,
         anonymizedUrl: '/projects/*/dashboards?inherited',
       });
-    },
+    }
 
     saveRepoConfig(repo, config, opt_errFn) {
       // TODO(kaspern): Rename rest api from /projects/ to /repos/ once backend
       // supports it.
-      const encodeName = encodeURIComponent(repo);
-      return this._send({
+      const url = `/projects/${encodeURIComponent(repo)}/config`;
+      this._cache.delete(url);
+      return this._restApiHelper.send({
         method: 'PUT',
-        url: `/projects/${encodeName}/config`,
+        url,
         body: config,
         errFn: opt_errFn,
         anonymizedUrl: '/projects/*/config',
       });
-    },
+    }
 
     runRepoGC(repo, opt_errFn) {
       if (!repo) { return ''; }
       // TODO(kaspern): Rename rest api from /projects/ to /repos/ once backend
       // supports it.
       const encodeName = encodeURIComponent(repo);
-      return this._send({
+      return this._restApiHelper.send({
         method: 'POST',
         url: `/projects/${encodeName}/gc`,
         body: '',
         errFn: opt_errFn,
         anonymizedUrl: '/projects/*/gc',
       });
-    },
+    }
 
     /**
      * @param {?Object} config
@@ -501,14 +226,14 @@
       // TODO(kaspern): Rename rest api from /projects/ to /repos/ once backend
       // supports it.
       const encodeName = encodeURIComponent(config.name);
-      return this._send({
+      return this._restApiHelper.send({
         method: 'PUT',
         url: `/projects/${encodeName}`,
         body: config,
         errFn: opt_errFn,
         anonymizedUrl: '/projects/*',
       });
-    },
+    }
 
     /**
      * @param {?Object} config
@@ -517,22 +242,22 @@
     createGroup(config, opt_errFn) {
       if (!config.name) { return ''; }
       const encodeName = encodeURIComponent(config.name);
-      return this._send({
+      return this._restApiHelper.send({
         method: 'PUT',
         url: `/groups/${encodeName}`,
         body: config,
         errFn: opt_errFn,
         anonymizedUrl: '/groups/*',
       });
-    },
+    }
 
     getGroupConfig(group, opt_errFn) {
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url: `/groups/${encodeURIComponent(group)}/detail`,
         errFn: opt_errFn,
         anonymizedUrl: '/groups/*/detail',
       });
-    },
+    }
 
     /**
      * @param {string} repo
@@ -545,14 +270,14 @@
       // supports it.
       const encodeName = encodeURIComponent(repo);
       const encodeRef = encodeURIComponent(ref);
-      return this._send({
+      return this._restApiHelper.send({
         method: 'DELETE',
         url: `/projects/${encodeName}/branches/${encodeRef}`,
         body: '',
         errFn: opt_errFn,
         anonymizedUrl: '/projects/*/branches/*',
       });
-    },
+    }
 
     /**
      * @param {string} repo
@@ -565,14 +290,14 @@
       // supports it.
       const encodeName = encodeURIComponent(repo);
       const encodeRef = encodeURIComponent(ref);
-      return this._send({
+      return this._restApiHelper.send({
         method: 'DELETE',
         url: `/projects/${encodeName}/tags/${encodeRef}`,
         body: '',
         errFn: opt_errFn,
         anonymizedUrl: '/projects/*/tags/*',
       });
-    },
+    }
 
     /**
      * @param {string} name
@@ -586,14 +311,14 @@
       // supports it.
       const encodeName = encodeURIComponent(name);
       const encodeBranch = encodeURIComponent(branch);
-      return this._send({
+      return this._restApiHelper.send({
         method: 'PUT',
         url: `/projects/${encodeName}/branches/${encodeBranch}`,
         body: revision,
         errFn: opt_errFn,
         anonymizedUrl: '/projects/*/branches/*',
       });
-    },
+    }
 
     /**
      * @param {string} name
@@ -607,14 +332,14 @@
       // supports it.
       const encodeName = encodeURIComponent(name);
       const encodeTag = encodeURIComponent(tag);
-      return this._send({
+      return this._restApiHelper.send({
         method: 'PUT',
         url: `/projects/${encodeName}/tags/${encodeTag}`,
         body: revision,
         errFn: opt_errFn,
         anonymizedUrl: '/projects/*/tags/*',
       });
-    },
+    }
 
     /**
      * @param {!string} groupName
@@ -623,68 +348,68 @@
     getIsGroupOwner(groupName) {
       const encodeName = encodeURIComponent(groupName);
       const req = {
-        url: `/groups/?owned&q=${encodeName}`,
-        anonymizedUrl: '/groups/owned&q=*',
+        url: `/groups/?owned&g=${encodeName}`,
+        anonymizedUrl: '/groups/owned&g=*',
       };
       return this._fetchSharedCacheURL(req)
           .then(configs => configs.hasOwnProperty(groupName));
-    },
+    }
 
     getGroupMembers(groupName, opt_errFn) {
       const encodeName = encodeURIComponent(groupName);
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url: `/groups/${encodeName}/members/`,
         errFn: opt_errFn,
         anonymizedUrl: '/groups/*/members',
       });
-    },
+    }
 
     getIncludedGroup(groupName) {
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url: `/groups/${encodeURIComponent(groupName)}/groups/`,
         anonymizedUrl: '/groups/*/groups',
       });
-    },
+    }
 
     saveGroupName(groupId, name) {
       const encodeId = encodeURIComponent(groupId);
-      return this._send({
+      return this._restApiHelper.send({
         method: 'PUT',
         url: `/groups/${encodeId}/name`,
         body: {name},
         anonymizedUrl: '/groups/*/name',
       });
-    },
+    }
 
     saveGroupOwner(groupId, ownerId) {
       const encodeId = encodeURIComponent(groupId);
-      return this._send({
+      return this._restApiHelper.send({
         method: 'PUT',
         url: `/groups/${encodeId}/owner`,
         body: {owner: ownerId},
         anonymizedUrl: '/groups/*/owner',
       });
-    },
+    }
 
     saveGroupDescription(groupId, description) {
       const encodeId = encodeURIComponent(groupId);
-      return this._send({
+      return this._restApiHelper.send({
         method: 'PUT',
         url: `/groups/${encodeId}/description`,
         body: {description},
         anonymizedUrl: '/groups/*/description',
       });
-    },
+    }
 
     saveGroupOptions(groupId, options) {
       const encodeId = encodeURIComponent(groupId);
-      return this._send({
+      return this._restApiHelper.send({
         method: 'PUT',
         url: `/groups/${encodeId}/options`,
         body: options,
         anonymizedUrl: '/groups/*/options',
       });
-    },
+    }
 
     getGroupAuditLog(group, opt_errFn) {
       return this._fetchSharedCacheURL({
@@ -692,18 +417,18 @@
         errFn: opt_errFn,
         anonymizedUrl: '/groups/*/log.audit',
       });
-    },
+    }
 
     saveGroupMembers(groupName, groupMembers) {
       const encodeName = encodeURIComponent(groupName);
       const encodeMember = encodeURIComponent(groupMembers);
-      return this._send({
+      return this._restApiHelper.send({
         method: 'PUT',
         url: `/groups/${encodeName}/members/${encodeMember}`,
         parseResponse: true,
         anonymizedUrl: '/groups/*/members/*',
       });
-    },
+    }
 
     saveIncludedGroup(groupName, includedGroup, opt_errFn) {
       const encodeName = encodeURIComponent(groupName);
@@ -714,39 +439,39 @@
         errFn: opt_errFn,
         anonymizedUrl: '/groups/*/groups/*',
       };
-      return this._send(req).then(response => {
+      return this._restApiHelper.send(req).then(response => {
         if (response.ok) {
           return this.getResponseObject(response);
         }
       });
-    },
+    }
 
     deleteGroupMembers(groupName, groupMembers) {
       const encodeName = encodeURIComponent(groupName);
       const encodeMember = encodeURIComponent(groupMembers);
-      return this._send({
+      return this._restApiHelper.send({
         method: 'DELETE',
         url: `/groups/${encodeName}/members/${encodeMember}`,
         anonymizedUrl: '/groups/*/members/*',
       });
-    },
+    }
 
     deleteIncludedGroup(groupName, includedGroup) {
       const encodeName = encodeURIComponent(groupName);
       const encodeIncludedGroup = encodeURIComponent(includedGroup);
-      return this._send({
+      return this._restApiHelper.send({
         method: 'DELETE',
         url: `/groups/${encodeName}/groups/${encodeIncludedGroup}`,
         anonymizedUrl: '/groups/*/groups/*',
       });
-    },
+    }
 
     getVersion() {
       return this._fetchSharedCacheURL({
         url: '/config/server/version',
         reportUrlAsIs: true,
       });
-    },
+    }
 
     getDiffPreferences() {
       return this.getLoggedIn().then(loggedIn => {
@@ -777,7 +502,7 @@
           theme: 'DEFAULT',
         });
       });
-    },
+    }
 
     getEditPreferences() {
       return this.getLoggedIn().then(loggedIn => {
@@ -808,7 +533,7 @@
           theme: 'DEFAULT',
         });
       });
-    },
+    }
 
     /**
      * @param {?Object} prefs
@@ -821,14 +546,14 @@
         prefs.download_scheme = prefs.download_scheme.toLowerCase();
       }
 
-      return this._send({
+      return this._restApiHelper.send({
         method: 'PUT',
         url: '/accounts/self/preferences',
         body: prefs,
         errFn: opt_errFn,
         reportUrlAsIs: true,
       });
-    },
+    }
 
     /**
      * @param {?Object} prefs
@@ -837,14 +562,14 @@
     saveDiffPreferences(prefs, opt_errFn) {
       // Invalidate the cache.
       this._cache.delete('/accounts/self/preferences.diff');
-      return this._send({
+      return this._restApiHelper.send({
         method: 'PUT',
         url: '/accounts/self/preferences.diff',
         body: prefs,
         errFn: opt_errFn,
         reportUrlAsIs: true,
       });
-    },
+    }
 
     /**
      * @param {?Object} prefs
@@ -853,14 +578,14 @@
     saveEditPreferences(prefs, opt_errFn) {
       // Invalidate the cache.
       this._cache.delete('/accounts/self/preferences.edit');
-      return this._send({
+      return this._restApiHelper.send({
         method: 'PUT',
         url: '/accounts/self/preferences.edit',
         body: prefs,
         errFn: opt_errFn,
         reportUrlAsIs: true,
       });
-    },
+    }
 
     getAccount() {
       return this._fetchSharedCacheURL({
@@ -872,7 +597,7 @@
           }
         },
       });
-    },
+    }
 
     getAvatarChangeUrl() {
       return this._fetchSharedCacheURL({
@@ -884,68 +609,68 @@
           }
         },
       });
-    },
+    }
 
     getExternalIds() {
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url: '/accounts/self/external.ids',
         reportUrlAsIs: true,
       });
-    },
+    }
 
     deleteAccountIdentity(id) {
-      return this._send({
+      return this._restApiHelper.send({
         method: 'POST',
         url: '/accounts/self/external.ids:delete',
         body: id,
         parseResponse: true,
         reportUrlAsIs: true,
       });
-    },
+    }
 
     /**
      * @param {string} userId the ID of the user usch as an email address.
      * @return {!Promise<!Object>}
      */
     getAccountDetails(userId) {
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url: `/accounts/${encodeURIComponent(userId)}/detail`,
         anonymizedUrl: '/accounts/*/detail',
       });
-    },
+    }
 
     getAccountEmails() {
       return this._fetchSharedCacheURL({
         url: '/accounts/self/emails',
         reportUrlAsIs: true,
       });
-    },
+    }
 
     /**
      * @param {string} email
      * @param {function(?Response, string=)=} opt_errFn
      */
     addAccountEmail(email, opt_errFn) {
-      return this._send({
+      return this._restApiHelper.send({
         method: 'PUT',
         url: '/accounts/self/emails/' + encodeURIComponent(email),
         errFn: opt_errFn,
         anonymizedUrl: '/account/self/emails/*',
       });
-    },
+    }
 
     /**
      * @param {string} email
      * @param {function(?Response, string=)=} opt_errFn
      */
     deleteAccountEmail(email, opt_errFn) {
-      return this._send({
+      return this._restApiHelper.send({
         method: 'DELETE',
         url: '/accounts/self/emails/' + encodeURIComponent(email),
         errFn: opt_errFn,
         anonymizedUrl: '/accounts/self/email/*',
       });
-    },
+    }
 
     /**
      * @param {string} email
@@ -959,7 +684,7 @@
         errFn: opt_errFn,
         anonymizedUrl: '/accounts/self/emails/*/preferred',
       };
-      return this._send(req).then(() => {
+      return this._restApiHelper.send(req).then(() => {
         // If result of getAccountEmails is in cache, update it in the cache
         // so we don't have to invalidate it.
         const cachedEmails = this._cache.get('/accounts/self/emails');
@@ -974,7 +699,7 @@
           this._cache.set('/accounts/self/emails', emails);
         }
       });
-    },
+    }
 
     /**
      * @param {?Object} obj
@@ -988,7 +713,7 @@
         this._cache.set('/accounts/self/detail',
             Object.assign({}, cachedAccount, obj));
       }
-    },
+    }
 
     /**
      * @param {string} name
@@ -1003,9 +728,9 @@
         parseResponse: true,
         reportUrlAsIs: true,
       };
-      return this._send(req)
+      return this._restApiHelper.send(req)
           .then(newName => this._updateCachedAccount({name: newName}));
-    },
+    }
 
     /**
      * @param {string} username
@@ -1020,9 +745,9 @@
         parseResponse: true,
         reportUrlAsIs: true,
       };
-      return this._send(req)
+      return this._restApiHelper.send(req)
           .then(newName => this._updateCachedAccount({username: newName}));
-    },
+    }
 
     /**
      * @param {string} status
@@ -1037,39 +762,39 @@
         parseResponse: true,
         reportUrlAsIs: true,
       };
-      return this._send(req)
+      return this._restApiHelper.send(req)
           .then(newStatus => this._updateCachedAccount({status: newStatus}));
-    },
+    }
 
     getAccountStatus(userId) {
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url: `/accounts/${encodeURIComponent(userId)}/status`,
         anonymizedUrl: '/accounts/*/status',
       });
-    },
+    }
 
     getAccountGroups() {
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url: '/accounts/self/groups',
         reportUrlAsIs: true,
       });
-    },
+    }
 
     getAccountAgreements() {
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url: '/accounts/self/agreements',
         reportUrlAsIs: true,
       });
-    },
+    }
 
     saveAccountAgreement(name) {
-      return this._send({
+      return this._restApiHelper.send({
         method: 'PUT',
         url: '/accounts/self/agreements',
         body: name,
         reportUrlAsIs: true,
       });
-    },
+    }
 
     /**
      * @param {string=} opt_params
@@ -1078,65 +803,39 @@
       let queryString = '';
       if (opt_params) {
         queryString = '?q=' + opt_params
-            .map(param => { return encodeURIComponent(param); })
+            .map(param => encodeURIComponent(param))
             .join('&q=');
       }
       return this._fetchSharedCacheURL({
         url: '/accounts/self/capabilities' + queryString,
         anonymizedUrl: '/accounts/self/capabilities?q=*',
       });
-    },
+    }
 
     getLoggedIn() {
-      return this.getAccount().then(account => {
-        return account != null;
-      });
-    },
+      return this._auth.authCheck();
+    }
 
     getIsAdmin() {
-      return this.getLoggedIn().then(isLoggedIn => {
-        if (isLoggedIn) {
-          return this.getAccountCapabilities();
-        } else {
-          return Promise.resolve();
-        }
-      }).then(capabilities => {
-        return capabilities && capabilities.administrateServer;
-      });
-    },
-
-    checkCredentials() {
-      if (this._credentialCheck.checking) {
-        return;
-      }
-      this._credentialCheck.checking = true;
-      const req = {url: '/accounts/self/detail', reportUrlAsIs: true};
-      // Skip the REST response cache.
-      return this._fetchRawJSON(req).then(res => {
-        if (!res) { return; }
-        if (res.status === 403) {
-          this.fire('auth-error');
-          this._cache.delete('/accounts/self/detail');
-        } else if (res.ok) {
-          return this.getResponseObject(res);
-        }
-      }).then(res => {
-        this._credentialCheck.checking = false;
-        if (res) {
-          this._cache.delete('/accounts/self/detail');
-        }
-        return res;
-      }).catch(err => {
-        this._credentialCheck.checking = false;
-      });
-    },
+      return this.getLoggedIn()
+          .then(isLoggedIn => {
+            if (isLoggedIn) {
+              return this.getAccountCapabilities();
+            } else {
+              return Promise.resolve();
+            }
+          })
+          .then(
+              capabilities => capabilities && capabilities.administrateServer
+          );
+    }
 
     getDefaultPreferences() {
       return this._fetchSharedCacheURL({
         url: '/config/server/preferences',
         reportUrlAsIs: true,
       });
-    },
+    }
 
     getPreferences() {
       return this.getLoggedIn().then(loggedIn => {
@@ -1144,6 +843,8 @@
           const req = {url: '/accounts/self/preferences', reportUrlAsIs: true};
           return this._fetchSharedCacheURL(req).then(res => {
             if (this._isNarrowScreen()) {
+              // Note that this can be problematic, because the diff will stay
+              // unified even after increasing the window width.
               res.default_diff_view = DiffViewMode.UNIFIED;
             } else {
               res.default_diff_view = res.diff_view;
@@ -1160,21 +861,21 @@
           size_bar_in_change_table: true,
         });
       });
-    },
+    }
 
     getWatchedProjects() {
       return this._fetchSharedCacheURL({
         url: '/accounts/self/watched.projects',
         reportUrlAsIs: true,
       });
-    },
+    }
 
     /**
      * @param {string} projects
      * @param {function(?Response, string=)=} opt_errFn
      */
     saveWatchedProjects(projects, opt_errFn) {
-      return this._send({
+      return this._restApiHelper.send({
         method: 'POST',
         url: '/accounts/self/watched.projects',
         body: projects,
@@ -1182,64 +883,25 @@
         parseResponse: true,
         reportUrlAsIs: true,
       });
-    },
+    }
 
     /**
      * @param {string} projects
      * @param {function(?Response, string=)=} opt_errFn
      */
     deleteWatchedProjects(projects, opt_errFn) {
-      return this._send({
+      return this._restApiHelper.send({
         method: 'POST',
         url: '/accounts/self/watched.projects:delete',
         body: projects,
         errFn: opt_errFn,
         reportUrlAsIs: true,
       });
-    },
-
-    /**
-     * @param {Defs.FetchJSONRequest} req
-     */
-    _fetchSharedCacheURL(req) {
-      if (this._sharedFetchPromises[req.url]) {
-        return this._sharedFetchPromises[req.url];
-      }
-      // TODO(andybons): Periodic cache invalidation.
-      if (this._cache.has(req.url)) {
-        return Promise.resolve(this._cache.get(req.url));
-      }
-      this._sharedFetchPromises[req.url] = this._fetchJSON(req)
-          .then(response => {
-            if (response !== undefined) {
-              this._cache.set(req.url, response);
-            }
-            this._sharedFetchPromises[req.url] = undefined;
-            return response;
-          }).catch(err => {
-            this._sharedFetchPromises[req.url] = undefined;
-            throw err;
-          });
-      return this._sharedFetchPromises[req.url];
-    },
-
-    /**
-     * @param {string} prefix
-     */
-    _invalidateSharedFetchPromisesPrefix(prefix) {
-      const newObject = {};
-      Object.entries(this._sharedFetchPromises).forEach(([key, value]) => {
-        if (!key.startsWith(prefix)) {
-          newObject[key] = value;
-        }
-      });
-      this._sharedFetchPromises = newObject;
-      this._cache.invalidatePrefix(prefix);
-    },
+    }
 
     _isNarrowScreen() {
       return window.innerWidth < MAX_UNIFIED_DEFAULT_WINDOW_WIDTH_PX;
-    },
+    }
 
     /**
      * @param {number=} opt_changesPerPage
@@ -1278,7 +940,7 @@
         params,
         reportUrlAsIs: true,
       };
-      return this._fetchJSON(req).then(response => {
+      return this._restApiHelper.fetchJSON(req).then(response => {
         // Response may be an array of changes OR an array of arrays of
         // changes.
         if (opt_query instanceof Array) {
@@ -1295,7 +957,7 @@
         }
         return response;
       });
-    },
+    }
 
     /**
      * Inserts a change into _projectLookup iff it has a valid structure.
@@ -1306,7 +968,7 @@
       if (change && change.project && change._number) {
         this.setInProjectLookup(change._number, change.project);
       }
-    },
+    }
 
     /**
      * TODO (beckysiegel) this needs to be rewritten with the optional param
@@ -1320,7 +982,7 @@
     getChangeActionURL(changeNum, opt_patchNum, endpoint) {
       return this._changeBaseURL(changeNum, opt_patchNum)
           .then(url => url + endpoint);
-    },
+    }
 
     /**
      * @param {number|string} changeNum
@@ -1328,17 +990,19 @@
      * @param {function()=} opt_cancelCondition
      */
     getChangeDetail(changeNum, opt_errFn, opt_cancelCondition) {
+      // This list MUST be kept in sync with
+      // ChangeIT#changeDetailsDoesNotRequireIndex
       const options = [
         this.ListChangesOption.ALL_COMMITS,
         this.ListChangesOption.ALL_REVISIONS,
         this.ListChangesOption.CHANGE_ACTIONS,
-        this.ListChangesOption.CURRENT_ACTIONS,
         this.ListChangesOption.DETAILED_LABELS,
         this.ListChangesOption.DOWNLOAD_COMMANDS,
         this.ListChangesOption.MESSAGES,
         this.ListChangesOption.SUBMITTABLE,
         this.ListChangesOption.WEB_LINKS,
         this.ListChangesOption.SKIP_MERGEABLE,
+        this.ListChangesOption.SKIP_DIFFSTAT,
       ];
       return this.getConfig(false).then(config => {
         if (config.receive && config.receive.enable_signed_push) {
@@ -1349,7 +1013,7 @@
             changeNum, optionsHex, opt_errFn, opt_cancelCondition)
             .then(GrReviewerUpdatesParser.parse);
       });
-    },
+    }
 
     /**
      * @param {number|string} changeNum
@@ -1357,34 +1021,39 @@
      * @param {function()=} opt_cancelCondition
      */
     getDiffChangeDetail(changeNum, opt_errFn, opt_cancelCondition) {
-      const params = this.listChangesOptionsToHex(
+      const optionsHex = this.listChangesOptionsToHex(
           this.ListChangesOption.ALL_COMMITS,
           this.ListChangesOption.ALL_REVISIONS,
-          this.ListChangesOption.SKIP_MERGEABLE
+          this.ListChangesOption.SKIP_MERGEABLE,
+          this.ListChangesOption.SKIP_DIFFSTAT
       );
-      return this._getChangeDetail(changeNum, params, opt_errFn,
+      return this._getChangeDetail(changeNum, optionsHex, opt_errFn,
           opt_cancelCondition);
-    },
+    }
 
     /**
      * @param {number|string} changeNum
+     * @param {string|undefined} optionsHex list changes options in hex
      * @param {function(?Response, string=)=} opt_errFn
      * @param {function()=} opt_cancelCondition
      */
-    _getChangeDetail(changeNum, params, opt_errFn, opt_cancelCondition) {
+    _getChangeDetail(changeNum, optionsHex, opt_errFn, opt_cancelCondition) {
       return this.getChangeActionURL(changeNum, null, '/detail').then(url => {
-        const urlWithParams = this._urlWithParams(url, params);
-        const req = {
+        const urlWithParams = this._restApiHelper
+            .urlWithParams(url, optionsHex);
+        const params = {O: optionsHex};
+        let req = {
           url,
           errFn: opt_errFn,
           cancelCondition: opt_cancelCondition,
-          params: {O: params},
+          params,
           fetchOptions: this._etags.getOptions(urlWithParams),
-          anonymizedUrl: '/changes/*~*/detail?O=' + params,
+          anonymizedUrl: '/changes/*~*/detail?O=' + optionsHex,
         };
-        return this._fetchRawJSON(req).then(response => {
+        req = this._restApiHelper.addAcceptJsonHeader(req);
+        return this._restApiHelper.fetchRawJSON(req).then(response => {
           if (response && response.status === 304) {
-            return Promise.resolve(this._parsePrefixedJSON(
+            return Promise.resolve(this._restApiHelper.parsePrefixedJSON(
                 this._etags.getCachedPayload(urlWithParams)));
           }
 
@@ -1398,7 +1067,7 @@
           }
 
           const payloadPromise = response ?
-            this._readResponsePayload(response) :
+            this._restApiHelper.readResponsePayload(response) :
             Promise.resolve(null);
 
           return payloadPromise.then(payload => {
@@ -1410,7 +1079,7 @@
           });
         });
       });
-    },
+    }
 
     /**
      * @param {number|string} changeNum
@@ -1423,11 +1092,11 @@
         patchNum,
         reportEndpointAsIs: true,
       });
-    },
+    }
 
     /**
      * @param {number|string} changeNum
-     * @param {Defs.patchRange} patchRange
+     * @param {Gerrit.PatchRange} patchRange
      * @param {number=} opt_parentIndex
      */
     getChangeFiles(changeNum, patchRange, opt_parentIndex) {
@@ -1444,11 +1113,11 @@
         params,
         reportEndpointAsIs: true,
       });
-    },
+    }
 
     /**
      * @param {number|string} changeNum
-     * @param {Defs.patchRange} patchRange
+     * @param {Gerrit.PatchRange} patchRange
      */
     getChangeEditFiles(changeNum, patchRange) {
       let endpoint = '/edit?list';
@@ -1462,7 +1131,7 @@
         endpoint,
         anonymizedEndpoint,
       });
-    },
+    }
 
     /**
      * @param {number|string} changeNum
@@ -1477,11 +1146,11 @@
         patchNum,
         anonymizedEndpoint: '/files?q=*',
       });
-    },
+    }
 
     /**
      * @param {number|string} changeNum
-     * @param {Defs.patchRange} patchRange
+     * @param {Gerrit.PatchRange} patchRange
      * @return {!Promise<!Array<!Object>>}
      */
     getChangeOrEditFiles(changeNum, patchRange) {
@@ -1490,7 +1159,7 @@
           res.files);
       }
       return this.getChangeFiles(changeNum, patchRange);
-    },
+    }
 
     /**
      * The closure compiler doesn't realize this.specialFilePathCompare is
@@ -1500,9 +1169,10 @@
      */
     getChangeFilePathsAsSpeciallySortedArray(changeNum, patchRange) {
       return this.getChangeFiles(changeNum, patchRange).then(files => {
+        if (!files) return;
         return Object.keys(files).sort(this.specialFilePathCompare);
       });
-    },
+    }
 
     getChangeRevisionActions(changeNum, patchNum) {
       const req = {
@@ -1520,7 +1190,7 @@
         }
         return revisionActions;
       });
-    },
+    }
 
     /**
      * @param {number|string} changeNum
@@ -1528,7 +1198,24 @@
      * @param {function(?Response, string=)=} opt_errFn
      */
     getChangeSuggestedReviewers(changeNum, inputVal, opt_errFn) {
-      const params = {n: 10};
+      return this._getChangeSuggestedGroup('REVIEWER', changeNum, inputVal,
+          opt_errFn);
+    }
+
+    /**
+     * @param {number|string} changeNum
+     * @param {string} inputVal
+     * @param {function(?Response, string=)=} opt_errFn
+     */
+    getChangeSuggestedCCs(changeNum, inputVal, opt_errFn) {
+      return this._getChangeSuggestedGroup('CC', changeNum, inputVal,
+          opt_errFn);
+    }
+
+    _getChangeSuggestedGroup(reviewerState, changeNum, inputVal, opt_errFn) {
+      // More suggestions may obscure content underneath in the reply dialog,
+      // see issue 10793.
+      const params = {'n': 6, 'reviewer-state': reviewerState};
       if (inputVal) { params.q = inputVal; }
       return this._getChangeURLAndFetch({
         changeNum,
@@ -1537,7 +1224,7 @@
         params,
         reportEndpointAsIs: true,
       });
-    },
+    }
 
     /**
      * @param {number|string} changeNum
@@ -1548,7 +1235,7 @@
         endpoint: '/in',
         reportEndpointAsIs: true,
       });
-    },
+    }
 
     _computeFilter(filter) {
       if (filter && filter.startsWith('^')) {
@@ -1559,7 +1246,7 @@
         filter = '';
       }
       return filter;
-    },
+    }
 
     /**
      * @param {string} filter
@@ -1571,7 +1258,7 @@
 
       return `/groups/?n=${groupsPerPage + 1}&S=${offset}` +
         this._computeFilter(filter);
-    },
+    }
 
     /**
      * @param {string} filter
@@ -1607,15 +1294,19 @@
 
       return `/projects/?n=${reposPerPage + 1}&S=${offset}` +
         `&query=${encodedFilter}`;
-    },
+    }
 
     invalidateGroupsCache() {
-      this._invalidateSharedFetchPromisesPrefix('/groups/?');
-    },
+      this._restApiHelper.invalidateFetchPromisesPrefix('/groups/?');
+    }
 
     invalidateReposCache() {
-      this._invalidateSharedFetchPromisesPrefix('/projects/?');
-    },
+      this._restApiHelper.invalidateFetchPromisesPrefix('/projects/?');
+    }
+
+    invalidateAccountsCache() {
+      this._restApiHelper.invalidateFetchPromisesPrefix('/accounts/');
+    }
 
     /**
      * @param {string} filter
@@ -1630,7 +1321,7 @@
         url,
         anonymizedUrl: '/groups/?*',
       });
-    },
+    }
 
     /**
      * @param {string} filter
@@ -1647,18 +1338,18 @@
         url,
         anonymizedUrl: '/projects/?*',
       });
-    },
+    }
 
     setRepoHead(repo, ref) {
       // TODO(kaspern): Rename rest api from /projects/ to /repos/ once backend
       // supports it.
-      return this._send({
+      return this._restApiHelper.send({
         method: 'PUT',
         url: `/projects/${encodeURIComponent(repo)}/HEAD`,
         body: {ref},
         anonymizedUrl: '/projects/*/HEAD',
       });
-    },
+    }
 
     /**
      * @param {string} filter
@@ -1676,12 +1367,12 @@
       const url = `/projects/${repo}/branches?n=${count}&S=${offset}${filter}`;
       // TODO(kaspern): Rename rest api from /projects/ to /repos/ once backend
       // supports it.
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url,
         errFn: opt_errFn,
         anonymizedUrl: '/projects/*/branches?*',
       });
-    },
+    }
 
     /**
      * @param {string} filter
@@ -1700,12 +1391,12 @@
           encodedFilter;
       // TODO(kaspern): Rename rest api from /projects/ to /repos/ once backend
       // supports it.
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url,
         errFn: opt_errFn,
         anonymizedUrl: '/projects/*/tags',
       });
-    },
+    }
 
     /**
      * @param {string} filter
@@ -1719,43 +1410,43 @@
       const encodedFilter = this._computeFilter(filter);
       const n = pluginsPerPage + 1;
       const url = `/plugins/?all&n=${n}&S=${offset}${encodedFilter}`;
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url,
         errFn: opt_errFn,
         anonymizedUrl: '/plugins/?all',
       });
-    },
+    }
 
     getRepoAccessRights(repoName, opt_errFn) {
       // TODO(kaspern): Rename rest api from /projects/ to /repos/ once backend
       // supports it.
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url: `/projects/${encodeURIComponent(repoName)}/access`,
         errFn: opt_errFn,
         anonymizedUrl: '/projects/*/access',
       });
-    },
+    }
 
     setRepoAccessRights(repoName, repoInfo) {
       // TODO(kaspern): Rename rest api from /projects/ to /repos/ once backend
       // supports it.
-      return this._send({
+      return this._restApiHelper.send({
         method: 'POST',
         url: `/projects/${encodeURIComponent(repoName)}/access`,
         body: repoInfo,
         anonymizedUrl: '/projects/*/access',
       });
-    },
+    }
 
     setRepoAccessRightsForReview(projectName, projectInfo) {
-      return this._send({
+      return this._restApiHelper.send({
         method: 'PUT',
         url: `/projects/${encodeURIComponent(projectName)}/access:review`,
         body: projectInfo,
         parseResponse: true,
         anonymizedUrl: '/projects/*/access:review',
       });
-    },
+    }
 
     /**
      * @param {string} inputVal
@@ -1765,13 +1456,13 @@
     getSuggestedGroups(inputVal, opt_n, opt_errFn) {
       const params = {s: inputVal};
       if (opt_n) { params.n = opt_n; }
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url: '/groups/',
         errFn: opt_errFn,
         params,
         reportUrlAsIs: true,
       });
-    },
+    }
 
     /**
      * @param {string} inputVal
@@ -1785,13 +1476,13 @@
         type: 'ALL',
       };
       if (opt_n) { params.n = opt_n; }
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url: '/projects/',
         errFn: opt_errFn,
         params,
         reportUrlAsIs: true,
       });
-    },
+    }
 
     /**
      * @param {string} inputVal
@@ -1804,21 +1495,21 @@
       }
       const params = {suggest: null, q: inputVal};
       if (opt_n) { params.n = opt_n; }
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url: '/accounts/',
         errFn: opt_errFn,
         params,
         anonymizedUrl: '/accounts/?n=*',
       });
-    },
+    }
 
     addChangeReviewer(changeNum, reviewerID) {
       return this._sendChangeReviewerRequest('POST', changeNum, reviewerID);
-    },
+    }
 
     removeChangeReviewer(changeNum, reviewerID) {
       return this._sendChangeReviewerRequest('DELETE', changeNum, reviewerID);
-    },
+    }
 
     _sendChangeReviewerRequest(method, changeNum, reviewerID) {
       return this.getChangeActionURL(changeNum, null, '/reviewers')
@@ -1835,9 +1526,9 @@
                 throw Error('Unsupported HTTP method: ' + method);
             }
 
-            return this._send({method, url, body});
+            return this._restApiHelper.send({method, url, body});
           });
-    },
+    }
 
     getRelatedChanges(changeNum, patchNum) {
       return this._getChangeURLAndFetch({
@@ -1846,7 +1537,7 @@
         patchNum,
         reportEndpointAsIs: true,
       });
-    },
+    }
 
     getChangesSubmittedTogether(changeNum) {
       return this._getChangeURLAndFetch({
@@ -1854,7 +1545,7 @@
         endpoint: '/submitted_together?o=NON_VISIBLE_CHANGES',
         reportEndpointAsIs: true,
       });
-    },
+    }
 
     getChangeConflicts(changeNum) {
       const options = this.listChangesOptionsToHex(
@@ -1863,14 +1554,14 @@
       );
       const params = {
         O: options,
-        q: 'status:open is:mergeable conflicts:' + changeNum,
+        q: 'status:open conflicts:' + changeNum,
       };
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url: '/changes/',
         params,
         anonymizedUrl: '/changes/conflicts:*',
       });
-    },
+    }
 
     getChangeCherryPicks(project, changeID, changeNum) {
       const options = this.listChangesOptionsToHex(
@@ -1887,12 +1578,12 @@
         O: options,
         q: query,
       };
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url: '/changes/',
         params,
         anonymizedUrl: '/changes/change:*',
       });
-    },
+    }
 
     getChangesWithSameTopic(topic, changeNum) {
       const options = this.listChangesOptionsToHex(
@@ -1910,12 +1601,12 @@
         O: options,
         q: query,
       };
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url: '/changes/',
         params,
         anonymizedUrl: '/changes/topic:*',
       });
-    },
+    }
 
     getReviewedFiles(changeNum, patchNum) {
       return this._getChangeURLAndFetch({
@@ -1924,7 +1615,7 @@
         patchNum,
         reportEndpointAsIs: true,
       });
-    },
+    }
 
     /**
      * @param {number|string} changeNum
@@ -1942,7 +1633,7 @@
         errFn: opt_errFn,
         anonymizedEndpoint: '/files/*/reviewed',
       });
-    },
+    }
 
     /**
      * @param {number|string} changeNum
@@ -1955,15 +1646,13 @@
         this.awaitPendingDiffDrafts(),
         this.getChangeActionURL(changeNum, patchNum, '/review'),
       ];
-      return Promise.all(promises).then(([, url]) => {
-        return this._send({
-          method: 'POST',
-          url,
-          body: review,
-          errFn: opt_errFn,
-        });
-      });
-    },
+      return Promise.all(promises).then(([, url]) => this._restApiHelper.send({
+        method: 'POST',
+        url,
+        body: review,
+        errFn: opt_errFn,
+      }));
+    }
 
     getChangeEdit(changeNum, opt_download_commands) {
       const params = opt_download_commands ? {'download-commands': true} : null;
@@ -1976,7 +1665,7 @@
           reportEndpointAsIs: true,
         });
       });
-    },
+    }
 
     /**
      * @param {string} project
@@ -1990,7 +1679,7 @@
      */
     createChange(project, branch, subject, opt_topic, opt_isPrivate,
         opt_workInProgress, opt_baseChange, opt_baseCommit) {
-      return this._send({
+      return this._restApiHelper.send({
         method: 'POST',
         url: '/changes/',
         body: {
@@ -2006,7 +1695,7 @@
         parseResponse: true,
         reportUrlAsIs: true,
       });
-    },
+    }
 
     /**
      * @param {number|string} changeNum
@@ -2034,7 +1723,7 @@
           return {content, type, ok: true};
         });
       });
-    },
+    }
 
     /**
      * Gets a file in a specific change and revision.
@@ -2054,7 +1743,7 @@
         headers: {Accept: 'application/json'},
         anonymizedEndpoint: '/files/*/content',
       });
-    },
+    }
 
     /**
      * Gets a file in a change edit.
@@ -2070,7 +1759,7 @@
         headers: {Accept: 'application/json'},
         anonymizedEndpoint: '/edit/*',
       });
-    },
+    }
 
     rebaseChangeEdit(changeNum) {
       return this._getChangeURLAndSend({
@@ -2079,7 +1768,7 @@
         endpoint: '/edit:rebase',
         reportEndpointAsIs: true,
       });
-    },
+    }
 
     deleteChangeEdit(changeNum) {
       return this._getChangeURLAndSend({
@@ -2088,7 +1777,7 @@
         endpoint: '/edit',
         reportEndpointAsIs: true,
       });
-    },
+    }
 
     restoreFileInChangeEdit(changeNum, restore_path) {
       return this._getChangeURLAndSend({
@@ -2098,7 +1787,7 @@
         body: {restore_path},
         reportEndpointAsIs: true,
       });
-    },
+    }
 
     renameFileInChangeEdit(changeNum, old_path, new_path) {
       return this._getChangeURLAndSend({
@@ -2108,7 +1797,7 @@
         body: {old_path, new_path},
         reportEndpointAsIs: true,
       });
-    },
+    }
 
     deleteFileInChangeEdit(changeNum, path) {
       return this._getChangeURLAndSend({
@@ -2117,7 +1806,7 @@
         endpoint: '/edit/' + encodeURIComponent(path),
         anonymizedEndpoint: '/edit/*',
       });
-    },
+    }
 
     saveChangeEdit(changeNum, path, contents) {
       return this._getChangeURLAndSend({
@@ -2128,7 +1817,26 @@
         contentType: 'text/plain',
         anonymizedEndpoint: '/edit/*',
       });
-    },
+    }
+
+    getRobotCommentFixPreview(changeNum, patchNum, fixId) {
+      return this._getChangeURLAndFetch({
+        changeNum,
+        patchNum,
+        endpoint: `/fixes/${encodeURIComponent(fixId)}/preview`,
+        reportEndpointAsId: true,
+      });
+    }
+
+    applyFixSuggestion(changeNum, patchNum, fixId) {
+      return this._getChangeURLAndSend({
+        method: 'POST',
+        changeNum,
+        patchNum,
+        endpoint: `/fixes/${encodeURIComponent(fixId)}/apply`,
+        reportEndpointAsId: true,
+      });
+    }
 
     // Deprecated, prefer to use putChangeCommitMessage instead.
     saveChangeCommitMessageEdit(changeNum, message) {
@@ -2139,7 +1847,7 @@
         body: {message},
         reportEndpointAsIs: true,
       });
-    },
+    }
 
     publishChangeEdit(changeNum) {
       return this._getChangeURLAndSend({
@@ -2148,7 +1856,7 @@
         endpoint: '/edit:publish',
         reportEndpointAsIs: true,
       });
-    },
+    }
 
     putChangeCommitMessage(changeNum, message) {
       return this._getChangeURLAndSend({
@@ -2158,7 +1866,7 @@
         body: {message},
         reportEndpointAsIs: true,
       });
-    },
+    }
 
     saveChangeStarred(changeNum, starred) {
       // Some servers may require the project name to be provided
@@ -2167,13 +1875,13 @@
       return this.getFromProjectLookup(changeNum).then(project => {
         const url = '/accounts/self/starred.changes/' +
             (project ? encodeURIComponent(project) + '~' : '') + changeNum;
-        return this._send({
+        return this._restApiHelper.send({
           method: starred ? 'PUT' : 'DELETE',
           url,
           anonymizedUrl: '/accounts/self/starred.changes/*',
         });
       });
-    },
+    }
 
     saveChangeReviewed(changeNum, reviewed) {
       return this._getChangeURLAndSend({
@@ -2181,63 +1889,10 @@
         method: 'PUT',
         endpoint: reviewed ? '/reviewed' : '/unreviewed',
       });
-    },
+    }
 
     /**
-     * Send an XHR.
-     *
-     * @param {Defs.SendRequest} req
-     * @return {Promise}
-     */
-    _send(req) {
-      const options = {method: req.method};
-      if (req.body) {
-        options.headers = new Headers();
-        options.headers.set(
-            'Content-Type', req.contentType || 'application/json');
-        options.body = typeof req.body === 'string' ?
-          req.body : JSON.stringify(req.body);
-      }
-      if (req.headers) {
-        if (!options.headers) { options.headers = new Headers(); }
-        for (const header in req.headers) {
-          if (!req.headers.hasOwnProperty(header)) { continue; }
-          options.headers.set(header, req.headers[header]);
-        }
-      }
-      const url = req.url.startsWith('http') ?
-        req.url : this.getBaseUrl() + req.url;
-      const fetchReq = {
-        url,
-        fetchOptions: options,
-        anonymizedUrl: req.reportUrlAsIs ? url : req.anonymizedUrl,
-      };
-      const xhr = this._fetch(fetchReq).then(response => {
-        if (!response.ok) {
-          if (req.errFn) {
-            return req.errFn.call(undefined, response);
-          }
-          this.fire('server-error', {request: fetchReq, response});
-        }
-        return response;
-      }).catch(err => {
-        this.fire('network-error', {error: err});
-        if (req.errFn) {
-          return req.errFn.call(undefined, null, err);
-        } else {
-          throw err;
-        }
-      });
-
-      if (req.parseResponse) {
-        return xhr.then(res => this.getResponseObject(res));
-      }
-
-      return xhr;
-    },
-
-    /**
-     * Public version of the _send method preserved for plugins.
+     * Public version of the _restApiHelper.send method preserved for plugins.
      *
      * @param {string} method
      * @param {string} url
@@ -2251,7 +1906,7 @@
      */
     send(method, url, opt_body, opt_errFn, opt_contentType,
         opt_headers) {
-      return this._send({
+      return this._restApiHelper.send({
         method,
         url,
         body: opt_body,
@@ -2259,7 +1914,7 @@
         contentType: opt_contentType,
         headers: opt_headers,
       });
-    },
+    }
 
     /**
      * @param {number|string} changeNum
@@ -2301,7 +1956,7 @@
       }
 
       return this._getChangeURLAndFetch(req);
-    },
+    }
 
     /**
      * @param {number|string} changeNum
@@ -2313,7 +1968,7 @@
     getDiffComments(changeNum, opt_basePatchNum, opt_patchNum, opt_path) {
       return this._getDiffComments(changeNum, '/comments', opt_basePatchNum,
           opt_patchNum, opt_path);
-    },
+    }
 
     /**
      * @param {number|string} changeNum
@@ -2325,7 +1980,7 @@
     getDiffRobotComments(changeNum, opt_basePatchNum, opt_patchNum, opt_path) {
       return this._getDiffComments(changeNum, '/robotcomments',
           opt_basePatchNum, opt_patchNum, opt_path);
-    },
+    }
 
     /**
      * If the user is logged in, fetch the user's draft diff comments. If there
@@ -2344,7 +1999,7 @@
         return this._getDiffComments(changeNum, '/drafts', opt_basePatchNum,
             opt_patchNum, opt_path);
       });
-    },
+    }
 
     _setRange(comments, comment) {
       if (comment.in_reply_to && !comment.range) {
@@ -2356,18 +2011,18 @@
         }
       }
       return comment;
-    },
+    }
 
     _setRanges(comments) {
       comments = comments || [];
-      comments.sort((a, b) => {
-        return util.parseDate(a.updated) - util.parseDate(b.updated);
-      });
+      comments.sort(
+          (a, b) => util.parseDate(a.updated) - util.parseDate(b.updated)
+      );
       for (const comment of comments) {
         this._setRange(comments, comment);
       }
       return comments;
-    },
+    }
 
     /**
      * @param {number|string} changeNum
@@ -2386,14 +2041,12 @@
        * @param {string|number=} opt_patchNum
        * @return {!Promise<!Object>} Diff comments response.
        */
-      const fetchComments = opt_patchNum => {
-        return this._getChangeURLAndFetch({
-          changeNum,
-          endpoint,
-          patchNum: opt_patchNum,
-          reportEndpointAsIs: true,
-        });
-      };
+      const fetchComments = opt_patchNum => this._getChangeURLAndFetch({
+        changeNum,
+        endpoint,
+        patchNum: opt_patchNum,
+        reportEndpointAsIs: true,
+      });
 
       if (!opt_basePatchNum && !opt_patchNum && !opt_path) {
         return fetchComments();
@@ -2434,13 +2087,11 @@
         promises.push(fetchPromise);
       }
 
-      return Promise.all(promises).then(() => {
-        return Promise.resolve({
-          baseComments,
-          comments,
-        });
-      });
-    },
+      return Promise.all(promises).then(() => Promise.resolve({
+        baseComments,
+        comments,
+      }));
+    }
 
     /**
      * @param {number|string} changeNum
@@ -2450,15 +2101,15 @@
     _getDiffCommentsFetchURL(changeNum, endpoint, opt_patchNum) {
       return this._changeBaseURL(changeNum, opt_patchNum)
           .then(url => url + endpoint);
-    },
+    }
 
     saveDiffDraft(changeNum, patchNum, draft) {
       return this._sendDiffDraftRequest('PUT', changeNum, patchNum, draft);
-    },
+    }
 
     deleteDiffDraft(changeNum, patchNum, draft) {
       return this._sendDiffDraftRequest('DELETE', changeNum, patchNum, draft);
-    },
+    }
 
     /**
      * @returns {boolean} Whether there are pending diff draft sends.
@@ -2466,7 +2117,7 @@
     hasPendingDiffDrafts() {
       const promises = this._pendingRequests[Requests.SEND_DIFF_DRAFT];
       return promises && promises.length;
-    },
+    }
 
     /**
      * @returns {!Promise<undefined>} A promise that resolves when all pending
@@ -2477,7 +2128,7 @@
           .then(() => {
             this._pendingRequests[Requests.SEND_DIFF_DRAFT] = [];
           });
-    },
+    }
 
     _sendDiffDraftRequest(method, changeNum, patchNum, draft) {
       const isCreate = !draft.id && method === 'PUT';
@@ -2513,27 +2164,29 @@
       }
 
       return promise;
-    },
+    }
 
     getCommitInfo(project, commit) {
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url: '/projects/' + encodeURIComponent(project) +
             '/commits/' + encodeURIComponent(commit),
         anonymizedUrl: '/projects/*/comments/*',
       });
-    },
+    }
 
     _fetchB64File(url) {
-      return this._fetch({url: this.getBaseUrl() + url})
+      return this._restApiHelper.fetch({url: this.getBaseUrl() + url})
           .then(response => {
-            if (!response.ok) { return Promise.reject(response.statusText); }
+            if (!response.ok) {
+              return Promise.reject(new Error(response.statusText));
+            }
             const type = response.headers.get('X-FYI-Content-Type');
             return response.text()
                 .then(text => {
                   return {body: text, type};
                 });
           });
-    },
+    }
 
     /**
      * @param {string} changeId
@@ -2548,7 +2201,7 @@
         url = `${url}/files/${encodeURIComponent(path)}/content${parent}`;
         return this._fetchB64File(url);
       });
-    },
+    }
 
     getImagesForDiff(changeNum, diff, patchRange) {
       let promiseA;
@@ -2590,7 +2243,7 @@
 
         return {baseImage, revisionImage};
       });
-    },
+    }
 
     /**
      * @param {number|string} changeNum
@@ -2611,7 +2264,7 @@
         }
         return url;
       });
-    },
+    }
 
     /**
      * @suppress {checkTypes}
@@ -2627,7 +2280,7 @@
         parseResponse: true,
         reportUrlAsIs: true,
       });
-    },
+    }
 
     /**
      * @suppress {checkTypes}
@@ -2643,15 +2296,15 @@
         parseResponse: true,
         reportUrlAsIs: true,
       });
-    },
+    }
 
     deleteAccountHttpPassword() {
-      return this._send({
+      return this._restApiHelper.send({
         method: 'DELETE',
         url: '/accounts/self/password.http',
         reportUrlAsIs: true,
       });
-    },
+    }
 
     /**
      * @suppress {checkTypes}
@@ -2659,21 +2312,21 @@
      * parameter.
      */
     generateAccountHttpPassword() {
-      return this._send({
+      return this._restApiHelper.send({
         method: 'PUT',
         url: '/accounts/self/password.http',
         body: {generate: true},
         parseResponse: true,
         reportUrlAsIs: true,
       });
-    },
+    }
 
     getAccountSSHKeys() {
       return this._fetchSharedCacheURL({
         url: '/accounts/self/sshkeys',
         reportUrlAsIs: true,
       });
-    },
+    }
 
     addAccountSSHKey(key) {
       const req = {
@@ -2683,33 +2336,33 @@
         contentType: 'text/plain',
         reportUrlAsIs: true,
       };
-      return this._send(req)
+      return this._restApiHelper.send(req)
           .then(response => {
             if (response.status < 200 && response.status >= 300) {
-              return Promise.reject();
+              return Promise.reject(new Error('error'));
             }
             return this.getResponseObject(response);
           })
           .then(obj => {
-            if (!obj.valid) { return Promise.reject(); }
+            if (!obj.valid) { return Promise.reject(new Error('error')); }
             return obj;
           });
-    },
+    }
 
     deleteAccountSSHKey(id) {
-      return this._send({
+      return this._restApiHelper.send({
         method: 'DELETE',
         url: '/accounts/self/sshkeys/' + id,
         anonymizedUrl: '/accounts/self/sshkeys/*',
       });
-    },
+    }
 
     getAccountGPGKeys() {
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url: '/accounts/self/gpgkeys',
         reportUrlAsIs: true,
       });
-    },
+    }
 
     addAccountGPGKey(key) {
       const req = {
@@ -2718,26 +2371,26 @@
         body: key,
         reportUrlAsIs: true,
       };
-      return this._send(req)
+      return this._restApiHelper.send(req)
           .then(response => {
             if (response.status < 200 && response.status >= 300) {
-              return Promise.reject();
+              return Promise.reject(new Error('error'));
             }
             return this.getResponseObject(response);
           })
           .then(obj => {
-            if (!obj) { return Promise.reject(); }
+            if (!obj) { return Promise.reject(new Error('error')); }
             return obj;
           });
-    },
+    }
 
     deleteAccountGPGKey(id) {
-      return this._send({
+      return this._restApiHelper.send({
         method: 'DELETE',
         url: '/accounts/self/gpgkeys/' + id,
         anonymizedUrl: '/accounts/self/gpgkeys/*',
       });
-    },
+    }
 
     deleteVote(changeNum, account, label) {
       return this._getChangeURLAndSend({
@@ -2746,7 +2399,7 @@
         endpoint: `/reviewers/${account}/votes/${encodeURIComponent(label)}`,
         anonymizedEndpoint: '/reviewers/*/votes/*',
       });
-    },
+    }
 
     setDescription(changeNum, patchNum, desc) {
       return this._getChangeURLAndSend({
@@ -2756,7 +2409,7 @@
         body: {description: desc},
         reportUrlAsIs: true,
       });
-    },
+    }
 
     confirmEmail(token) {
       const req = {
@@ -2765,29 +2418,29 @@
         body: {token},
         reportUrlAsIs: true,
       };
-      return this._send(req).then(response => {
+      return this._restApiHelper.send(req).then(response => {
         if (response.status === 204) {
           return 'Email confirmed successfully.';
         }
         return null;
       });
-    },
+    }
 
     getCapabilities(opt_errFn) {
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url: '/config/server/capabilities',
         errFn: opt_errFn,
         reportUrlAsIs: true,
       });
-    },
+    }
 
     getTopMenus(opt_errFn) {
-      return this._fetchJSON({
+      return this._fetchSharedCacheURL({
         url: '/config/server/top-menus',
         errFn: opt_errFn,
         reportUrlAsIs: true,
       });
-    },
+    }
 
     setAssignee(changeNum, assignee) {
       return this._getChangeURLAndSend({
@@ -2797,7 +2450,7 @@
         body: {assignee},
         reportUrlAsIs: true,
       });
-    },
+    }
 
     deleteAssignee(changeNum) {
       return this._getChangeURLAndSend({
@@ -2806,14 +2459,12 @@
         endpoint: '/assignee',
         reportUrlAsIs: true,
       });
-    },
+    }
 
     probePath(path) {
       return fetch(new Request(path, {method: 'HEAD'}))
-          .then(response => {
-            return response.ok;
-          });
-    },
+          .then(response => response.ok);
+    }
 
     /**
      * @param {number|string} changeNum
@@ -2836,7 +2487,7 @@
           return 'Change marked as Work In Progress.';
         }
       });
-    },
+    }
 
     /**
      * @param {number|string} changeNum
@@ -2852,7 +2503,7 @@
         errFn: opt_errFn,
         reportUrlAsIs: true,
       });
-    },
+    }
 
     /**
      * @suppress {checkTypes}
@@ -2869,7 +2520,7 @@
         parseResponse: true,
         anonymizedEndpoint: '/comments/*/delete',
       });
-    },
+    }
 
     /**
      * Given a changeNum, gets the change.
@@ -2880,7 +2531,7 @@
      */
     getChange(changeNum, opt_errFn) {
       // Cannot use _changeBaseURL, as this function is used by _projectLookup.
-      return this._fetchJSON({
+      return this._restApiHelper.fetchJSON({
         url: `/changes/?q=change:${changeNum}`,
         errFn: opt_errFn,
         anonymizedUrl: '/changes/?q=change:*',
@@ -2888,7 +2539,7 @@
         if (!res || !res.length) { return null; }
         return res[0];
       });
-    },
+    }
 
     /**
      * @param {string|number} changeNum
@@ -2901,7 +2552,7 @@
             'One of them must be invalid.');
       }
       this._projectLookup[changeNum] = project;
-    },
+    }
 
     /**
      * Checks in _projectLookup for the changeNum. If it exists, returns the
@@ -2925,13 +2576,13 @@
         this.setInProjectLookup(changeNum, change.project);
         return change.project;
       });
-    },
+    }
 
     /**
      * Alias for _changeBaseURL.then(send).
      *
      * @todo(beckysiegel) clean up comments
-     * @param {Defs.ChangeSendRequest} req
+     * @param {Gerrit.ChangeSendRequest} req
      * @return {!Promise<!Object>}
      */
     _getChangeURLAndSend(req) {
@@ -2940,25 +2591,24 @@
       const anonymizedEndpoint = req.reportEndpointAsIs ?
         req.endpoint : req.anonymizedEndpoint;
 
-      return this._changeBaseURL(req.changeNum, req.patchNum).then(url => {
-        return this._send({
-          method: req.method,
-          url: url + req.endpoint,
-          body: req.body,
-          errFn: req.errFn,
-          contentType: req.contentType,
-          headers: req.headers,
-          parseResponse: req.parseResponse,
-          anonymizedUrl: anonymizedEndpoint ?
-            (anonymizedBaseUrl + anonymizedEndpoint) : undefined,
-        });
-      });
-    },
+      return this._changeBaseURL(req.changeNum, req.patchNum)
+          .then(url => this._restApiHelper.send({
+            method: req.method,
+            url: url + req.endpoint,
+            body: req.body,
+            errFn: req.errFn,
+            contentType: req.contentType,
+            headers: req.headers,
+            parseResponse: req.parseResponse,
+            anonymizedUrl: anonymizedEndpoint ?
+              (anonymizedBaseUrl + anonymizedEndpoint) : undefined,
+          }));
+    }
 
     /**
      * Alias for _changeBaseURL.then(_fetchJSON).
      *
-     * @param {Defs.ChangeFetchRequest} req
+     * @param {Gerrit.ChangeFetchRequest} req
      * @return {!Promise<!Object>}
      */
     _getChangeURLAndFetch(req) {
@@ -2966,17 +2616,16 @@
         req.endpoint : req.anonymizedEndpoint;
       const anonymizedBaseUrl = req.patchNum ?
         ANONYMIZED_REVISION_BASE_URL : ANONYMIZED_CHANGE_BASE_URL;
-      return this._changeBaseURL(req.changeNum, req.patchNum).then(url => {
-        return this._fetchJSON({
-          url: url + req.endpoint,
-          errFn: req.errFn,
-          params: req.params,
-          fetchOptions: req.fetchOptions,
-          anonymizedUrl: anonymizedEndpoint ?
-            (anonymizedBaseUrl + anonymizedEndpoint) : undefined,
-        });
-      });
-    },
+      return this._changeBaseURL(req.changeNum, req.patchNum)
+          .then(url => this._restApiHelper.fetchJSON({
+            url: url + req.endpoint,
+            errFn: req.errFn,
+            params: req.params,
+            fetchOptions: req.fetchOptions,
+            anonymizedUrl: anonymizedEndpoint ?
+              (anonymizedBaseUrl + anonymizedEndpoint) : undefined,
+          }));
+    }
 
     /**
      * Execute a change action or revision action on a change.
@@ -2999,7 +2648,7 @@
         body: opt_payload,
         errFn: opt_errFn,
       });
-    },
+    }
 
     /**
      * Get blame information for the given diff.
@@ -3020,7 +2669,7 @@
         params: opt_base ? {base: 't'} : undefined,
         anonymizedEndpoint: '/files/*/blame',
       });
-    },
+    }
 
     /**
      * Modify the given create draft request promise so that it fails and throws
@@ -3050,7 +2699,7 @@
         }
         return result;
       });
-    },
+    }
 
     /**
      * Fetch a project dashboard definition.
@@ -3070,7 +2719,7 @@
         errFn: opt_errFn,
         anonymizedUrl: '/projects/*/dashboards/*',
       });
-    },
+    }
 
     /**
      * @param {string} filter
@@ -3086,7 +2735,7 @@
         url: `/Documentation/?q=${encodedFilter}`,
         anonymizedUrl: '/Documentation/?*',
       });
-    },
+    }
 
     getMergeable(changeNum) {
       return this._getChangeURLAndFetch({
@@ -3095,14 +2744,16 @@
         parseResponse: true,
         reportEndpointAsIs: true,
       });
-    },
+    }
 
     deleteDraftComments(query) {
-      return this._send({
+      return this._restApiHelper.send({
         method: 'POST',
         url: '/accounts/self/drafts:delete',
         body: {query},
       });
-    },
-  });
+    }
+  }
+
+  customElements.define(GrRestApiInterface.is, GrRestApiInterface);
 })();

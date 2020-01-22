@@ -18,9 +18,9 @@ import static com.google.common.truth.Truth.assertThat;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.gerrit.acceptance.AbstractDaemonTest;
-import com.google.gerrit.acceptance.GerritConfig;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.UseSsh;
+import com.google.gerrit.acceptance.config.GerritConfig;
 import com.google.gerrit.common.RawInputUtil;
 import com.google.gerrit.extensions.api.plugins.InstallPluginInput;
 import com.google.gerrit.extensions.client.AccountFieldName;
@@ -70,8 +70,6 @@ public class ServerInfoIT extends AbstractDaemonTest {
   // gerrit
   @GerritConfig(name = "gerrit.allProjects", value = "Root")
   @GerritConfig(name = "gerrit.allUsers", value = "Users")
-  @GerritConfig(name = "gerrit.enableGwtUi", value = "true")
-  @GerritConfig(name = "gerrit.reportBugText", value = "REPORT BUG")
   @GerritConfig(name = "gerrit.reportBugUrl", value = "https://example.com/report")
 
   // suggest
@@ -113,7 +111,6 @@ public class ServerInfoIT extends AbstractDaemonTest {
     assertThat(i.gerrit.allProjects).isEqualTo("Root");
     assertThat(i.gerrit.allUsers).isEqualTo("Users");
     assertThat(i.gerrit.reportBugUrl).isEqualTo("https://example.com/report");
-    assertThat(i.gerrit.reportBugText).isEqualTo("REPORT BUG");
 
     // plugin
     assertThat(i.plugin.jsResourcePaths).isEmpty();
@@ -128,10 +125,7 @@ public class ServerInfoIT extends AbstractDaemonTest {
     assertThat(i.user.anonymousCowardName).isEqualTo("Unnamed User");
 
     // notedb
-    notesMigration.setReadChanges(true);
     assertThat(gApi.config().server().getInfo().noteDbEnabled).isTrue();
-    notesMigration.setReadChanges(false);
-    assertThat(gApi.config().server().getInfo().noteDbEnabled).isNull();
   }
 
   @Test
@@ -174,6 +168,8 @@ public class ServerInfoIT extends AbstractDaemonTest {
     assertThat(i.change.replyLabel).isEqualTo("Reply\u2026");
     assertThat(i.change.updateDelay).isEqualTo(300);
     assertThat(i.change.disablePrivateChanges).isNull();
+    assertThat(i.change.submitWholeTopic).isNull();
+    assertThat(i.change.excludeMergeableInChangeInfo).isNull();
 
     // download
     assertThat(i.download.archives).containsExactly("tar", "tbz2", "tgz", "txz");
@@ -183,7 +179,9 @@ public class ServerInfoIT extends AbstractDaemonTest {
     assertThat(i.gerrit.allProjects).isEqualTo(AllProjectsNameProvider.DEFAULT);
     assertThat(i.gerrit.allUsers).isEqualTo(AllUsersNameProvider.DEFAULT);
     assertThat(i.gerrit.reportBugUrl).isNull();
-    assertThat(i.gerrit.reportBugText).isNull();
+
+    // index
+    assertThat(i.index.change.indexMergeable).isNull(); // false in all tests
 
     // plugin
     assertThat(i.plugin.jsResourcePaths).isEmpty();
@@ -199,11 +197,23 @@ public class ServerInfoIT extends AbstractDaemonTest {
   }
 
   @Test
-  @GerritConfig(name = "auth.contributorAgreements", value = "true")
-  public void anonymousAccess() throws Exception {
-    configureContributorAgreement(true);
+  @GerritConfig(name = "change.submitWholeTopic", value = "true")
+  public void serverConfigWithSubmitWholeTopic() throws Exception {
+    ServerInfo i = gApi.config().server().getInfo();
+    assertThat(i.change.submitWholeTopic).isTrue();
+  }
 
-    setApiUserAnonymous();
-    gApi.config().server().getInfo();
+  @Test
+  @GerritConfig(name = "change.api.excludeMergeableInChangeInfo", value = "true")
+  public void serverConfigWithExcludeMergeableInChangeInfo() throws Exception {
+    ServerInfo i = gApi.config().server().getInfo();
+    assertThat(i.change.excludeMergeableInChangeInfo).isTrue();
+  }
+
+  @Test
+  @GerritConfig(name = "index.change.indexMergeable", value = "true")
+  public void indexMergeableIsTrueWhenTrueInConfig() throws Exception {
+    ServerInfo i = gApi.config().server().getInfo();
+    assertThat(i.index.change.indexMergeable).isTrue();
   }
 }

@@ -14,11 +14,12 @@
 
 package com.google.gerrit.server.project;
 
-import com.google.common.collect.Iterables;
-import com.google.common.collect.Maps;
 import com.google.common.flogger.FluentLogger;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.change.IncludedInResolver;
+import com.google.gerrit.server.logging.Metadata;
+import com.google.gerrit.server.logging.TraceContext;
+import com.google.gerrit.server.logging.TraceContext.TraceTimer;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackend.RefFilterOptions;
 import com.google.gerrit.server.permissions.PermissionBackendException;
@@ -26,10 +27,8 @@ import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import java.util.Collection;
-import java.util.Map;
-import org.eclipse.jgit.lib.Constants;
+import java.util.List;
 import org.eclipse.jgit.lib.Ref;
-import org.eclipse.jgit.lib.RefDatabase;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
@@ -49,35 +48,29 @@ public class Reachable {
     this.permissionBackend = permissionBackend;
   }
 
-  /** @return true if a commit is reachable from a given set of refs. */
+  /**
+   * @return true if a commit is reachable from a given set of refs. This method enforces
+   *     permissions on the given set of refs and performs a reachability check. Tags are not
+   *     filtered separately and will only be returned if reachable by a provided ref.
+   */
   public boolean fromRefs(
-      Project.NameKey project, Repository repo, RevCommit commit, Map<String, Ref> refs) {
+      Project.NameKey project, Repository repo, RevCommit commit, List<Ref> refs) {
     try (RevWalk rw = new RevWalk(repo)) {
-      Map<String, Ref> filtered =
+      Collection<Ref> filtered =
           permissionBackend
               .currentUser()
               .project(project)
-              .filter(refs, repo, RefFilterOptions.builder().setFilterTagsSeparately(true).build());
-      return IncludedInResolver.includedInAny(repo, rw, commit, filtered.values());
-    } catch (IOException | PermissionBackendException e) {
-      logger.atSevere().withCause(e).log(
-          "Cannot verify permissions to commit object %s in repository %s", commit.name(), project);
-      return false;
-    }
-  }
+              .filter(refs, repo, RefFilterOptions.defaults());
 
-  /** @return true if a commit is reachable from a repo's branches and tags. */
-  boolean fromHeadsOrTags(Project.NameKey project, Repository repo, RevCommit commit) {
-    try {
-      RefDatabase refdb = repo.getRefDatabase();
-      Collection<Ref> heads = refdb.getRefsByPrefix(Constants.R_HEADS);
-      Collection<Ref> tags = refdb.getRefsByPrefix(Constants.R_TAGS);
-      Map<String, Ref> refs = Maps.newHashMapWithExpectedSize(heads.size() + tags.size());
-      for (Ref r : Iterables.concat(heads, tags)) {
-        refs.put(r.getName(), r);
+      // The filtering above already produces a voluminous trace. To separate the permission check
+      // from the reachability check, do the trace here:
+      try (TraceTimer timer =
+          TraceContext.newTimer(
+              "IncludedInResolver.includedInAny",
+              Metadata.builder().projectName(project.get()).resourceCount(refs.size()).build())) {
+        return IncludedInResolver.includedInAny(repo, rw, commit, filtered);
       }
-      return fromRefs(project, repo, commit, refs);
-    } catch (IOException e) {
+    } catch (IOException | PermissionBackendException e) {
       logger.atSevere().withCause(e).log(
           "Cannot verify permissions to commit object %s in repository %s", commit.name(), project);
       return false;

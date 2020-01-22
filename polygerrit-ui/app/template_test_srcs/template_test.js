@@ -1,45 +1,6 @@
 const fs = require('fs');
 const twinkie = require('fried-twinkie');
 
-/**
- * For the purposes of template type checking, externs should be added for
- * anything set on the window object. Note that sub-properties of these
- * declared properties are considered something separate.
- *
- * @todo (beckysiegel) Gerrit's class definitions should be recognized in
- *    closure types.
- */
-const EXTERN_NAMES = [
-  'Gerrit',
-  'GrAnnotation',
-  'GrAttributeHelper',
-  'GrChangeActionsInterface',
-  'GrChangeReplyInterface',
-  'GrDiffBuilder',
-  'GrDiffBuilderImage',
-  'GrDiffBuilderSideBySide',
-  'GrDiffBuilderUnified',
-  'GrDiffGroup',
-  'GrDiffLine',
-  'GrDomHooks',
-  'GrEditConstants',
-  'GrEtagDecorator',
-  'GrFileListConstants',
-  'GrGapiAuth',
-  'GrGerritAuth',
-  'GrLinkTextParser',
-  'GrPluginEndpoints',
-  'GrPopupInterface',
-  'GrRangeNormalizer',
-  'GrReporting',
-  'GrReviewerUpdatesParser',
-  'GrCountStringFormatter',
-  'GrThemeApi',
-  'moment',
-  'page',
-  'util',
-];
-
 fs.readdir('./polygerrit-ui/temp/behaviors/', (err, data) => {
   if (err) {
     console.log('error /polygerrit-ui/temp/behaviors/ directory');
@@ -87,30 +48,40 @@ fs.readdir('./polygerrit-ui/temp/behaviors/', (err, data) => {
     mappings = mappingSpecificFile;
   }
 
-  additionalSources.push({
-    path: 'custom-externs.js',
-    src: '/** @externs */' +
-        EXTERN_NAMES.map( name => { return `var ${name};`; }).join(' '),
-  });
-
-  const toCheck = [];
-  for (key of Object.keys(mappings)) {
-    if (mappings[key].html && mappings[key].js) {
-      toCheck.push({
-        htmlSrcPath: mappings[key].html,
-        jsSrcPath: mappings[key].js,
-        jsModule: 'polygerrit.' + mappings[key].package,
+  /**
+   * Types in Gerrit.
+   * All types should be under `./polygerrit-ui/app/types` folder and end with `js`.
+   */
+  fs.readdir('./polygerrit-ui/app/types/', (err, typeFiles) => {
+    for (const typeFile of typeFiles) {
+      if (!typeFile.endsWith('.js')) continue;
+      additionalSources.push({
+        path: `./polygerrit-ui/app/types/${typeFile}`,
+        src: fs.readFileSync(
+            `./polygerrit-ui/app/types/${typeFile}`, 'utf-8'),
       });
     }
-  }
 
-  twinkie.checkTemplate(toCheck, additionalSources)
-      .then(() => {}, joinedErrors => {
-        if (joinedErrors) {
+    const toCheck = [];
+    for (key of Object.keys(mappings)) {
+      if (mappings[key].html && mappings[key].js) {
+        toCheck.push({
+          htmlSrcPath: mappings[key].html,
+          jsSrcPath: mappings[key].js,
+          jsModule: 'polygerrit.' + mappings[key].package,
+        });
+      }
+    }
+
+    twinkie.checkTemplate(toCheck, additionalSources)
+        .then(() => {}, joinedErrors => {
+          if (joinedErrors) {
+            process.exit(1);
+          }
+        })
+        .catch(e => {
+          console.error(e);
           process.exit(1);
-        }
-      }).catch(e => {
-        console.error(e);
-        process.exit(1);
-      });
+        });
+  });
 });

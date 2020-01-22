@@ -16,7 +16,7 @@ package com.google.gerrit.server.args4j;
 
 import static com.google.gerrit.util.cli.Localizable.localizable;
 
-import com.google.gerrit.reviewdb.client.AccountGroup;
+import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.server.account.GroupCache;
 import com.google.gerrit.server.group.InternalGroup;
 import com.google.inject.Inject;
@@ -45,7 +45,7 @@ public class AccountGroupIdHandler extends OptionHandler<AccountGroup.Id> {
   @Override
   public final int parseArguments(Parameters params) throws CmdLineException {
     final String n = params.getParameter(0);
-    Optional<InternalGroup> group = groupCache.get(new AccountGroup.NameKey(n));
+    Optional<InternalGroup> group = groupCache.get(AccountGroup.nameKey(n));
     if (!group.isPresent()) {
       throw new CmdLineException(owner, localizable("Group \"%s\" does not exist"), n);
     }

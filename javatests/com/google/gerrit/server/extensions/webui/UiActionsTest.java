@@ -15,12 +15,17 @@
 package com.google.gerrit.server.extensions.webui;
 
 import static com.google.common.truth.Truth.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.only;
+import static org.mockito.Mockito.verify;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Sets;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.extensions.api.access.CoreOrPluginProjectPermission;
 import com.google.gerrit.extensions.conditions.BooleanCondition;
 import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.account.GroupMembership;
 import com.google.gerrit.server.permissions.PermissionBackend;
@@ -31,9 +36,7 @@ import com.google.gerrit.server.permissions.PermissionBackendCondition;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.permissions.ProjectPermission;
 import java.util.Collection;
-import java.util.Map;
 import java.util.Set;
-import org.easymock.EasyMock;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.junit.Test;
@@ -54,24 +57,34 @@ public class UiActionsTest {
     }
 
     @Override
-    public void check(ProjectPermission perm) throws AuthException, PermissionBackendException {
+    public void check(CoreOrPluginProjectPermission perm)
+        throws AuthException, PermissionBackendException {
       throw new UnsupportedOperationException("not implemented");
     }
 
     @Override
-    public Set<ProjectPermission> test(Collection<ProjectPermission> permSet)
+    public <T extends CoreOrPluginProjectPermission> Set<T> test(Collection<T> permSet)
         throws PermissionBackendException {
       assertThat(allowValueQueries).isTrue();
-      return ImmutableSet.of(ProjectPermission.READ);
+      Set<T> ok = Sets.newHashSetWithExpectedSize(permSet.size());
+      for (T perm : permSet) {
+        // Allow ProjectPermission.READ, if it was requested in the input permSet. This implies
+        // that permSet has type Collection<ProjectPermission>, otherwise no permission would
+        // compare equal to READ.
+        if (perm.equals(ProjectPermission.READ)) {
+          ok.add(perm);
+        }
+      }
+      return ok;
     }
 
     @Override
-    public BooleanCondition testCond(ProjectPermission perm) {
+    public BooleanCondition testCond(CoreOrPluginProjectPermission perm) {
       return new PermissionBackendCondition.ForProject(this, perm, fakeUser());
     }
 
     @Override
-    public Map<String, Ref> filter(Map<String, Ref> refs, Repository repo, RefFilterOptions opts)
+    public Collection<Ref> filter(Collection<Ref> refs, Repository repo, RefFilterOptions opts)
         throws PermissionBackendException {
       throw new UnsupportedOperationException("not implemented");
     }
@@ -99,7 +112,7 @@ public class UiActionsTest {
 
         @Override
         public Account.Id getAccountId() {
-          return new Account.Id(1);
+          return Account.id(1);
         }
       };
     }
@@ -119,9 +132,7 @@ public class UiActionsTest {
 
     // Set up the Mock to expect a call of bulkEvaluateTest to only contain cond{1,2} since cond3
     // needs to be identified as duplicate and not called out explicitly.
-    PermissionBackend permissionBackendMock = EasyMock.createMock(PermissionBackend.class);
-    permissionBackendMock.bulkEvaluateTest(ImmutableSet.of(cond1, cond2));
-    EasyMock.replay(permissionBackendMock);
+    PermissionBackend permissionBackendMock = mock(PermissionBackend.class);
 
     UiActions.evaluatePermissionBackendConditions(
         permissionBackendMock, ImmutableList.of(cond1, cond2, cond3));
@@ -129,6 +140,8 @@ public class UiActionsTest {
     // Disallow queries for value to ensure that cond3 (previously left behind) is backfilled with
     // the value of cond1 and issues no additional call to PermissionBackend.
     forProject.disallowValueQueries();
+
+    verify(permissionBackendMock, only()).bulkEvaluateTest(ImmutableSet.of(cond1, cond2));
 
     // Assert the values of all conditions
     assertThat(cond1.value()).isFalse();

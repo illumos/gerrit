@@ -24,13 +24,21 @@ import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.AccountResource;
 import com.google.gerrit.server.account.SetInactiveFlag;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 
+/**
+ * REST endpoint to mark an account as inactive.
+ *
+ * <p>This REST endpoint handles {@code DELETE /accounts/<account-identifier>/active} requests.
+ *
+ * <p>Inactive accounts cannot login into Gerrit.
+ *
+ * <p>Marking an account as active is handled by {@link PutActive}.
+ */
 @RequiresCapability(GlobalCapability.MODIFY_ACCOUNT)
 @Singleton
 public class DeleteActive implements RestModifyView<AccountResource, Input> {
@@ -46,7 +54,7 @@ public class DeleteActive implements RestModifyView<AccountResource, Input> {
 
   @Override
   public Response<?> apply(AccountResource rsrc, Input input)
-      throws RestApiException, OrmException, IOException, ConfigInvalidException {
+      throws RestApiException, IOException, ConfigInvalidException {
     if (self.get().hasSameAccountId(rsrc.getUser())) {
       throw new ResourceConflictException("cannot deactivate own account");
     }

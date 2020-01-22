@@ -15,10 +15,10 @@
 package com.google.gerrit.server.query.change;
 
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.common.ProjectInfo;
 import com.google.gerrit.index.query.OrPredicate;
 import com.google.gerrit.index.query.Predicate;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.ChildProjects;
 import com.google.gerrit.server.project.ProjectCache;
@@ -40,7 +40,7 @@ public class ParentProjectPredicate extends OrPredicate<ChangeData> {
 
   protected static List<Predicate<ChangeData>> predicates(
       ProjectCache projectCache, ChildProjects childProjects, String value) {
-    ProjectState projectState = projectCache.get(new Project.NameKey(value));
+    ProjectState projectState = projectCache.get(Project.nameKey(value));
     if (projectState == null) {
       return Collections.emptyList();
     }

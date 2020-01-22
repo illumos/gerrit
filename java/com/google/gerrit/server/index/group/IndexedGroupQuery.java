@@ -14,18 +14,22 @@
 
 package com.google.gerrit.server.index.group;
 
+import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.index.Index;
 import com.google.gerrit.index.IndexConfig;
-import com.google.gerrit.index.IndexedQuery;
 import com.google.gerrit.index.QueryOptions;
 import com.google.gerrit.index.query.DataSource;
+import com.google.gerrit.index.query.IndexedQuery;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryParseException;
-import com.google.gerrit.reviewdb.client.AccountGroup;
 import com.google.gerrit.server.group.InternalGroup;
 import java.util.HashSet;
 import java.util.Set;
 
+/**
+ * Wrapper around {@link Predicate}s that are returned by the {@link
+ * com.google.gerrit.index.IndexRewriter}. See {@link IndexedQuery}.
+ */
 public class IndexedGroupQuery extends IndexedQuery<AccountGroup.UUID, InternalGroup>
     implements DataSource<InternalGroup> {
 

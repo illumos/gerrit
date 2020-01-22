@@ -20,16 +20,16 @@ import com.google.common.cache.Cache;
 import com.google.common.collect.Table;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.proto.Protos;
 import com.google.gerrit.server.ReviewerByEmailSet;
 import com.google.gerrit.server.ReviewerSet;
 import com.google.gerrit.server.cache.CacheModule;
 import com.google.gerrit.server.cache.proto.Cache.ChangeNotesKeyProto;
 import com.google.gerrit.server.cache.serialize.CacheSerializer;
-import com.google.gerrit.server.cache.serialize.ProtoCacheSerializers;
-import com.google.gerrit.server.cache.serialize.ProtoCacheSerializers.ObjectIdConverter;
+import com.google.gerrit.server.cache.serialize.ObjectIdConverter;
 import com.google.gerrit.server.notedb.AbstractChangeNotes.Args;
 import com.google.gerrit.server.notedb.ChangeNotesCommit.ChangeNotesRevWalk;
 import com.google.inject.Inject;
@@ -42,6 +42,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
+import java.util.function.Supplier;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.ObjectId;
 
@@ -60,7 +61,7 @@ public class ChangeNotesCache {
             .weigher(Weigher.class)
             .maximumWeight(10 << 20)
             .diskLimit(-1)
-            .version(1)
+            .version(2)
             .keySerializer(Key.Serializer.INSTANCE)
             .valueSerializer(ChangeNotesState.Serializer.INSTANCE);
       }
@@ -85,7 +86,7 @@ public class ChangeNotesCache {
 
       @Override
       public byte[] serialize(Key object) {
-        return ProtoCacheSerializers.toByteArray(
+        return Protos.toByteArray(
             ChangeNotesKeyProto.newBuilder()
                 .setProject(object.project().get())
                 .setChangeId(object.changeId().get())
@@ -95,11 +96,10 @@ public class ChangeNotesCache {
 
       @Override
       public Key deserialize(byte[] in) {
-        ChangeNotesKeyProto proto =
-            ProtoCacheSerializers.parseUnchecked(ChangeNotesKeyProto.parser(), in);
+        ChangeNotesKeyProto proto = Protos.parseUnchecked(ChangeNotesKeyProto.parser(), in);
         return Key.create(
-            new Project.NameKey(proto.getProject()),
-            new Change.Id(proto.getChangeId()),
+            Project.nameKey(proto.getProject()),
+            Change.id(proto.getChangeId()),
             ObjectIdConverter.create().fromByteString(proto.getId()));
       }
     }
@@ -112,8 +112,11 @@ public class ChangeNotesCache {
     // Single pointer overhead.
     private static final int P = 8;
 
+    // Single int overhead.
+    private static final int I = 4;
+
     // Single IntKey overhead.
-    private static final int K = O + 4;
+    private static final int K = O + I;
 
     // Single Timestamp overhead.
     private static final int T = O + 8;
@@ -145,10 +148,7 @@ public class ChangeNotesCache {
           + str(state.columns().originalSubject())
           + P
           + str(state.columns().submissionId())
-          + ptr(state.columns().assignee(), K) // assignee
           + P // status
-          + P
-          + set(state.pastAssignees(), K)
           + P
           + set(state.hashtags(), str(10))
           + P
@@ -166,19 +166,17 @@ public class ChangeNotesCache {
           + P
           + list(state.reviewerUpdates(), 4 * O + K + K + P)
           + P
+          + list(state.assigneeUpdates(), 4 * O + K + K)
+          + P
           + list(state.submitRecords(), P + list(2, str(4) + P + K) + P)
           + P
           + list(state.changeMessages(), changeMessage())
           + P
           + map(state.publishedComments().asMap(), comment())
-          + T // readOnlyUntil
           + 1 // isPrivate
           + 1 // workInProgress
-          + 1; // reviewStarted
-    }
-
-    private static int ptr(Object o, int size) {
-      return o != null ? P + size : P;
+          + 1 // reviewStarted
+          + I; // updateCount
     }
 
     private static int str(String s) {
@@ -337,13 +335,13 @@ public class ChangeNotesCache {
 
   private class Loader implements Callable<ChangeNotesState> {
     private final Key key;
-    private final ChangeNotesRevWalk rw;
+    private final Supplier<ChangeNotesRevWalk> walkSupplier;
 
     private RevisionNoteMap<ChangeRevisionNote> revisionNoteMap;
 
-    private Loader(Key key, ChangeNotesRevWalk rw) {
+    private Loader(Key key, Supplier<ChangeNotesRevWalk> walkSupplier) {
       this.key = key;
-      this.rw = rw;
+      this.walkSupplier = walkSupplier;
     }
 
     @Override
@@ -352,12 +350,7 @@ public class ChangeNotesCache {
           "Load change notes for change %s of project %s", key.changeId(), key.project());
       ChangeNotesParser parser =
           new ChangeNotesParser(
-              key.changeId(),
-              key.id(),
-              rw,
-              args.changeNoteJson,
-              args.legacyChangeNoteRead,
-              args.metrics);
+              key.changeId(), key.id(), walkSupplier.get(), args.changeNoteJson, args.metrics);
       ChangeNotesState result = parser.parseAll();
       // This assignment only happens if call() was actually called, which only
       // happens when Cache#get(K, Callable<V>) incurs a cache miss.
@@ -375,11 +368,15 @@ public class ChangeNotesCache {
     this.args = args;
   }
 
-  Value get(Project.NameKey project, Change.Id changeId, ObjectId metaId, ChangeNotesRevWalk rw)
+  Value get(
+      Project.NameKey project,
+      Change.Id changeId,
+      ObjectId metaId,
+      Supplier<ChangeNotesRevWalk> walkSupplier)
       throws IOException {
     try {
       Key key = Key.create(project, changeId, metaId);
-      Loader loader = new Loader(key, rw);
+      Loader loader = new Loader(key, walkSupplier);
       ChangeNotesState s = cache.get(key, loader);
       return new AutoValue_ChangeNotesCache_Value(s, loader.revisionNoteMap);
     } catch (ExecutionException e) {

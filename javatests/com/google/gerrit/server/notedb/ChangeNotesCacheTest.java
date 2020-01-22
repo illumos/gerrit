@@ -16,12 +16,12 @@ package com.google.gerrit.server.notedb;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.extensions.proto.ProtoTruth.assertThat;
+import static com.google.gerrit.proto.testing.SerializedClassSubject.assertThatSerializedClass;
 import static com.google.gerrit.server.cache.testing.CacheSerializerTestUtil.byteString;
-import static com.google.gerrit.server.cache.testing.SerializedClassSubject.assertThatSerializedClass;
 
 import com.google.common.collect.ImmutableMap;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.cache.proto.Cache.ChangeNotesKeyProto;
 import org.eclipse.jgit.lib.ObjectId;
 import org.junit.Test;
@@ -31,8 +31,8 @@ public final class ChangeNotesCacheTest {
   public void keySerializer() throws Exception {
     ChangeNotesCache.Key key =
         ChangeNotesCache.Key.create(
-            new Project.NameKey("project"),
-            new Change.Id(1234),
+            Project.nameKey("project"),
+            Change.id(1234),
             ObjectId.fromString("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"));
     byte[] serialized = ChangeNotesCache.Key.Serializer.INSTANCE.serialize(key);
     assertThat(ChangeNotesKeyProto.parseFrom(serialized))

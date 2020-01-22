@@ -18,25 +18,27 @@ import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.google.gerrit.common.data.GroupDescription;
-import com.google.gerrit.common.errors.NoSuchGroupException;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.exceptions.NoSuchGroupException;
 import com.google.gerrit.extensions.client.AuthType;
 import com.google.gerrit.extensions.common.AccountInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.DefaultInput;
 import com.google.gerrit.extensions.restapi.IdString;
-import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
+import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestCollectionCreateView;
 import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
 import com.google.gerrit.server.UserInitiated;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountException;
 import com.google.gerrit.server.account.AccountLoader;
 import com.google.gerrit.server.account.AccountManager;
 import com.google.gerrit.server.account.AccountResolver;
+import com.google.gerrit.server.account.AccountResolver.UnresolvableAccountException;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.account.AuthRequest;
 import com.google.gerrit.server.account.GroupControl;
@@ -48,7 +50,6 @@ import com.google.gerrit.server.group.db.GroupsUpdate;
 import com.google.gerrit.server.group.db.InternalGroupUpdate;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.restapi.group.AddMembers.Input;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -111,10 +112,9 @@ public class AddMembers implements RestModifyView<GroupResource, Input> {
   }
 
   @Override
-  public List<AccountInfo> apply(GroupResource resource, Input input)
-      throws AuthException, NotInternalGroupException, UnprocessableEntityException, OrmException,
-          IOException, ConfigInvalidException, ResourceNotFoundException,
-          PermissionBackendException {
+  public Response<List<AccountInfo>> apply(GroupResource resource, Input input)
+      throws AuthException, NotInternalGroupException, UnprocessableEntityException, IOException,
+          ConfigInvalidException, ResourceNotFoundException, PermissionBackendException {
     GroupDescription.Internal internalGroup =
         resource.asInternalGroup().orElseThrow(NotInternalGroupException::new);
     input = Input.init(input);
@@ -131,7 +131,7 @@ public class AddMembers implements RestModifyView<GroupResource, Input> {
         throw new UnprocessableEntityException(
             String.format("Account Inactive: %s", nameOrEmailOrId));
       }
-      newMemberIds.add(a.getId());
+      newMemberIds.add(a.id());
     }
 
     AccountGroup.UUID groupUuid = internalGroup.getGroupUUID();
@@ -140,23 +140,22 @@ public class AddMembers implements RestModifyView<GroupResource, Input> {
     } catch (NoSuchGroupException e) {
       throw new ResourceNotFoundException(String.format("Group %s not found", groupUuid));
     }
-    return toAccountInfoList(newMemberIds);
+    return Response.ok(toAccountInfoList(newMemberIds));
   }
 
   Account findAccount(String nameOrEmailOrId)
-      throws AuthException, UnprocessableEntityException, OrmException, IOException,
-          ConfigInvalidException {
+      throws UnprocessableEntityException, IOException, ConfigInvalidException {
+    AccountResolver.Result result = accountResolver.resolve(nameOrEmailOrId);
     try {
-      return accountResolver.parse(nameOrEmailOrId).getAccount();
-    } catch (UnprocessableEntityException e) {
-      // might be because the account does not exist or because the account is
-      // not visible
+      return result.asUnique().account();
+    } catch (UnresolvableAccountException e) {
       switch (authType) {
         case HTTP_LDAP:
         case CLIENT_SSL_CERT_LDAP:
         case LDAP:
-          if (accountResolver.find(nameOrEmailOrId) == null) {
-            // account does not exist, try to create it
+          if (!e.isSelf() && result.asList().isEmpty()) {
+            // Account does not exist, try to create it. This may leak account existence, since we
+            // can't distinguish between a nonexistent account and one that the caller can't see.
             Optional<Account> a = createAccountByLdap(nameOrEmailOrId);
             if (a.isPresent()) {
               return a.get();
@@ -177,7 +176,7 @@ public class AddMembers implements RestModifyView<GroupResource, Input> {
   }
 
   public void addMembers(AccountGroup.UUID groupUuid, Set<Account.Id> newMemberIds)
-      throws OrmException, IOException, NoSuchGroupException, ConfigInvalidException {
+      throws IOException, NoSuchGroupException, ConfigInvalidException {
     InternalGroupUpdate groupUpdate =
         InternalGroupUpdate.builder()
             .setMemberModification(memberIds -> Sets.union(memberIds, newMemberIds))
@@ -195,7 +194,7 @@ public class AddMembers implements RestModifyView<GroupResource, Input> {
       req.setSkipAuthentication(true);
       return accountCache
           .get(accountManager.authenticate(req).getAccountId())
-          .map(AccountState::getAccount);
+          .map(AccountState::account);
     } catch (AccountException e) {
       return Optional.empty();
     }
@@ -223,15 +222,15 @@ public class AddMembers implements RestModifyView<GroupResource, Input> {
     }
 
     @Override
-    public AccountInfo apply(GroupResource resource, IdString id, Input input)
-        throws AuthException, MethodNotAllowedException, ResourceNotFoundException, OrmException,
-            IOException, ConfigInvalidException, PermissionBackendException {
+    public Response<AccountInfo> apply(GroupResource resource, IdString id, Input input)
+        throws RestApiException, NotInternalGroupException, IOException, ConfigInvalidException,
+            PermissionBackendException {
       AddMembers.Input in = new AddMembers.Input();
       in._oneMember = id.get();
       try {
-        List<AccountInfo> list = put.apply(resource, in);
+        List<AccountInfo> list = put.apply(resource, in).value();
         if (list.size() == 1) {
-          return list.get(0);
+          return Response.created(list.get(0));
         }
         throw new IllegalStateException();
       } catch (UnprocessableEntityException e) {
@@ -250,8 +249,8 @@ public class AddMembers implements RestModifyView<GroupResource, Input> {
     }
 
     @Override
-    public AccountInfo apply(MemberResource resource, Input input)
-        throws OrmException, PermissionBackendException {
+    public Response<AccountInfo> apply(MemberResource resource, Input input)
+        throws PermissionBackendException {
       // Do nothing, the user is already a member.
       return get.apply(resource);
     }

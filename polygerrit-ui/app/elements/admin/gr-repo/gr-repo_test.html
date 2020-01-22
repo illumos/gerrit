@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-repo</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-repo.html">
 
@@ -100,10 +102,12 @@ limitations under the License.
     const SCHEMES = {http: {}, repo: {}, ssh: {}};
 
     function getFormFields() {
-      const selects = Polymer.dom(element.root).querySelectorAll('select');
-      const textareas =
-          Polymer.dom(element.root).querySelectorAll('iron-autogrow-textarea');
-      const inputs = Polymer.dom(element.root).querySelectorAll('input');
+      const selects = Array.from(
+          Polymer.dom(element.root).querySelectorAll('select'));
+      const textareas = Array.from(
+          Polymer.dom(element.root).querySelectorAll('iron-autogrow-textarea'));
+      const inputs = Array.from(
+          Polymer.dom(element.root).querySelectorAll('input'));
       return inputs.concat(textareas).concat(selects);
     }
 
@@ -116,13 +120,37 @@ limitations under the License.
         },
       });
       element = fixture('basic');
-      repoStub = sandbox.stub(element.$.restAPI, 'getProjectConfig', () => {
-        return Promise.resolve(repoConf);
-      });
+      repoStub = sandbox.stub(
+          element.$.restAPI,
+          'getProjectConfig',
+          () => Promise.resolve(repoConf));
     });
 
     teardown(() => {
       sandbox.restore();
+    });
+
+    test('_computePluginData', () => {
+      assert.deepEqual(element._computePluginData(), []);
+      assert.deepEqual(element._computePluginData({}), []);
+      assert.deepEqual(element._computePluginData({base: {}}), []);
+      assert.deepEqual(element._computePluginData({base: {plugin: 'data'}}),
+          [{name: 'plugin', config: 'data'}]);
+    });
+
+    test('_handlePluginConfigChanged', () => {
+      const notifyStub = sandbox.stub(element, 'notifyPath');
+      element._repoConfig = {plugin_config: {}};
+      element._handlePluginConfigChanged({detail: {
+        name: 'test',
+        config: 'data',
+        notifyPath: 'path',
+      }});
+      flushAsynchronousOperations();
+
+      assert.equal(element._repoConfig.plugin_config.test, 'data');
+      assert.equal(notifyStub.lastCall.args[0],
+          '_repoConfig.plugin_config.path');
     });
 
     test('loading displays before repo config is loaded', () => {
@@ -136,14 +164,12 @@ limitations under the License.
     test('download commands visibility', () => {
       element._loading = false;
       flushAsynchronousOperations();
-      assert.isTrue(element.$.downloadContent.classList
-          .contains('hideDownload'));
+      assert.isTrue(element.$.downloadContent.classList.contains('hide'));
       assert.isTrue(getComputedStyle(element.$.downloadContent)
           .display == 'none');
       element._schemesObj = SCHEMES;
       flushAsynchronousOperations();
-      assert.isFalse(element.$.downloadContent.classList
-          .contains('hideDownload'));
+      assert.isFalse(element.$.downloadContent.classList.contains('hide'));
       assert.isFalse(getComputedStyle(element.$.downloadContent)
           .display == 'none');
     });
@@ -162,12 +188,11 @@ limitations under the License.
 
     test('form defaults to read only when logged in and not admin', done => {
       element.repo = REPO;
-      sandbox.stub(element, '_getLoggedIn', () => {
-        return Promise.resolve(true);
-      });
-      sandbox.stub(element.$.restAPI, 'getRepoAccess', () => {
-        return Promise.resolve({'test-repo': {}});
-      });
+      sandbox.stub(element, '_getLoggedIn', () => Promise.resolve(true));
+      sandbox.stub(
+          element.$.restAPI,
+          'getRepoAccess',
+          () => Promise.resolve({'test-repo': {}}));
       element._loadRepo().then(() => {
         assert.isTrue(element._readOnly);
         done();
@@ -255,12 +280,11 @@ limitations under the License.
     suite('admin', () => {
       setup(() => {
         element.repo = REPO;
-        sandbox.stub(element, '_getLoggedIn', () => {
-          return Promise.resolve(true);
-        });
-        sandbox.stub(element.$.restAPI, 'getRepoAccess', () => {
-          return Promise.resolve({'test-repo': {is_owner: true}});
-        });
+        sandbox.stub(element, '_getLoggedIn', () => Promise.resolve(true));
+        sandbox.stub(
+            element.$.restAPI,
+            'getRepoAccess',
+            () => Promise.resolve({'test-repo': {is_owner: true}}));
       });
 
       test('all form elements are enabled', done => {
@@ -283,27 +307,20 @@ limitations under the License.
         });
       });
 
-      test('inherited submit type value is calculated correctly', () => {
-        return element._loadRepo().then(() => {
-          const sel = element.$.submitTypeSelect;
-          assert.equal(sel.bindValue, 'INHERIT');
-          assert.equal(
-              sel.nativeSelect.options[0].text, 'Inherit (Merge if necessary)');
-        });
+      test('inherited submit type value is calculated correctly', done => {
+        element
+            ._loadRepo().then(() => {
+              const sel = element.$.submitTypeSelect;
+              assert.equal(sel.bindValue, 'INHERIT');
+              assert.equal(
+                  sel.nativeSelect.options[0].text,
+                  'Inherit (Merge if necessary)'
+              );
+              done();
+            });
       });
 
       test('fields update and save correctly', () => {
-        // test notedb
-        element._noteDbEnabled = false;
-
-        assert.equal(
-            element._computeRepositoriesClass(element._noteDbEnabled), '');
-
-        element._noteDbEnabled = true;
-
-        assert.equal(element._computeRepositoriesClass(
-            element._noteDbEnabled), 'showConfig');
-
         const configInputObj = {
           description: 'new description',
           use_contributor_agreements: 'TRUE',
@@ -324,9 +341,7 @@ limitations under the License.
         };
 
         const saveStub = sandbox.stub(element.$.restAPI, 'saveRepoConfig'
-            , () => {
-              return Promise.resolve({});
-            });
+            , () => Promise.resolve({}));
 
         const button = Polymer.dom(element.root).querySelector('gr-button');
 
@@ -352,8 +367,9 @@ limitations under the License.
               configInputObj.private_by_default;
           element.$.matchAuthoredDateWithCommitterDateSelect.bindValue =
               configInputObj.match_author_to_committer_date;
-          element.$.maxGitObjSizeInput.bindValue =
-              configInputObj.max_object_size_limit;
+          const inputElement = Polymer.Element ?
+            element.$.maxGitObjSizeIronInput : element.$.maxGitObjSizeInput;
+          inputElement.bindValue = configInputObj.max_object_size_limit;
           element.$.contributorAgreementSelect.bindValue =
               configInputObj.use_contributor_agreements;
           element.$.useSignedOffBySelect.bindValue =

@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-account-label</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <script src="../../../scripts/util.js"></script>
 
@@ -62,36 +64,41 @@ limitations under the License.
     });
 
     test('computed fields', () => {
-      assert.equal(element._computeAccountTitle(
-          {
+      assert.equal(
+          element._computeAccountTitle({
             name: 'Andrew Bonventre',
             email: 'andybons+gerrit@gmail.com',
-          }),
-      'Andrew Bonventre <andybons+gerrit@gmail.com>');
+          }, /* additionalText= */ ''),
+          'Andrew Bonventre <andybons+gerrit@gmail.com>');
 
-      assert.equal(element._computeAccountTitle(
-          {name: 'Andrew Bonventre'}),
-      'Andrew Bonventre');
+      assert.equal(
+          element._computeAccountTitle({
+            name: 'Andrew Bonventre',
+          }, /* additionalText= */ ''),
+          'Andrew Bonventre');
 
-      assert.equal(element._computeAccountTitle(
-          {
+      assert.equal(
+          element._computeAccountTitle({
             email: 'andybons+gerrit@gmail.com',
-          }),
-      'Anonymous <andybons+gerrit@gmail.com>');
+          }, /* additionalText= */ ''),
+          'Anonymous <andybons+gerrit@gmail.com>');
 
       assert.equal(element._computeShowEmailClass(
           {
             name: 'Andrew Bonventre',
             email: 'andybons+gerrit@gmail.com',
-          }), '');
+          }, /* additionalText= */ ''), '');
 
       assert.equal(element._computeShowEmailClass(
           {
             email: 'andybons+gerrit@gmail.com',
-          }), 'showEmail');
+          }, /* additionalText= */ ''), 'showEmail');
 
-      assert.equal(element._computeShowEmailClass({name: 'Andrew Bonventre'}),
-          '');
+      assert.equal(element._computeShowEmailClass(
+          {name: 'Andrew Bonventre'},
+          /* additionalText= */ ''
+      ),
+      '');
 
       assert.equal(element._computeShowEmailClass(undefined), '');
 
@@ -132,6 +139,45 @@ limitations under the License.
         const account = {};
         assert.deepEqual(element._computeName(account, config),
             'TestAnon');
+      });
+    });
+
+    suite('status in tooltip', () => {
+      setup(() => {
+        element = fixture('basic');
+        element.account = {
+          name: 'test',
+          email: 'test@google.com',
+          status: 'OOO until Aug 10th',
+        };
+        element._config = {
+          user: {
+            anonymous_coward_name: 'Anonymous Coward',
+          },
+        };
+      });
+
+      test('tooltip should contain status text', () => {
+        assert.deepEqual(element.title,
+            'test <test@google.com> (OOO until Aug 10th)');
+      });
+
+      test('status text should not have tooltip', () => {
+        flushAsynchronousOperations();
+        assert.deepEqual(element.$$('gr-limited-text').title, '');
+      });
+
+      test('status text should honor the name length and total length', () => {
+        assert.deepEqual(
+            element._computeStatusTextLength(element.account, element._config),
+            31
+        );
+        assert.deepEqual(
+            element._computeStatusTextLength({
+              name: 'a very long long long long name',
+            }, element._config),
+            10
+        );
       });
     });
   });

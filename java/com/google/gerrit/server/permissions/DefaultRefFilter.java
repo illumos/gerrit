@@ -14,29 +14,32 @@
 
 package com.google.gerrit.server.permissions;
 
+import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableList.toImmutableList;
-import static com.google.gerrit.reviewdb.client.RefNames.REFS_CACHE_AUTOMERGE;
-import static com.google.gerrit.reviewdb.client.RefNames.REFS_CHANGES;
-import static com.google.gerrit.reviewdb.client.RefNames.REFS_CONFIG;
-import static com.google.gerrit.reviewdb.client.RefNames.REFS_USERS_SELF;
+import static com.google.gerrit.entities.RefNames.REFS_CACHE_AUTOMERGE;
+import static com.google.gerrit.entities.RefNames.REFS_CONFIG;
+import static com.google.gerrit.entities.RefNames.REFS_USERS_SELF;
 import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toCollection;
 
+import com.google.auto.value.AutoValue;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.metrics.Counter0;
 import com.google.gerrit.metrics.Description;
 import com.google.gerrit.metrics.MetricMaker;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.GroupCache;
@@ -45,17 +48,18 @@ import com.google.gerrit.server.git.SearchingChangeCacheImpl;
 import com.google.gerrit.server.git.TagCache;
 import com.google.gerrit.server.git.TagMatcher;
 import com.google.gerrit.server.group.InternalGroup;
+import com.google.gerrit.server.logging.TraceContext;
+import com.google.gerrit.server.logging.TraceContext.TraceTimer;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ChangeNotes.Factory.ChangeNotesResult;
 import com.google.gerrit.server.permissions.PermissionBackend.RefFilterOptions;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.assistedinject.Assisted;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -76,7 +80,6 @@ class DefaultRefFilter {
   private final TagCache tagCache;
   private final ChangeNotes.Factory changeNotesFactory;
   @Nullable private final SearchingChangeCacheImpl changeCache;
-  private final Provider<ReviewDb> db;
   private final GroupCache groupCache;
   private final PermissionBackend permissionBackend;
   private final ProjectControl projectControl;
@@ -87,14 +90,13 @@ class DefaultRefFilter {
   private final Counter0 skipFilterCount;
   private final boolean skipFullRefEvaluationIfAllRefsAreVisible;
 
-  private Map<Change.Id, Branch.NameKey> visibleChanges;
+  private Map<Change.Id, BranchNameKey> visibleChanges;
 
   @Inject
   DefaultRefFilter(
       TagCache tagCache,
       ChangeNotes.Factory changeNotesFactory,
       @Nullable SearchingChangeCacheImpl changeCache,
-      Provider<ReviewDb> db,
       GroupCache groupCache,
       PermissionBackend permissionBackend,
       @GerritServerConfig Config config,
@@ -103,7 +105,6 @@ class DefaultRefFilter {
     this.tagCache = tagCache;
     this.changeNotesFactory = changeNotesFactory;
     this.changeCache = changeCache;
-    this.db = db;
     this.groupCache = groupCache;
     this.permissionBackend = permissionBackend;
     this.skipFullRefEvaluationIfAllRefsAreVisible =
@@ -113,7 +114,7 @@ class DefaultRefFilter {
     this.user = projectControl.getUser();
     this.projectState = projectControl.getProjectState();
     this.permissionBackendForProject =
-        permissionBackend.user(user).database(db).project(projectState.getNameKey());
+        permissionBackend.user(user).project(projectState.getNameKey());
     this.fullFilterCount =
         metricMaker.newCounter(
             "permissions/ref_filter/full_filter_count",
@@ -127,22 +128,107 @@ class DefaultRefFilter {
                 .setRate());
   }
 
-  Map<String, Ref> filter(Map<String, Ref> refs, Repository repo, RefFilterOptions opts)
+  /** Filters given refs and tags by visibility. */
+  Collection<Ref> filter(Collection<Ref> refs, Repository repo, RefFilterOptions opts)
       throws PermissionBackendException {
-    if (projectState.isAllUsers()) {
-      refs = addUsersSelfSymref(refs);
-    }
+    logger.atFinest().log(
+        "Filter refs for repository %s by visibility (options = %s, refs = %s)",
+        projectState.getNameKey(), opts, refs);
+    logger.atFinest().log("Calling user: %s", user.getLoggableName());
+    logger.atFinest().log("Groups: %s", user.getEffectiveGroups().getKnownGroups());
+    logger.atFinest().log(
+        "auth.skipFullRefEvaluationIfAllRefsAreVisible = %s",
+        skipFullRefEvaluationIfAllRefsAreVisible);
+    logger.atFinest().log(
+        "Project state %s permits read = %s",
+        projectState.getProject().getState(), projectState.statePermitsRead());
 
-    if (skipFullRefEvaluationIfAllRefsAreVisible && !projectState.isAllUsers()) {
-      if (projectState.statePermitsRead()
-          && checkProjectPermission(permissionBackendForProject, ProjectPermission.READ)) {
-        skipFilterCount.increment();
-        return refs;
-      } else if (projectControl.allRefsAreVisible(ImmutableSet.of(RefNames.REFS_CONFIG))) {
-        skipFilterCount.increment();
-        return fastHideRefsMetaConfig(refs);
+    // See if we can get away with a single, cheap ref evaluation.
+    if (refs.size() == 1) {
+      String refName = Iterables.getOnlyElement(refs).getName();
+      if (opts.filterMeta() && isMetadata(refName)) {
+        logger.atFinest().log("Filter out metadata ref %s", refName);
+        return ImmutableList.of();
+      }
+      if (RefNames.isRefsChanges(refName)) {
+        boolean isChangeRefVisisble = canSeeSingleChangeRef(refName);
+        if (isChangeRefVisisble) {
+          logger.atFinest().log("Change ref %s is visible", refName);
+          return refs;
+        }
+        logger.atFinest().log("Filter out non-visible change ref %s", refName);
+        return ImmutableList.of();
       }
     }
+
+    // Perform an initial ref filtering with all the refs the caller asked for. If we find tags that
+    // we have to investigate separately (deferred tags) then perform a reachability check starting
+    // from all visible branches (refs/heads/*).
+    Result initialRefFilter = filterRefs(new ArrayList<>(refs), repo, opts);
+    List<Ref> visibleRefs = initialRefFilter.visibleRefs();
+    if (!initialRefFilter.deferredTags().isEmpty()) {
+      try (TraceTimer traceTimer = TraceContext.newTimer("Check visibility of deferred tags")) {
+        Result allVisibleBranches = filterRefs(getTaggableRefs(repo), repo, opts);
+        checkState(
+            allVisibleBranches.deferredTags().isEmpty(),
+            "unexpected tags found when filtering refs/heads/* "
+                + allVisibleBranches.deferredTags());
+
+        TagMatcher tags =
+            tagCache
+                .get(projectState.getNameKey())
+                .matcher(tagCache, repo, allVisibleBranches.visibleRefs());
+        for (Ref tag : initialRefFilter.deferredTags()) {
+          try {
+            if (tags.isReachable(tag)) {
+              logger.atFinest().log("Include reachable tag %s", tag.getName());
+              visibleRefs.add(tag);
+            } else {
+              logger.atFinest().log("Filter out non-reachable tag %s", tag.getName());
+            }
+          } catch (IOException e) {
+            throw new PermissionBackendException(e);
+          }
+        }
+      }
+    }
+
+    logger.atFinest().log("visible refs = %s", visibleRefs);
+    return visibleRefs;
+  }
+
+  /**
+   * Filters refs by visibility. Returns tags where visibility can't be trivially computed
+   * separately for later rev-walk-based visibility computation. Tags where visibility is trivial to
+   * compute will be returned as part of {@link Result#visibleRefs()}.
+   */
+  Result filterRefs(List<Ref> refs, Repository repo, RefFilterOptions opts)
+      throws PermissionBackendException {
+    logger.atFinest().log("Filter refs (refs = %s)", refs);
+
+    if (projectState.isAllUsers()) {
+      refs = addUsersSelfSymref(repo, refs);
+    }
+
+    // TODO(hiesel): Remove when optimization is done.
+    boolean hasReadOnRefsStar =
+        checkProjectPermission(permissionBackendForProject, ProjectPermission.READ);
+    logger.atFinest().log("User has READ on refs/* = %s", hasReadOnRefsStar);
+    if (skipFullRefEvaluationIfAllRefsAreVisible && !projectState.isAllUsers()) {
+      if (projectState.statePermitsRead() && hasReadOnRefsStar) {
+        skipFilterCount.increment();
+        logger.atFinest().log(
+            "Fast path, all refs are visible because user has READ on refs/*: %s", refs);
+        return new AutoValue_DefaultRefFilter_Result(refs, ImmutableList.of());
+      } else if (projectControl.allRefsAreVisible(ImmutableSet.of(RefNames.REFS_CONFIG))) {
+        skipFilterCount.increment();
+        refs = fastHideRefsMetaConfig(refs);
+        logger.atFinest().log(
+            "Fast path, all refs except %s are visible: %s", RefNames.REFS_CONFIG, refs);
+        return new AutoValue_DefaultRefFilter_Result(refs, ImmutableList.of());
+      }
+    }
+    logger.atFinest().log("Doing full ref filtering");
     fullFilterCount.increment();
 
     boolean viewMetadata;
@@ -155,37 +241,52 @@ class DefaultRefFilter {
       isAdmin = withUser.testOrFalse(GlobalPermission.ADMINISTRATE_SERVER);
       identifiedUser = user.asIdentifiedUser();
       userId = identifiedUser.getAccountId();
+      logger.atFinest().log(
+          "Account = %d; can view metadata = %s; is admin = %s",
+          userId.get(), viewMetadata, isAdmin);
     } else {
+      logger.atFinest().log("User is anonymous");
       viewMetadata = false;
       isAdmin = false;
       userId = null;
       identifiedUser = null;
     }
 
-    Map<String, Ref> result = new HashMap<>();
+    List<Ref> resultRefs = new ArrayList<>(refs.size());
     List<Ref> deferredTags = new ArrayList<>();
-
-    for (Ref ref : refs.values()) {
+    for (Ref ref : refs) {
       String name = ref.getName();
       Change.Id changeId;
       Account.Id accountId;
       AccountGroup.UUID accountGroupUuid;
-      if (name.startsWith(REFS_CACHE_AUTOMERGE) || (opts.filterMeta() && isMetadata(name))) {
+      if (name.startsWith(REFS_CACHE_AUTOMERGE)) {
+        continue;
+      } else if (opts.filterMeta() && isMetadata(name)) {
+        logger.atFinest().log("Filter out metadata ref %s", name);
         continue;
       } else if (RefNames.isRefsEdit(name)) {
         // Edits are visible only to the owning user, if change is visible.
         if (viewMetadata || visibleEdit(repo, name)) {
-          result.put(name, ref);
+          logger.atFinest().log("Include edit ref %s", name);
+          resultRefs.add(ref);
+        } else {
+          logger.atFinest().log("Filter out edit ref %s", name);
         }
       } else if ((changeId = Change.Id.fromRef(name)) != null) {
         // Change ref is visible only if the change is visible.
         if (viewMetadata || visible(repo, changeId)) {
-          result.put(name, ref);
+          logger.atFinest().log("Include change ref %s", name);
+          resultRefs.add(ref);
+        } else {
+          logger.atFinest().log("Filter out change ref %s", name);
         }
       } else if ((accountId = Account.Id.fromRef(name)) != null) {
         // Account ref is visible only to the corresponding account.
         if (viewMetadata || (accountId.equals(userId) && canReadRef(name))) {
-          result.put(name, ref);
+          logger.atFinest().log("Include user ref %s", name);
+          resultRefs.add(ref);
+        } else {
+          logger.atFinest().log("Filter out user ref %s", name);
         }
       } else if ((accountGroupUuid = AccountGroup.UUID.fromRef(name)) != null) {
         // Group ref is visible only to the corresponding owner group.
@@ -194,83 +295,128 @@ class DefaultRefFilter {
             || (group != null
                 && isGroupOwner(group, identifiedUser, isAdmin)
                 && canReadRef(name))) {
-          result.put(name, ref);
+          logger.atFinest().log("Include group ref %s", name);
+          resultRefs.add(ref);
+        } else {
+          logger.atFinest().log("Filter out group ref %s", name);
         }
       } else if (isTag(ref)) {
-        // If its a tag, consider it later.
-        if (ref.getObjectId() != null) {
-          deferredTags.add(ref);
+        if (hasReadOnRefsStar) {
+          // The user has READ on refs/*. This is the broadest permission one can assign. There is
+          // no way to grant access to (specific) tags in Gerrit, so we have to assume that these
+          // users can see all tags because there could be tags that aren't reachable by any visible
+          // ref while the user can see all non-Gerrit refs. This matches Gerrit's historic
+          // behavior.
+          // This makes it so that these users could see commits that they can't see otherwise
+          // (e.g. a private change ref) if a tag was attached to it. Tags are meant to be used on
+          // the regular Git tree that users interact with, not on any of the Gerrit trees, so this
+          // is a negligible risk.
+          logger.atFinest().log("Include tag ref %s because user has read on refs/*", name);
+          resultRefs.add(ref);
+        } else {
+          // If its a tag, consider it later.
+          if (ref.getObjectId() != null) {
+            logger.atFinest().log("Defer tag ref %s", name);
+            deferredTags.add(ref);
+          } else {
+            logger.atFinest().log("Filter out tag ref %s that is not a tag", name);
+          }
         }
       } else if (name.startsWith(RefNames.REFS_SEQUENCES)) {
         // Sequences are internal database implementation details.
         if (viewMetadata) {
-          result.put(name, ref);
+          logger.atFinest().log("Include sequence ref %s", name);
+          resultRefs.add(ref);
+        } else {
+          logger.atFinest().log("Filter out sequence ref %s", name);
         }
       } else if (projectState.isAllUsers()
           && (name.equals(RefNames.REFS_EXTERNAL_IDS) || name.equals(RefNames.REFS_GROUPNAMES))) {
         // The notes branches with the external IDs / group names must not be exposed to normal
         // users.
         if (viewMetadata) {
-          result.put(name, ref);
+          logger.atFinest().log("Include external IDs branch %s", name);
+          resultRefs.add(ref);
+        } else {
+          logger.atFinest().log("Filter out external IDs branch %s", name);
         }
       } else if (canReadRef(ref.getLeaf().getName())) {
         // Use the leaf to lookup the control data. If the reference is
         // symbolic we want the control around the final target. If its
         // not symbolic then getLeaf() is a no-op returning ref itself.
-        result.put(name, ref);
+        logger.atFinest().log(
+            "Include ref %s because its leaf %s is readable", name, ref.getLeaf().getName());
+        resultRefs.add(ref);
       } else if (isRefsUsersSelf(ref)) {
         // viewMetadata allows to see all account refs, hence refs/users/self should be included as
         // well
         if (viewMetadata) {
-          result.put(name, ref);
+          logger.atFinest().log("Include ref %s", REFS_USERS_SELF);
+          resultRefs.add(ref);
         }
+      } else {
+        logger.atFinest().log("Filter out ref %s", name);
       }
     }
-
-    // If we have tags that were deferred, we need to do a revision walk
-    // to identify what tags we can actually reach, and what we cannot.
-    //
-    if (!deferredTags.isEmpty() && (!result.isEmpty() || opts.filterTagsSeparately())) {
-      TagMatcher tags =
-          tagCache
-              .get(projectState.getNameKey())
-              .matcher(
-                  tagCache,
-                  repo,
-                  opts.filterTagsSeparately()
-                      ? filter(
-                              repo.getAllRefs(),
-                              repo,
-                              opts.toBuilder().setFilterTagsSeparately(false).build())
-                          .values()
-                      : result.values());
-      for (Ref tag : deferredTags) {
-        if (tags.isReachable(tag)) {
-          result.put(tag.getName(), tag);
-        }
-      }
-    }
-
+    Result result = new AutoValue_DefaultRefFilter_Result(resultRefs, deferredTags);
+    logger.atFinest().log("Result of ref filtering = %s", result);
     return result;
   }
 
-  private Map<String, Ref> fastHideRefsMetaConfig(Map<String, Ref> refs)
-      throws PermissionBackendException {
-    if (refs.containsKey(REFS_CONFIG) && !canReadRef(REFS_CONFIG)) {
-      Map<String, Ref> r = new HashMap<>(refs);
-      r.remove(REFS_CONFIG);
-      return r;
+  /**
+   * Returns all refs tag we regard as starting points for reachability computation for tags. In
+   * general, these are all refs not managed by Gerrit excluding symbolic refs and tags.
+   *
+   * <p>We exclude symbolic refs because their target will be included and this will suffice for
+   * computing reachability.
+   */
+  private static List<Ref> getTaggableRefs(Repository repo) throws PermissionBackendException {
+    try {
+      List<Ref> allRefs = repo.getRefDatabase().getRefs();
+      return allRefs.stream()
+          .filter(
+              r ->
+                  !RefNames.isGerritRef(r.getName())
+                      && !r.getName().startsWith(RefNames.REFS_TAGS)
+                      && !r.isSymbolic())
+          // Don't use the default Java Collections.toList() as that is not size-aware and would
+          // expand an array list as new elements are added. Instead, provide a list that has the
+          // right size. This spares incremental list expansion which is quadratic in complexity.
+          .collect(toCollection(() -> new ArrayList<>(allRefs.size())));
+    } catch (IOException e) {
+      throw new PermissionBackendException(e);
+    }
+  }
+
+  private List<Ref> fastHideRefsMetaConfig(List<Ref> refs) throws PermissionBackendException {
+    if (!canReadRef(REFS_CONFIG)) {
+      return refs.stream()
+          .filter(r -> !r.getName().equals(REFS_CONFIG))
+          // Don't use the default Java Collections.toList() as that is not size-aware and would
+          // expand an array list as new elements are added. Instead, provide a list that has the
+          // right size. This spares incremental list expansion which is quadratic in complexity.
+          .collect(toCollection(() -> new ArrayList<>(refs.size())));
     }
     return refs;
   }
 
-  private Map<String, Ref> addUsersSelfSymref(Map<String, Ref> refs) {
+  private List<Ref> addUsersSelfSymref(Repository repo, List<Ref> refs)
+      throws PermissionBackendException {
     if (user.isIdentifiedUser()) {
-      Ref r = refs.get(RefNames.refsUsers(user.getAccountId()));
-      if (r != null) {
+      String refName = RefNames.refsUsers(user.getAccountId());
+      try {
+        Ref r = repo.exactRef(refName);
+        if (r == null) {
+          logger.atWarning().log("User ref %s not found", refName);
+          return refs;
+        }
+
         SymbolicRef s = new SymbolicRef(REFS_USERS_SELF, r);
-        refs = new HashMap<>(refs);
-        refs.put(s.getName(), s);
+        refs = new ArrayList<>(refs);
+        refs.add(s);
+        logger.atFinest().log("Added %s as alias for user ref %s", REFS_USERS_SELF, refName);
+      } catch (IOException e) {
+        throw new PermissionBackendException(e);
       }
     }
     return refs;
@@ -283,44 +429,52 @@ class DefaultRefFilter {
       } else {
         visibleChanges = visibleChangesBySearch();
       }
+      logger.atFinest().log("Visible changes: %s", visibleChanges.keySet());
     }
     return visibleChanges.containsKey(changeId);
   }
 
   private boolean visibleEdit(Repository repo, String name) throws PermissionBackendException {
     Change.Id id = Change.Id.fromEditRefPart(name);
-    // Initialize if it wasn't yet
-    if (visibleChanges == null) {
-      visible(repo, id);
-    }
     if (id == null) {
+      logger.atWarning().log("Couldn't extract change ID from edit ref %s", name);
       return false;
     }
+
     if (user.isIdentifiedUser()
         && name.startsWith(RefNames.refsEditPrefix(user.asIdentifiedUser().getAccountId()))
         && visible(repo, id)) {
+      logger.atFinest().log("Own change edit ref is visible: %s", name);
       return true;
+    }
+
+    // Initialize visibleChanges if it wasn't initialized yet.
+    if (visibleChanges == null) {
+      visible(repo, id);
     }
     if (visibleChanges.containsKey(id)) {
       try {
         // Default to READ_PRIVATE_CHANGES as there is no special permission for reading edits.
         permissionBackendForProject
-            .ref(visibleChanges.get(id).get())
+            .ref(visibleChanges.get(id).branch())
             .check(RefPermission.READ_PRIVATE_CHANGES);
+        logger.atFinest().log("Foreign change edit ref is visible: %s", name);
         return true;
       } catch (AuthException e) {
+        logger.atFinest().log("Foreign change edit ref is not visible: %s", name);
         return false;
       }
     }
+
+    logger.atFinest().log("Change %d of change edit ref %s is not visible", id.get(), name);
     return false;
   }
 
-  private Map<Change.Id, Branch.NameKey> visibleChangesBySearch()
-      throws PermissionBackendException {
+  private Map<Change.Id, BranchNameKey> visibleChangesBySearch() throws PermissionBackendException {
     Project.NameKey project = projectState.getNameKey();
     try {
-      Map<Change.Id, Branch.NameKey> visibleChanges = new HashMap<>();
-      for (ChangeData cd : changeCache.getChangeData(db.get(), project)) {
+      Map<Change.Id, BranchNameKey> visibleChanges = new HashMap<>();
+      for (ChangeData cd : changeCache.getChangeData(project)) {
         ChangeNotes notes = changeNotesFactory.createFromIndexedChange(cd.change());
         if (!projectState.statePermitsRead()) {
           continue;
@@ -333,26 +487,26 @@ class DefaultRefFilter {
         }
       }
       return visibleChanges;
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       logger.atSevere().withCause(e).log(
           "Cannot load changes for project %s, assuming no changes are visible", project);
       return Collections.emptyMap();
     }
   }
 
-  private Map<Change.Id, Branch.NameKey> visibleChangesByScan(Repository repo)
+  private Map<Change.Id, BranchNameKey> visibleChangesByScan(Repository repo)
       throws PermissionBackendException {
     Project.NameKey p = projectState.getNameKey();
     ImmutableList<ChangeNotesResult> changes;
     try {
-      changes = changeNotesFactory.scan(repo, db.get(), p).collect(toImmutableList());
+      changes = changeNotesFactory.scan(repo, p).collect(toImmutableList());
     } catch (IOException e) {
       logger.atSevere().withCause(e).log(
           "Cannot load changes for project %s, assuming no changes are visible", p);
       return Collections.emptyMap();
     }
 
-    Map<Change.Id, Branch.NameKey> result = Maps.newHashMapWithExpectedSize(changes.size());
+    Map<Change.Id, BranchNameKey> result = Maps.newHashMapWithExpectedSize(changes.size());
     for (ChangeNotesResult notesResult : changes) {
       ChangeNotes notes = toNotes(notesResult);
       if (notes != null) {
@@ -384,7 +538,9 @@ class DefaultRefFilter {
   }
 
   private boolean isMetadata(String name) {
-    return name.startsWith(REFS_CHANGES) || RefNames.isRefsEdit(name);
+    boolean isMetaData = RefNames.isRefsChanges(name) || RefNames.isRefsEdit(name);
+    logger.atFinest().log("ref %s is " + (isMetaData ? "" : "not ") + "a metadata ref", name);
+    return isMetaData;
   }
 
   private static boolean isTag(Ref ref) {
@@ -420,7 +576,51 @@ class DefaultRefFilter {
     requireNonNull(group);
 
     // Keep this logic in sync with GroupControl#isOwner().
-    return isAdmin
-        || (user != null && user.getEffectiveGroups().contains(group.getOwnerGroupUUID()));
+    boolean isGroupOwner =
+        isAdmin || (user != null && user.getEffectiveGroups().contains(group.getOwnerGroupUUID()));
+    logger.atFinest().log("User is owner of group %s = %s", group.getGroupUUID(), isGroupOwner);
+    return isGroupOwner;
+  }
+
+  /**
+   * Returns true if the user can see the provided change ref. Uses NoteDb for evaluation, hence
+   * does not suffer from the limitations documented in {@link SearchingChangeCacheImpl}.
+   *
+   * <p>This code lets users fetch changes that are not among the fraction of most recently modified
+   * changes that {@link SearchingChangeCacheImpl} returns. This works only when Git Protocol v2
+   * with refs-in-wants is used as that enables Gerrit to skip traditional advertisement of all
+   * visible refs.
+   */
+  private boolean canSeeSingleChangeRef(String refName) throws PermissionBackendException {
+    // We are treating just a single change ref. We are therefore not going through regular ref
+    // filtering, but use NoteDb directly. This makes it so that we can always serve this ref
+    // even if the change is not part of the set of most recent changes that
+    // SearchingChangeCacheImpl returns.
+    Change.Id cId = Change.Id.fromRef(refName);
+    requireNonNull(cId, () -> String.format("invalid change id for ref %s", refName));
+    ChangeNotes notes;
+    try {
+      notes = changeNotesFactory.create(projectState.getNameKey(), cId);
+    } catch (StorageException e) {
+      throw new PermissionBackendException("can't construct change notes", e);
+    }
+    try {
+      permissionBackendForProject.change(notes).check(ChangePermission.READ);
+      return true;
+    } catch (AuthException e) {
+      return false;
+    }
+  }
+
+  @AutoValue
+  abstract static class Result {
+    /** Subset of the refs passed into the computation that is visible to the user. */
+    abstract List<Ref> visibleRefs();
+
+    /**
+     * List of tags where we couldn't figure out visibility in the first pass and need to do an
+     * expensive ref walk.
+     */
+    abstract List<Ref> deferredTags();
   }
 }

@@ -14,17 +14,14 @@ def polygerrit_bundle(name, srcs, outs, app):
         # See: https://github.com/google/closure-compiler/issues/2042
         compilation_level = "WHITESPACE_ONLY",
         defs = [
-            "--polymer_version=1",
+            "--polymer_version=2",
             "--jscomp_off=duplicate",
-            "--force_inject_library=es6_runtime",
         ],
-        language = "ECMASCRIPT5",
+        language = "ECMASCRIPT_2017",
         deps = [name + "_closure_lib"],
         dependency_mode = "PRUNE_LEGACY",
     )
 
-    # TODO(davido): Remove JSC_REFERENCE_BEFORE_DECLARE when this is fixed upstream:
-    # https://github.com/Polymer/polymer-resin/issues/7
     closure_js_library(
         name = name + "_closure_lib",
         srcs = [appName + ".js"],
@@ -33,9 +30,7 @@ def polygerrit_bundle(name, srcs, outs, app):
         # and remove this supression
         suppress = [
             "JSC_JSDOC_MISSING_TYPE_WARNING",
-            "JSC_REFERENCE_BEFORE_DECLARE",
             "JSC_UNNECESSARY_ESCAPE",
-            "JSC_UNUSED_LOCAL_ASSIGNMENT",
         ],
         deps = [
             "//lib/polymer_externs:polymer_closure",

@@ -17,7 +17,7 @@ limitations under the License.
 
 <link rel="import" href="../../../behaviors/gr-url-encoding-behavior/gr-url-encoding-behavior.html">
 <link rel="import" href="../../../behaviors/keyboard-shortcut-behavior/keyboard-shortcut-behavior.html">
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 <link rel="import" href="../../shared/gr-autocomplete/gr-autocomplete.html">
 <link rel="import" href="../../../styles/shared-styles.html">
 
@@ -29,12 +29,9 @@ limitations under the License.
       }
       gr-autocomplete {
         background-color: var(--view-background-color);
-        border: 1px solid var(--border-color);
-        border-radius: 2px;
+        border-radius: var(--border-radius);
         flex: 1;
-        font: inherit;
         outline: none;
-        padding: .25em;
       }
     </style>
     <form>
@@ -46,7 +43,6 @@ limitations under the License.
           on-commit="_handleInputCommit"
           allow-non-suggested-values
           multi
-          borderless
           threshold="[[_threshold]]"
           tab-complete
           vertical-offset="30"></gr-autocomplete>

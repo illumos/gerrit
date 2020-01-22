@@ -33,7 +33,8 @@ public class CreateTestPlugin
   }
 
   @Override
-  public Object apply(ConfigResource parentResource, IdString id, Input input) throws Exception {
+  public Response<?> apply(ConfigResource parentResource, IdString id, Input input)
+      throws Exception {
     return Response.created(input);
   }
 }

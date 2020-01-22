@@ -18,12 +18,12 @@ import static com.google.gerrit.extensions.client.GeneralPreferencesInfo.EmailSt
 import static com.google.gerrit.extensions.client.GeneralPreferencesInfo.EmailStrategy.DISABLED;
 import static java.util.Objects.requireNonNull;
 
-import com.google.common.collect.ImmutableListMultimap;
-import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
-import com.google.gerrit.common.errors.EmailException;
-import com.google.gerrit.extensions.api.changes.NotifyHandling;
+import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.UserIdentity;
+import com.google.gerrit.exceptions.EmailException;
 import com.google.gerrit.extensions.api.changes.RecipientType;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo.EmailFormat;
@@ -31,13 +31,12 @@ import com.google.gerrit.mail.Address;
 import com.google.gerrit.mail.EmailHeader;
 import com.google.gerrit.mail.EmailHeader.AddressList;
 import com.google.gerrit.mail.MailHeader;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.UserIdentity;
 import com.google.gerrit.server.account.AccountState;
+import com.google.gerrit.server.change.NotifyResolver;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.validators.OutgoingEmailValidationListener;
 import com.google.gerrit.server.validators.ValidationException;
-import com.google.template.soy.data.SanitizedContent;
+import com.google.template.soy.jbcsrc.api.SoySauce;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
@@ -53,10 +52,12 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.StringJoiner;
 import org.apache.james.mime4j.dom.field.FieldName;
+import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.util.SystemReader;
 
 /** Sends an email to one or more interested parties. */
 public abstract class OutgoingEmail {
+  private static final String SOY_TEMPLATE_NAMESPACE = "com.google.gerrit.server.mail.template.";
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
   protected String messageClass;
@@ -66,30 +67,25 @@ public abstract class OutgoingEmail {
   private Address smtpFromAddress;
   private StringBuilder textBody;
   private StringBuilder htmlBody;
-  private ListMultimap<RecipientType, Account.Id> accountsToNotify = ImmutableListMultimap.of();
   protected Map<String, Object> soyContext;
   protected Map<String, Object> soyContextEmailData;
   protected List<String> footers;
   protected final EmailArguments args;
   protected Account.Id fromId;
-  protected NotifyHandling notify = NotifyHandling.ALL;
+  protected NotifyResolver.Result notify = NotifyResolver.Result.all();
 
-  protected OutgoingEmail(EmailArguments ea, String mc) {
-    args = ea;
-    messageClass = mc;
-    headers = new LinkedHashMap<>();
+  protected OutgoingEmail(EmailArguments args, String messageClass) {
+    this.args = args;
+    this.messageClass = messageClass;
+    this.headers = new LinkedHashMap<>();
   }
 
   public void setFrom(Account.Id id) {
     fromId = id;
   }
 
-  public void setNotify(NotifyHandling notify) {
+  public void setNotify(NotifyResolver.Result notify) {
     this.notify = requireNonNull(notify);
-  }
-
-  public void setAccountsToNotify(ListMultimap<RecipientType, Account.Id> accountsToNotify) {
-    this.accountsToNotify = requireNonNull(accountsToNotify);
   }
 
   /**
@@ -106,7 +102,7 @@ public abstract class OutgoingEmail {
       return;
     }
 
-    if (NotifyHandling.NONE.equals(notify) && accountsToNotify.isEmpty()) {
+    if (!notify.shouldNotify()) {
       logger.atFine().log("Not sending '%s': Notify handling is NONE", messageClass);
       return;
     }
@@ -126,18 +122,26 @@ public abstract class OutgoingEmail {
       if (fromId != null) {
         Optional<AccountState> fromUser = args.accountCache.get(fromId);
         if (fromUser.isPresent()) {
-          GeneralPreferencesInfo senderPrefs = fromUser.get().getGeneralPreferences();
+          GeneralPreferencesInfo senderPrefs = fromUser.get().generalPreferences();
           if (senderPrefs != null && senderPrefs.getEmailStrategy() == CC_ON_OWN_COMMENTS) {
             // If we are impersonating a user, make sure they receive a CC of
             // this message so they can always review and audit what we sent
             // on their behalf to others.
             //
+            logger.atFine().log(
+                "CC email sender %s because the email strategy of this user is %s",
+                fromUser.get().account().id(), CC_ON_OWN_COMMENTS);
             add(RecipientType.CC, fromId);
-          } else if (!accountsToNotify.containsValue(fromId) && rcptTo.remove(fromId)) {
+          } else if (!notify.accounts().containsValue(fromId) && rcptTo.remove(fromId)) {
             // If they don't want a copy, but we queued one up anyway,
             // drop them from the recipient lists.
             //
-            removeUser(fromUser.get().getAccount());
+            logger.atFine().log(
+                "Not CCing email sender %s because the email strategy of this user is not %s but %s",
+                fromUser.get().account().id(),
+                CC_ON_OWN_COMMENTS,
+                senderPrefs != null ? senderPrefs.getEmailStrategy() : null);
+            removeUser(fromUser.get().account());
           }
         }
       }
@@ -147,14 +151,18 @@ public abstract class OutgoingEmail {
       for (Account.Id id : rcptTo) {
         Optional<AccountState> thisUser = args.accountCache.get(id);
         if (thisUser.isPresent()) {
-          Account thisUserAccount = thisUser.get().getAccount();
-          GeneralPreferencesInfo prefs = thisUser.get().getGeneralPreferences();
+          Account thisUserAccount = thisUser.get().account();
+          GeneralPreferencesInfo prefs = thisUser.get().generalPreferences();
           if (prefs == null || prefs.getEmailStrategy() == DISABLED) {
+            logger.atFine().log(
+                "Not emailing account %s because user has set email strategy to %s", id, DISABLED);
             removeUser(thisUserAccount);
           } else if (useHtml() && prefs.getEmailFormat() == EmailFormat.PLAINTEXT) {
+            logger.atFine().log(
+                "Removing account %s from HTML email because user prefers plain text emails", id);
             removeUser(thisUserAccount);
             smtpRcptToPlaintextOnly.add(
-                new Address(thisUserAccount.getFullName(), thisUserAccount.getPreferredEmail()));
+                new Address(thisUserAccount.fullName(), thisUserAccount.preferredEmail()));
           }
         }
         if (smtpRcptTo.isEmpty() && smtpRcptToPlaintextOnly.isEmpty()) {
@@ -211,12 +219,13 @@ public abstract class OutgoingEmail {
 
       if (!va.smtpRcptTo.isEmpty()) {
         // Send multipart message
-        logger.atFine().log("Sending multipart '%s'", messageClass);
+        logger.atFine().log(
+            "Sending multipart '%s' from %s to %s",
+            messageClass, va.smtpFromAddress, va.smtpRcptTo);
         args.emailSender.send(va.smtpFromAddress, va.smtpRcptTo, va.headers, va.body, va.htmlBody);
       }
 
       if (!smtpRcptToPlaintextOnly.isEmpty()) {
-        logger.atFine().log("Sending plaintext '%s'", messageClass);
         // Send plaintext message
         Map<String, EmailHeader> shallowCopy = new HashMap<>();
         shallowCopy.putAll(headers);
@@ -229,6 +238,9 @@ public abstract class OutgoingEmail {
           to.add(a);
           shallowCopy.put(FieldName.TO, to);
         }
+        logger.atFine().log(
+            "Sending plaintext '%s' from %s to %s",
+            messageClass, va.smtpFromAddress, smtpRcptToPlaintextOnly);
         args.emailSender.send(va.smtpFromAddress, smtpRcptToPlaintextOnly, shallowCopy, va.body);
       }
     }
@@ -245,7 +257,7 @@ public abstract class OutgoingEmail {
   protected void init() throws EmailException {
     setupSoyContext();
 
-    smtpFromAddress = args.fromAddressGenerator.from(fromId);
+    smtpFromAddress = args.fromAddressGenerator.get().from(fromId);
     setHeader(FieldName.DATE, new Date());
     headers.put(FieldName.FROM, new EmailHeader.AddressList(smtpFromAddress));
     headers.put(FieldName.TO, new EmailHeader.AddressList());
@@ -253,8 +265,8 @@ public abstract class OutgoingEmail {
     setHeader(FieldName.MESSAGE_ID, "");
     setHeader(MailHeader.AUTO_SUBMITTED.fieldName(), "auto-generated");
 
-    for (RecipientType recipientType : accountsToNotify.keySet()) {
-      add(recipientType, accountsToNotify.get(recipientType));
+    for (RecipientType recipientType : notify.accounts().keySet()) {
+      add(recipientType, notify.accounts().get(recipientType));
     }
 
     setHeader(MailHeader.MESSAGE_TYPE.fieldName(), messageClass);
@@ -262,17 +274,17 @@ public abstract class OutgoingEmail {
     textBody = new StringBuilder();
     htmlBody = new StringBuilder();
 
-    if (fromId != null && args.fromAddressGenerator.isGenericAddress(fromId)) {
+    if (fromId != null && args.fromAddressGenerator.get().isGenericAddress(fromId)) {
       appendText(getFromLine());
     }
   }
 
   protected String getFromLine() {
     StringBuilder f = new StringBuilder();
-    Optional<Account> account = args.accountCache.get(fromId).map(AccountState::getAccount);
+    Optional<Account> account = args.accountCache.get(fromId).map(AccountState::account);
     if (account.isPresent()) {
-      String name = account.get().getFullName();
-      String email = account.get().getPreferredEmail();
+      String name = account.get().fullName();
+      String email = account.get().preferredEmail();
       if ((name != null && !name.isEmpty()) || (email != null && !email.isEmpty())) {
         f.append("From");
         if (name != null && !name.isEmpty()) {
@@ -340,17 +352,17 @@ public abstract class OutgoingEmail {
   }
 
   /** Lookup a human readable name for an account, usually the "full name". */
-  protected String getNameFor(Account.Id accountId) {
+  protected String getNameFor(@Nullable Account.Id accountId) {
     if (accountId == null) {
-      return args.gerritPersonIdent.getName();
+      return args.gerritPersonIdent.get().getName();
     }
 
-    Optional<Account> account = args.accountCache.get(accountId).map(AccountState::getAccount);
+    Optional<Account> account = args.accountCache.get(accountId).map(AccountState::account);
     String name = null;
     if (account.isPresent()) {
-      name = account.get().getFullName();
+      name = account.get().fullName();
       if (name == null) {
-        name = account.get().getPreferredEmail();
+        name = account.get().preferredEmail();
       }
     }
     if (name == null) {
@@ -366,11 +378,16 @@ public abstract class OutgoingEmail {
    * @param accountId user to fetch.
    * @return name/email of account, or Anonymous Coward if unset.
    */
-  protected String getNameEmailFor(Account.Id accountId) {
-    Optional<Account> account = args.accountCache.get(accountId).map(AccountState::getAccount);
+  protected String getNameEmailFor(@Nullable Account.Id accountId) {
+    if (accountId == null) {
+      PersonIdent gerritIdent = args.gerritPersonIdent.get();
+      return gerritIdent.getName() + " <" + gerritIdent.getEmailAddress() + ">";
+    }
+
+    Optional<Account> account = args.accountCache.get(accountId).map(AccountState::account);
     if (account.isPresent()) {
-      String name = account.get().getFullName();
-      String email = account.get().getPreferredEmail();
+      String name = account.get().fullName();
+      String email = account.get().preferredEmail();
       if (name != null && email != null) {
         return name + " <" + email + ">";
       } else if (name != null) {
@@ -395,9 +412,9 @@ public abstract class OutgoingEmail {
       return null;
     }
 
-    Account account = accountState.get().getAccount();
-    String name = account.getFullName();
-    String email = account.getPreferredEmail();
+    Account account = accountState.get().account();
+    String name = account.fullName();
+    String email = account.preferredEmail();
     if (name != null && email != null) {
       return name + " <" + email + ">";
     } else if (email != null) {
@@ -405,7 +422,7 @@ public abstract class OutgoingEmail {
     } else if (name != null) {
       return name;
     }
-    return accountState.get().getUserName().orElse(null);
+    return accountState.get().userName().orElse(null);
   }
 
   protected boolean shouldSendMessage() {
@@ -423,7 +440,7 @@ public abstract class OutgoingEmail {
       return false;
     }
 
-    if ((accountsToNotify == null || accountsToNotify.isEmpty())
+    if (notify.accounts().isEmpty()
         && smtpRcptTo.size() == 1
         && rcptTo.size() == 1
         && rcptTo.contains(fromId)) {
@@ -529,17 +546,17 @@ public abstract class OutgoingEmail {
   }
 
   private Address toAddress(Account.Id id) {
-    Optional<Account> accountState = args.accountCache.get(id).map(AccountState::getAccount);
+    Optional<Account> accountState = args.accountCache.get(id).map(AccountState::account);
     if (!accountState.isPresent()) {
       return null;
     }
 
     Account account = accountState.get();
-    String e = account.getPreferredEmail();
+    String e = account.preferredEmail();
     if (!account.isActive() || e == null) {
       return null;
     }
-    return new Address(account.getFullName(), e);
+    return new Address(account.fullName(), e);
   }
 
   protected void setupSoyContext() {
@@ -561,24 +578,26 @@ public abstract class OutgoingEmail {
     return args.instanceNameProvider.get();
   }
 
-  private String soyTemplate(String name, SanitizedContent.ContentKind kind) {
-    return args.soyTofu
-        .newRenderer("com.google.gerrit.server.mail.template." + name)
-        .setContentKind(kind)
-        .setData(soyContext)
-        .render();
-  }
-
+  /** Renders a soy template of kind="text". */
   protected String textTemplate(String name) {
-    return soyTemplate(name, SanitizedContent.ContentKind.TEXT);
+    return configureRenderer(name).renderText().get();
   }
 
+  /** Renders a soy template of kind="html". */
   protected String soyHtmlTemplate(String name) {
-    return soyTemplate(name, SanitizedContent.ContentKind.HTML);
+    return configureRenderer(name).renderHtml().get().toString();
+  }
+
+  /** Configures a soy renderer for the given template name and rendering data map. */
+  private SoySauce.Renderer configureRenderer(String templateName) {
+    return args.soySauce
+        .get()
+        .renderTemplate(SOY_TEMPLATE_NAMESPACE + templateName)
+        .setData(soyContext);
   }
 
   protected void removeUser(Account user) {
-    String fromEmail = user.getPreferredEmail();
+    String fromEmail = user.preferredEmail();
     for (Iterator<Address> j = smtpRcptTo.iterator(); j.hasNext(); ) {
       if (j.next().getEmail().equals(fromEmail)) {
         j.remove();

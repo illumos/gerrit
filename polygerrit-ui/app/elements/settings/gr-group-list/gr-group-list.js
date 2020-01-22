@@ -17,29 +17,36 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-group-list',
+  /** @extends Polymer.Element */
+  class GrGroupList extends Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element)) {
+    static get is() { return 'gr-group-list'; }
 
-    properties: {
-      _groups: Array,
-    },
+    static get properties() {
+      return {
+        _groups: Array,
+      };
+    }
 
     loadData() {
       return this.$.restAPI.getAccountGroups().then(groups => {
-        this._groups = groups.sort((a, b) => {
-          return a.name.localeCompare(b.name);
-        });
+        this._groups = groups.sort((a, b) => a.name.localeCompare(b.name));
       });
-    },
+    }
 
     _computeVisibleToAll(group) {
       return group.options.visible_to_all ? 'Yes' : 'No';
-    },
+    }
 
     _computeGroupPath(group) {
       if (!group || !group.id) { return; }
 
-      return Gerrit.Nav.getUrlForGroup(group.id);
-    },
-  });
+      // Group ID is already encoded from the API
+      // Decode it here to match with our router encoding behavior
+      return Gerrit.Nav.getUrlForGroup(decodeURIComponent(group.id));
+    }
+  }
+
+  customElements.define(GrGroupList.is, GrGroupList);
 })();

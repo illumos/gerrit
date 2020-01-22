@@ -18,11 +18,6 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableListMultimap.toImmutableListMultimap;
-import static com.google.common.collect.ImmutableSet.toImmutableSet;
-import static com.google.gerrit.reviewdb.server.ReviewDbCodecs.APPROVAL_CODEC;
-import static com.google.gerrit.reviewdb.server.ReviewDbCodecs.MESSAGE_CODEC;
-import static com.google.gerrit.reviewdb.server.ReviewDbCodecs.PATCH_SET_CODEC;
-import static com.google.gerrit.server.cache.serialize.ProtoCacheSerializers.toByteString;
 import static java.util.Objects.requireNonNull;
 
 import com.google.auto.value.AutoValue;
@@ -39,35 +34,41 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Table;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.data.SubmitRecord;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.ChangeMessage;
+import com.google.gerrit.entities.Comment;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.PatchSetApproval;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.converter.ChangeMessageProtoConverter;
+import com.google.gerrit.entities.converter.PatchSetApprovalProtoConverter;
+import com.google.gerrit.entities.converter.PatchSetProtoConverter;
+import com.google.gerrit.entities.converter.ProtoConverter;
+import com.google.gerrit.json.OutputFormat;
 import com.google.gerrit.mail.Address;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.ChangeMessage;
-import com.google.gerrit.reviewdb.client.Comment;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.PatchSetApproval;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RevId;
-import com.google.gerrit.server.OutputFormat;
+import com.google.gerrit.proto.Protos;
+import com.google.gerrit.server.AssigneeStatusUpdate;
 import com.google.gerrit.server.ReviewerByEmailSet;
 import com.google.gerrit.server.ReviewerSet;
 import com.google.gerrit.server.ReviewerStatusUpdate;
 import com.google.gerrit.server.cache.proto.Cache.ChangeNotesStateProto;
+import com.google.gerrit.server.cache.proto.Cache.ChangeNotesStateProto.AssigneeStatusUpdateProto;
 import com.google.gerrit.server.cache.proto.Cache.ChangeNotesStateProto.ChangeColumnsProto;
 import com.google.gerrit.server.cache.proto.Cache.ChangeNotesStateProto.ReviewerByEmailSetEntryProto;
 import com.google.gerrit.server.cache.proto.Cache.ChangeNotesStateProto.ReviewerSetEntryProto;
 import com.google.gerrit.server.cache.proto.Cache.ChangeNotesStateProto.ReviewerStatusUpdateProto;
 import com.google.gerrit.server.cache.serialize.CacheSerializer;
-import com.google.gerrit.server.cache.serialize.ProtoCacheSerializers;
-import com.google.gerrit.server.cache.serialize.ProtoCacheSerializers.ObjectIdConverter;
+import com.google.gerrit.server.cache.serialize.ObjectIdConverter;
 import com.google.gerrit.server.index.change.ChangeField.StoredSubmitRecord;
-import com.google.gerrit.server.notedb.NoteDbChangeState.PrimaryStorage;
 import com.google.gson.Gson;
-import java.io.IOException;
+import com.google.protobuf.ByteString;
+import com.google.protobuf.MessageLite;
 import java.sql.Timestamp;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import org.eclipse.jgit.lib.ObjectId;
 
@@ -97,15 +98,14 @@ public abstract class ChangeNotesState {
       Timestamp createdOn,
       Timestamp lastUpdatedOn,
       Account.Id owner,
+      String serverId,
       String branch,
       @Nullable PatchSet.Id currentPatchSetId,
       String subject,
       @Nullable String topic,
       @Nullable String originalSubject,
       @Nullable String submissionId,
-      @Nullable Account.Id assignee,
       @Nullable Change.Status status,
-      Set<Account.Id> pastAssignees,
       Set<String> hashtags,
       Map<PatchSet.Id, PatchSet> patchSets,
       ListMultimap<PatchSet.Id, PatchSetApproval> approvals,
@@ -115,14 +115,16 @@ public abstract class ChangeNotesState {
       ReviewerByEmailSet pendingReviewersByEmail,
       List<Account.Id> allPastReviewers,
       List<ReviewerStatusUpdate> reviewerUpdates,
+      List<AssigneeStatusUpdate> assigneeUpdates,
       List<SubmitRecord> submitRecords,
       List<ChangeMessage> changeMessages,
-      ListMultimap<RevId, Comment> publishedComments,
-      @Nullable Timestamp readOnlyUntil,
+      ListMultimap<ObjectId, Comment> publishedComments,
       boolean isPrivate,
       boolean workInProgress,
       boolean reviewStarted,
-      @Nullable Change.Id revertOf) {
+      @Nullable Change.Id revertOf,
+      @Nullable PatchSet.Id cherryPickOf,
+      int updateCount) {
     requireNonNull(
         metaId,
         () ->
@@ -147,14 +149,14 @@ public abstract class ChangeNotesState {
                 .topic(topic)
                 .originalSubject(originalSubject)
                 .submissionId(submissionId)
-                .assignee(assignee)
                 .isPrivate(isPrivate)
                 .workInProgress(workInProgress)
                 .reviewStarted(reviewStarted)
                 .revertOf(revertOf)
+                .cherryPickOf(cherryPickOf)
                 .build())
-        .pastAssignees(pastAssignees)
         .hashtags(hashtags)
+        .serverId(serverId)
         .patchSets(patchSets.entrySet())
         .approvals(approvals.entries())
         .reviewers(reviewers)
@@ -163,18 +165,16 @@ public abstract class ChangeNotesState {
         .pendingReviewersByEmail(pendingReviewersByEmail)
         .allPastReviewers(allPastReviewers)
         .reviewerUpdates(reviewerUpdates)
+        .assigneeUpdates(assigneeUpdates)
         .submitRecords(submitRecords)
         .changeMessages(changeMessages)
         .publishedComments(publishedComments)
-        .readOnlyUntil(readOnlyUntil)
+        .updateCount(updateCount)
         .build();
   }
 
   /**
    * Subset of Change columns that can be represented in NoteDb.
-   *
-   * <p>Notable exceptions include rowVersion and noteDbState, which are only make sense when read
-   * from NoteDb, so they cannot be cached.
    *
    * <p>Fields should match the column names in {@link Change}, and are in listed column order.
    */
@@ -213,9 +213,6 @@ public abstract class ChangeNotesState {
     @Nullable
     abstract String submissionId();
 
-    @Nullable
-    abstract Account.Id assignee();
-
     abstract boolean isPrivate();
 
     abstract boolean workInProgress();
@@ -224,6 +221,9 @@ public abstract class ChangeNotesState {
 
     @Nullable
     abstract Change.Id revertOf();
+
+    @Nullable
+    abstract PatchSet.Id cherryPickOf();
 
     abstract Builder toBuilder();
 
@@ -249,8 +249,6 @@ public abstract class ChangeNotesState {
 
       abstract Builder submissionId(@Nullable String submissionId);
 
-      abstract Builder assignee(@Nullable Account.Id assignee);
-
       abstract Builder status(@Nullable Change.Status status);
 
       abstract Builder isPrivate(boolean isPrivate);
@@ -260,6 +258,8 @@ public abstract class ChangeNotesState {
       abstract Builder reviewStarted(boolean reviewStarted);
 
       abstract Builder revertOf(@Nullable Change.Id revertOf);
+
+      abstract Builder cherryPickOf(@Nullable PatchSet.Id cherryPickOf);
 
       abstract ChangeColumns build();
     }
@@ -276,9 +276,10 @@ public abstract class ChangeNotesState {
   abstract ChangeColumns columns();
 
   // Other related to this Change.
-  abstract ImmutableSet<Account.Id> pastAssignees();
-
   abstract ImmutableSet<String> hashtags();
+
+  @Nullable
+  abstract String serverId();
 
   abstract ImmutableList<Map.Entry<PatchSet.Id, PatchSet>> patchSets();
 
@@ -296,14 +297,15 @@ public abstract class ChangeNotesState {
 
   abstract ImmutableList<ReviewerStatusUpdate> reviewerUpdates();
 
+  abstract ImmutableList<AssigneeStatusUpdate> assigneeUpdates();
+
   abstract ImmutableList<SubmitRecord> submitRecords();
 
   abstract ImmutableList<ChangeMessage> changeMessages();
 
-  abstract ImmutableListMultimap<RevId, Comment> publishedComments();
+  abstract ImmutableListMultimap<ObjectId, Comment> publishedComments();
 
-  @Nullable
-  abstract Timestamp readOnlyUntil();
+  abstract int updateCount();
 
   Change newChange(Project.NameKey project) {
     ChangeColumns c = requireNonNull(columns(), "columns are required");
@@ -312,45 +314,23 @@ public abstract class ChangeNotesState {
             c.changeKey(),
             changeId(),
             c.owner(),
-            new Branch.NameKey(project, c.branch()),
+            BranchNameKey.create(project, c.branch()),
             c.createdOn());
     copyNonConstructorColumnsTo(change);
-    change.setNoteDbState(NoteDbChangeState.NOTE_DB_PRIMARY_STATE);
     return change;
   }
 
-  void copyColumnsTo(Change change) throws IOException {
+  void copyColumnsTo(Change change) {
     ChangeColumns c = columns();
     checkState(
         c != null && metaId() != null,
         "missing columns or metaId in ChangeNotesState; is NoteDb enabled? %s",
         this);
-    checkMetaId(change);
     change.setKey(c.changeKey());
     change.setOwner(c.owner());
-    change.setDest(new Branch.NameKey(change.getProject(), c.branch()));
+    change.setDest(BranchNameKey.create(change.getProject(), c.branch()));
     change.setCreatedOn(c.createdOn());
     copyNonConstructorColumnsTo(change);
-  }
-
-  private void checkMetaId(Change change) throws IOException {
-    NoteDbChangeState state = NoteDbChangeState.parse(change);
-    if (state == null) {
-      return; // Can happen during small NoteDb tests.
-    } else if (state.getPrimaryStorage() == PrimaryStorage.NOTE_DB) {
-      return;
-    }
-    checkState(state.getRefState().isPresent(), "expected RefState: %s", state);
-    ObjectId idFromState = state.getRefState().get().changeMetaId();
-    if (!idFromState.equals(metaId())) {
-      throw new IOException(
-          "cannot copy ChangeNotesState into Change "
-              + changeId()
-              + "; this ChangeNotesState was created from "
-              + metaId()
-              + ", but change requires state "
-              + idFromState);
-    }
   }
 
   private void copyNonConstructorColumnsTo(Change change) {
@@ -361,11 +341,14 @@ public abstract class ChangeNotesState {
     change.setTopic(Strings.emptyToNull(c.topic()));
     change.setLastUpdatedOn(c.lastUpdatedOn());
     change.setSubmissionId(c.submissionId());
-    change.setAssignee(c.assignee());
+    if (!assigneeUpdates().isEmpty()) {
+      change.setAssignee(assigneeUpdates().get(0).currentAssignee().orElse(null));
+    }
     change.setPrivate(c.isPrivate());
     change.setWorkInProgress(c.workInProgress());
     change.setReviewStarted(c.reviewStarted());
     change.setRevertOf(c.revertOf());
+    change.setCherryPickOf(c.cherryPickOf());
 
     if (!patchSets().isEmpty()) {
       change.setCurrentPatchSet(c.currentPatchSetId(), c.subject(), c.originalSubject());
@@ -381,7 +364,6 @@ public abstract class ChangeNotesState {
     static Builder empty(Change.Id changeId) {
       return new AutoValue_ChangeNotesState.Builder()
           .changeId(changeId)
-          .pastAssignees(ImmutableSet.of())
           .hashtags(ImmutableSet.of())
           .patchSets(ImmutableList.of())
           .approvals(ImmutableList.of())
@@ -391,9 +373,11 @@ public abstract class ChangeNotesState {
           .pendingReviewersByEmail(ReviewerByEmailSet.empty())
           .allPastReviewers(ImmutableList.of())
           .reviewerUpdates(ImmutableList.of())
+          .assigneeUpdates(ImmutableList.of())
           .submitRecords(ImmutableList.of())
           .changeMessages(ImmutableList.of())
-          .publishedComments(ImmutableListMultimap.of());
+          .publishedComments(ImmutableListMultimap.of())
+          .updateCount(0);
     }
 
     abstract Builder metaId(ObjectId metaId);
@@ -402,7 +386,7 @@ public abstract class ChangeNotesState {
 
     abstract Builder columns(ChangeColumns columns);
 
-    abstract Builder pastAssignees(Set<Account.Id> pastAssignees);
+    abstract Builder serverId(String serverId);
 
     abstract Builder hashtags(Iterable<String> hashtags);
 
@@ -422,13 +406,15 @@ public abstract class ChangeNotesState {
 
     abstract Builder reviewerUpdates(List<ReviewerStatusUpdate> reviewerUpdates);
 
+    abstract Builder assigneeUpdates(List<AssigneeStatusUpdate> assigneeUpdates);
+
     abstract Builder submitRecords(List<SubmitRecord> submitRecords);
 
     abstract Builder changeMessages(List<ChangeMessage> changeMessages);
 
-    abstract Builder publishedComments(ListMultimap<RevId, Comment> publishedComments);
+    abstract Builder publishedComments(ListMultimap<ObjectId, Comment> publishedComments);
 
-    abstract Builder readOnlyUntil(@Nullable Timestamp readOnlyUntil);
+    abstract Builder updateCount(int updateCount);
 
     abstract ChangeNotesState build();
   }
@@ -453,10 +439,20 @@ public abstract class ChangeNotesState {
           .setChangeId(object.changeId().get())
           .setColumns(toChangeColumnsProto(object.columns()));
 
-      object.pastAssignees().forEach(a -> b.addPastAssignee(a.get()));
+      if (object.serverId() != null) {
+        b.setServerId(object.serverId());
+        b.setHasServerId(true);
+      }
       object.hashtags().forEach(b::addHashtag);
-      object.patchSets().forEach(e -> b.addPatchSet(toByteString(e.getValue(), PATCH_SET_CODEC)));
-      object.approvals().forEach(e -> b.addApproval(toByteString(e.getValue(), APPROVAL_CODEC)));
+      object
+          .patchSets()
+          .forEach(e -> b.addPatchSet(toByteString(e.getValue(), PatchSetProtoConverter.INSTANCE)));
+      object
+          .approvals()
+          .forEach(
+              e ->
+                  b.addApproval(
+                      toByteString(e.getValue(), PatchSetApprovalProtoConverter.INSTANCE)));
 
       object.reviewers().asTable().cellSet().forEach(c -> b.addReviewer(toReviewerSetEntry(c)));
       object
@@ -477,17 +473,23 @@ public abstract class ChangeNotesState {
 
       object.allPastReviewers().forEach(a -> b.addPastReviewer(a.get()));
       object.reviewerUpdates().forEach(u -> b.addReviewerUpdate(toReviewerStatusUpdateProto(u)));
+      object.assigneeUpdates().forEach(u -> b.addAssigneeUpdate(toAssigneeStatusUpdateProto(u)));
       object
           .submitRecords()
           .forEach(r -> b.addSubmitRecord(GSON.toJson(new StoredSubmitRecord(r))));
-      object.changeMessages().forEach(m -> b.addChangeMessage(toByteString(m, MESSAGE_CODEC)));
+      object
+          .changeMessages()
+          .forEach(m -> b.addChangeMessage(toByteString(m, ChangeMessageProtoConverter.INSTANCE)));
       object.publishedComments().values().forEach(c -> b.addPublishedComment(GSON.toJson(c)));
+      b.setUpdateCount(object.updateCount());
 
-      if (object.readOnlyUntil() != null) {
-        b.setReadOnlyUntil(object.readOnlyUntil().getTime()).setHasReadOnlyUntil(true);
-      }
+      return Protos.toByteArray(b.build());
+    }
 
-      return ProtoCacheSerializers.toByteArray(b.build());
+    @VisibleForTesting
+    static <T> ByteString toByteString(T object, ProtoConverter<?, T> converter) {
+      MessageLite message = converter.toProto(object);
+      return Protos.toByteString(message);
     }
 
     private static ChangeColumnsProto toChangeColumnsProto(ChangeColumns cols) {
@@ -511,9 +513,6 @@ public abstract class ChangeNotesState {
       if (cols.submissionId() != null) {
         b.setSubmissionId(cols.submissionId()).setHasSubmissionId(true);
       }
-      if (cols.assignee() != null) {
-        b.setAssignee(cols.assignee().get()).setHasAssignee(true);
-      }
       if (cols.status() != null) {
         b.setStatus(STATUS_CONVERTER.reverse().convert(cols.status())).setHasStatus(true);
       }
@@ -522,6 +521,10 @@ public abstract class ChangeNotesState {
           .setReviewStarted(cols.reviewStarted());
       if (cols.revertOf() != null) {
         b.setRevertOf(cols.revertOf().get()).setHasRevertOf(true);
+      }
+      if (cols.cherryPickOf() != null) {
+        b.setCherryPickOf(cols.cherryPickOf().getCommaSeparatedChangeAndPatchSetId())
+            .setHasCherryPickOf(true);
       }
       return b.build();
     }
@@ -553,69 +556,79 @@ public abstract class ChangeNotesState {
           .build();
     }
 
+    private static AssigneeStatusUpdateProto toAssigneeStatusUpdateProto(AssigneeStatusUpdate u) {
+      AssigneeStatusUpdateProto.Builder builder =
+          AssigneeStatusUpdateProto.newBuilder()
+              .setDate(u.date().getTime())
+              .setUpdatedBy(u.updatedBy().get())
+              .setHasCurrentAssignee(u.currentAssignee().isPresent());
+
+      u.currentAssignee().ifPresent(assignee -> builder.setCurrentAssignee(assignee.get()));
+      return builder.build();
+    }
+
     @Override
     public ChangeNotesState deserialize(byte[] in) {
-      ChangeNotesStateProto proto =
-          ProtoCacheSerializers.parseUnchecked(ChangeNotesStateProto.parser(), in);
-      Change.Id changeId = new Change.Id(proto.getChangeId());
+      ChangeNotesStateProto proto = Protos.parseUnchecked(ChangeNotesStateProto.parser(), in);
+      Change.Id changeId = Change.id(proto.getChangeId());
 
       ChangeNotesState.Builder b =
           builder()
               .metaId(ObjectIdConverter.create().fromByteString(proto.getMetaId()))
               .changeId(changeId)
               .columns(toChangeColumns(changeId, proto.getColumns()))
-              .pastAssignees(
-                  proto.getPastAssigneeList().stream()
-                      .map(Account.Id::new)
-                      .collect(toImmutableSet()))
+              .serverId(proto.getHasServerId() ? proto.getServerId() : null)
               .hashtags(proto.getHashtagList())
               .patchSets(
                   proto.getPatchSetList().stream()
-                      .map(PATCH_SET_CODEC::decode)
-                      .map(ps -> Maps.immutableEntry(ps.getId(), ps))
+                      .map(bytes -> parseProtoFrom(PatchSetProtoConverter.INSTANCE, bytes))
+                      .map(ps -> Maps.immutableEntry(ps.id(), ps))
                       .collect(toImmutableList()))
               .approvals(
                   proto.getApprovalList().stream()
-                      .map(APPROVAL_CODEC::decode)
-                      .map(a -> Maps.immutableEntry(a.getPatchSetId(), a))
+                      .map(bytes -> parseProtoFrom(PatchSetApprovalProtoConverter.INSTANCE, bytes))
+                      .map(a -> Maps.immutableEntry(a.patchSetId(), a))
                       .collect(toImmutableList()))
               .reviewers(toReviewerSet(proto.getReviewerList()))
               .reviewersByEmail(toReviewerByEmailSet(proto.getReviewerByEmailList()))
               .pendingReviewers(toReviewerSet(proto.getPendingReviewerList()))
               .pendingReviewersByEmail(toReviewerByEmailSet(proto.getPendingReviewerByEmailList()))
               .allPastReviewers(
-                  proto.getPastReviewerList().stream()
-                      .map(Account.Id::new)
-                      .collect(toImmutableList()))
+                  proto.getPastReviewerList().stream().map(Account::id).collect(toImmutableList()))
               .reviewerUpdates(toReviewerStatusUpdateList(proto.getReviewerUpdateList()))
+              .assigneeUpdates(toAssigneeStatusUpdateList(proto.getAssigneeUpdateList()))
               .submitRecords(
                   proto.getSubmitRecordList().stream()
                       .map(r -> GSON.fromJson(r, StoredSubmitRecord.class).toSubmitRecord())
                       .collect(toImmutableList()))
               .changeMessages(
                   proto.getChangeMessageList().stream()
-                      .map(MESSAGE_CODEC::decode)
+                      .map(bytes -> parseProtoFrom(ChangeMessageProtoConverter.INSTANCE, bytes))
                       .collect(toImmutableList()))
               .publishedComments(
                   proto.getPublishedCommentList().stream()
                       .map(r -> GSON.fromJson(r, Comment.class))
-                      .collect(toImmutableListMultimap(c -> new RevId(c.revId), c -> c)));
-      if (proto.getHasReadOnlyUntil()) {
-        b.readOnlyUntil(new Timestamp(proto.getReadOnlyUntil()));
-      }
+                      .collect(toImmutableListMultimap(Comment::getCommitId, c -> c)))
+              .updateCount(proto.getUpdateCount());
       return b.build();
+    }
+
+    private static <P extends MessageLite, T> T parseProtoFrom(
+        ProtoConverter<P, T> converter, ByteString byteString) {
+      P message = Protos.parseUnchecked(converter.getParser(), byteString);
+      return converter.fromProto(message);
     }
 
     private static ChangeColumns toChangeColumns(Change.Id changeId, ChangeColumnsProto proto) {
       ChangeColumns.Builder b =
           ChangeColumns.builder()
-              .changeKey(new Change.Key(proto.getChangeKey()))
+              .changeKey(Change.key(proto.getChangeKey()))
               .createdOn(new Timestamp(proto.getCreatedOn()))
               .lastUpdatedOn(new Timestamp(proto.getLastUpdatedOn()))
-              .owner(new Account.Id(proto.getOwner()))
+              .owner(Account.id(proto.getOwner()))
               .branch(proto.getBranch());
       if (proto.getHasCurrentPatchSetId()) {
-        b.currentPatchSetId(new PatchSet.Id(changeId, proto.getCurrentPatchSetId()));
+        b.currentPatchSetId(PatchSet.id(changeId, proto.getCurrentPatchSetId()));
       }
       b.subject(proto.getSubject());
       if (proto.getHasTopic()) {
@@ -627,9 +640,6 @@ public abstract class ChangeNotesState {
       if (proto.getHasSubmissionId()) {
         b.submissionId(proto.getSubmissionId());
       }
-      if (proto.getHasAssignee()) {
-        b.assignee(new Account.Id(proto.getAssignee()));
-      }
       if (proto.getHasStatus()) {
         b.status(STATUS_CONVERTER.convert(proto.getStatus()));
       }
@@ -637,7 +647,10 @@ public abstract class ChangeNotesState {
           .workInProgress(proto.getWorkInProgress())
           .reviewStarted(proto.getReviewStarted());
       if (proto.getHasRevertOf()) {
-        b.revertOf(new Change.Id(proto.getRevertOf()));
+        b.revertOf(Change.id(proto.getRevertOf()));
+      }
+      if (proto.getHasCherryPickOf()) {
+        b.cherryPickOf(PatchSet.Id.parse(proto.getCherryPickOf()));
       }
       return b.build();
     }
@@ -648,7 +661,7 @@ public abstract class ChangeNotesState {
       for (ReviewerSetEntryProto e : protos) {
         b.put(
             REVIEWER_STATE_CONVERTER.convert(e.getState()),
-            new Account.Id(e.getAccountId()),
+            Account.id(e.getAccountId()),
             new Timestamp(e.getTimestamp()));
       }
       return ReviewerSet.fromTable(b.build());
@@ -674,9 +687,24 @@ public abstract class ChangeNotesState {
         b.add(
             ReviewerStatusUpdate.create(
                 new Timestamp(proto.getDate()),
-                new Account.Id(proto.getUpdatedBy()),
-                new Account.Id(proto.getReviewer()),
+                Account.id(proto.getUpdatedBy()),
+                Account.id(proto.getReviewer()),
                 REVIEWER_STATE_CONVERTER.convert(proto.getState())));
+      }
+      return b.build();
+    }
+
+    private static ImmutableList<AssigneeStatusUpdate> toAssigneeStatusUpdateList(
+        List<AssigneeStatusUpdateProto> protos) {
+      ImmutableList.Builder<AssigneeStatusUpdate> b = ImmutableList.builder();
+      for (AssigneeStatusUpdateProto proto : protos) {
+        b.add(
+            AssigneeStatusUpdate.create(
+                new Timestamp(proto.getDate()),
+                Account.id(proto.getUpdatedBy()),
+                proto.getHasCurrentAssignee()
+                    ? Optional.of(Account.id(proto.getCurrentAssignee()))
+                    : Optional.empty()));
       }
       return b.build();
     }

@@ -17,7 +17,7 @@ package com.google.gerrit.server;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.inject.Scopes.SINGLETON;
 
-import com.google.gerrit.reviewdb.client.Account;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.FakeRealm;
 import com.google.gerrit.server.account.GroupBackend;
@@ -25,7 +25,7 @@ import com.google.gerrit.server.account.Realm;
 import com.google.gerrit.server.config.AnonymousCowardName;
 import com.google.gerrit.server.config.AnonymousCowardNameProvider;
 import com.google.gerrit.server.config.CanonicalWebUrl;
-import com.google.gerrit.server.config.DisableReverseDnsLookup;
+import com.google.gerrit.server.config.EnableReverseDnsLookup;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.group.SystemGroupBackend;
 import com.google.gerrit.server.util.time.TimeUtil;
@@ -80,8 +80,8 @@ public class IdentifiedUserTest {
           @Override
           protected void configure() {
             bind(Boolean.class)
-                .annotatedWith(DisableReverseDnsLookup.class)
-                .toInstance(Boolean.FALSE);
+                .annotatedWith(EnableReverseDnsLookup.class)
+                .toInstance(Boolean.TRUE);
             bind(Config.class).annotatedWith(GerritServerConfig.class).toInstance(config);
             bind(String.class)
                 .annotatedWith(AnonymousCowardName.class)
@@ -98,8 +98,11 @@ public class IdentifiedUserTest {
     Injector injector = Guice.createInjector(mod);
     injector.injectMembers(this);
 
-    Account account = new Account(new Account.Id(1), TimeUtil.nowTs());
-    Account.Id ownerId = account.getId();
+    Account account =
+        Account.builder(Account.id(1), TimeUtil.nowTs())
+            .setMetaId("1234567812345678123456781234567812345678")
+            .build();
+    Account.Id ownerId = account.id();
 
     identifiedUser = identifiedUserFactory.create(ownerId);
 

@@ -15,32 +15,30 @@
 package com.google.gerrit.server.events;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.gerrit.reviewdb.client.Change.Status.NEW;
+import static com.google.gerrit.entities.Change.Status.NEW;
 
 import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.truth.MapSubject;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.data.AccountAttribute;
 import com.google.gerrit.server.data.ChangeAttribute;
 import com.google.gerrit.server.data.RefUpdateAttribute;
 import com.google.gerrit.server.util.time.TimeUtil;
-import com.google.gerrit.testing.GerritBaseTests;
 import com.google.gerrit.testing.TestTimeUtil;
 import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import org.junit.Before;
 import org.junit.Test;
 
-public class EventJsonTest extends GerritBaseTests {
+public class EventJsonTest {
   private static final String BRANCH = "mybranch";
   private static final String CHANGE_ID = "Ideadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
   private static final int CHANGE_NUM = 1000;
@@ -52,12 +50,7 @@ public class EventJsonTest extends GerritBaseTests {
   private static final double TS2 = 1.254344401E9;
   private static final String URL = "http://somewhere.com";
 
-  // Must match StreamEvents#gson. (In master, the definition is refactored to be hared.)
-  private final Gson gson =
-      new GsonBuilder()
-          .registerTypeAdapter(Supplier.class, new SupplierSerializer())
-          .registerTypeAdapter(Project.NameKey.class, new ProjectNameKeySerializer())
-          .create();
+  private final Gson gson = new EventGsonProvider().get();
 
   @Before
   public void setTimeForTesting() {
@@ -577,10 +570,10 @@ public class EventJsonTest extends GerritBaseTests {
 
   private Change newChange() {
     return new Change(
-        new Change.Key(CHANGE_ID),
-        new Change.Id(CHANGE_NUM),
-        new Account.Id(9999),
-        new Branch.NameKey(new Project.NameKey(PROJECT), BRANCH),
+        Change.key(CHANGE_ID),
+        Change.id(CHANGE_NUM),
+        Account.id(9999),
+        BranchNameKey.create(Project.nameKey(PROJECT), BRANCH),
         TimeUtil.nowTs());
   }
 
@@ -591,7 +584,7 @@ public class EventJsonTest extends GerritBaseTests {
   private Supplier<ChangeAttribute> asChangeAttribute(Change change) {
     ChangeAttribute a = new ChangeAttribute();
     a.project = change.getProject().get();
-    a.branch = change.getDest().getShortName();
+    a.branch = change.getDest().shortName();
     a.topic = change.getTopic();
     a.id = change.getKey().get();
     a.number = change.getId().get();
@@ -609,8 +602,9 @@ public class EventJsonTest extends GerritBaseTests {
     // Parse JSON into a raw Java map:
     //  * Doesn't depend on field iteration order.
     //  * Avoids excessively long string literals in asserts.
+    String json = gson.toJson(src);
     Map<Object, Object> map =
-        gson.fromJson(gson.toJson(src), new TypeToken<Map<Object, Object>>() {}.getType());
+        gson.fromJson(json, new TypeToken<Map<Object, Object>>() {}.getType());
     return assertThat(map);
   }
 

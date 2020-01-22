@@ -15,7 +15,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 <link rel="import" href="../../../styles/shared-styles.html">
 <link rel="import" href="../../../styles/gr-form-styles.html">
 <link rel="import" href="../../core/gr-navigation/gr-navigation.html">
@@ -23,7 +23,9 @@ limitations under the License.
 
 <dom-module id="gr-group-list">
   <template>
-    <style include="shared-styles"></style>
+    <style include="shared-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <style include="gr-form-styles">
         #groups .nameColumn {
           min-width: 11em;

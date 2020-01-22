@@ -14,26 +14,24 @@
 
 package com.google.gerrit.server.change;
 
-import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.flogger.LazyArgs.lazy;
 
+import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.RestApiException;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.StarredChangesUtil;
 import com.google.gerrit.server.extensions.events.ChangeDeleted;
 import com.google.gerrit.server.plugincontext.PluginItemContext;
-import com.google.gerrit.server.project.NoSuchChangeException;
 import com.google.gerrit.server.update.BatchUpdateOp;
-import com.google.gerrit.server.update.BatchUpdateReviewDb;
 import com.google.gerrit.server.update.ChangeContext;
-import com.google.gerrit.server.update.Order;
 import com.google.gerrit.server.update.RepoContext;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
+import com.google.inject.assistedinject.Assisted;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.Map;
@@ -42,41 +40,55 @@ import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.revwalk.RevWalk;
 
 public class DeleteChangeOp implements BatchUpdateOp {
+  private static final FluentLogger logger = FluentLogger.forEnclosingClass();
+
+  public interface Factory {
+    DeleteChangeOp create(Change.Id id);
+  }
+
   private final PatchSetUtil psUtil;
   private final StarredChangesUtil starredChangesUtil;
   private final PluginItemContext<AccountPatchReviewStore> accountPatchReviewStore;
   private final ChangeDeleted changeDeleted;
-
-  private Change.Id id;
+  private final Change.Id id;
 
   @Inject
   DeleteChangeOp(
       PatchSetUtil psUtil,
       StarredChangesUtil starredChangesUtil,
       PluginItemContext<AccountPatchReviewStore> accountPatchReviewStore,
-      ChangeDeleted changeDeleted) {
+      ChangeDeleted changeDeleted,
+      @Assisted Change.Id id) {
     this.psUtil = psUtil;
     this.starredChangesUtil = starredChangesUtil;
     this.accountPatchReviewStore = accountPatchReviewStore;
     this.changeDeleted = changeDeleted;
+    this.id = id;
   }
 
+  // The relative order of updateChange and updateRepo doesn't matter as long as all operations are
+  // executed in a single atomic BatchRefUpdate. Actually deleting the change refs first would not
+  // fail gracefully if the second delete fails, but fortunately that's not what happens.
   @Override
-  public boolean updateChange(ChangeContext ctx)
-      throws RestApiException, OrmException, IOException, NoSuchChangeException {
-    checkState(
-        ctx.getOrder() == Order.DB_BEFORE_REPO, "must use DeleteChangeOp with DB_BEFORE_REPO");
-    checkState(id == null, "cannot reuse DeleteChangeOp");
-
-    id = ctx.getChange().getId();
-    Collection<PatchSet> patchSets = psUtil.byChange(ctx.getDb(), ctx.getNotes());
+  public boolean updateChange(ChangeContext ctx) throws RestApiException, IOException {
+    Collection<PatchSet> patchSets = psUtil.byChange(ctx.getNotes());
 
     ensureDeletable(ctx, id, patchSets);
     // Cleaning up is only possible as long as the change and its elements are
     // still part of the database.
-    cleanUpReferences(ctx, id, patchSets);
-    deleteChangeElementsFromDb(ctx, id);
+    cleanUpReferences(id);
 
+    logger.atFine().log(
+        "Deleting change %s, current patch set %d is commit %s",
+        id,
+        ctx.getChange().currentPatchSetId().get(),
+        lazy(
+            () ->
+                patchSets.stream()
+                    .filter(p -> p.number() == ctx.getChange().currentPatchSetId().get())
+                    .findAny()
+                    .map(p -> p.commitId().name())
+                    .orElse("n/a")));
     ctx.deleteChange();
     changeDeleted.fire(ctx.getChange(), ctx.getAccount(), ctx.getWhen());
     return true;
@@ -84,62 +96,57 @@ public class DeleteChangeOp implements BatchUpdateOp {
 
   private void ensureDeletable(ChangeContext ctx, Change.Id id, Collection<PatchSet> patchSets)
       throws ResourceConflictException, MethodNotAllowedException, IOException {
-    Change.Status status = ctx.getChange().getStatus();
-    if (status == Change.Status.MERGED) {
+    if (ctx.getChange().isMerged()) {
       throw new MethodNotAllowedException("Deleting merged change " + id + " is not allowed");
     }
     for (PatchSet patchSet : patchSets) {
       if (isPatchSetMerged(ctx, patchSet)) {
         throw new ResourceConflictException(
             String.format(
-                "Cannot delete change %s: patch set %s is already merged",
-                id, patchSet.getPatchSetId()));
+                "Cannot delete change %s: patch set %s is already merged", id, patchSet.number()));
       }
     }
   }
 
   private boolean isPatchSetMerged(ChangeContext ctx, PatchSet patchSet) throws IOException {
-    Optional<ObjectId> destId = ctx.getRepoView().getRef(ctx.getChange().getDest().get());
+    Optional<ObjectId> destId = ctx.getRepoView().getRef(ctx.getChange().getDest().branch());
     if (!destId.isPresent()) {
       return false;
     }
 
     RevWalk revWalk = ctx.getRevWalk();
-    ObjectId objectId = ObjectId.fromString(patchSet.getRevision().get());
-    return revWalk.isMergedInto(revWalk.parseCommit(objectId), revWalk.parseCommit(destId.get()));
+    return revWalk.isMergedInto(
+        revWalk.parseCommit(patchSet.commitId()), revWalk.parseCommit(destId.get()));
   }
 
-  private void deleteChangeElementsFromDb(ChangeContext ctx, Change.Id id) throws OrmException {
-    // Only delete from ReviewDb here; deletion from NoteDb is handled in
-    // BatchUpdate.
-    //
-    // This is special. We want to delete exactly the rows that are present in
-    // the database, even when reading everything else from NoteDb, so we need
-    // to bypass the write-only wrapper.
-    ReviewDb db = BatchUpdateReviewDb.unwrap(ctx.getDb());
-    db.patchComments().delete(db.patchComments().byChange(id));
-    db.patchSetApprovals().delete(db.patchSetApprovals().byChange(id));
-    db.patchSets().delete(db.patchSets().byChange(id));
-    db.changeMessages().delete(db.changeMessages().byChange(id));
-  }
+  private void cleanUpReferences(Change.Id id) throws IOException {
+    accountPatchReviewStore.run(s -> s.clearReviewed(id));
 
-  private void cleanUpReferences(ChangeContext ctx, Change.Id id, Collection<PatchSet> patchSets)
-      throws OrmException, NoSuchChangeException {
-    for (PatchSet ps : patchSets) {
-      accountPatchReviewStore.run(s -> s.clearReviewed(ps.getId()), OrmException.class);
-    }
-
-    // Non-atomic operation on Accounts table; not much we can do to make it
-    // atomic.
-    starredChangesUtil.unstarAll(ctx.getChange().getProject(), id);
+    // Non-atomic operation on All-Users refs; not much we can do to make it atomic.
+    starredChangesUtil.unstarAllForChangeDeletion(id);
   }
 
   @Override
   public void updateRepo(RepoContext ctx) throws IOException {
-    String prefix = new PatchSet.Id(id, 1).toRefName();
-    prefix = prefix.substring(0, prefix.length() - 1);
-    for (Map.Entry<String, ObjectId> e : ctx.getRepoView().getRefs(prefix).entrySet()) {
-      ctx.addRefUpdate(e.getValue(), ObjectId.zeroId(), prefix + e.getKey());
+    String changeRefPrefix = RefNames.changeRefPrefix(id);
+    for (Map.Entry<String, ObjectId> e : ctx.getRepoView().getRefs(changeRefPrefix).entrySet()) {
+      removeRef(ctx, e, changeRefPrefix);
     }
+    removeUserEdits(ctx);
+  }
+
+  private void removeUserEdits(RepoContext ctx) throws IOException {
+    String prefix = RefNames.REFS_USERS;
+    String editRef = String.format("/edit-%s/", id);
+    for (Map.Entry<String, ObjectId> e : ctx.getRepoView().getRefs(prefix).entrySet()) {
+      if (e.getKey().contains(editRef)) {
+        removeRef(ctx, e, prefix);
+      }
+    }
+  }
+
+  private void removeRef(RepoContext ctx, Map.Entry<String, ObjectId> entry, String prefix)
+      throws IOException {
+    ctx.addRefUpdate(entry.getValue(), ObjectId.zeroId(), prefix + entry.getKey());
   }
 }

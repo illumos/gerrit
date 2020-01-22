@@ -15,10 +15,11 @@
 package com.google.gerrit.index.project;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.index.IndexCollection;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.inject.Singleton;
 
+/** Collection of active project indices. See {@link IndexCollection} for details on collections. */
 @Singleton
 public class ProjectIndexCollection
     extends IndexCollection<Project.NameKey, ProjectData, ProjectIndex> {

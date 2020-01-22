@@ -21,10 +21,10 @@ import com.google.common.flogger.FluentLogger;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.index.SiteIndexer;
 import com.google.gerrit.index.project.ProjectData;
 import com.google.gerrit.index.project.ProjectIndex;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.index.IndexExecutor;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.inject.Inject;
@@ -37,6 +37,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.jgit.lib.ProgressMonitor;
 import org.eclipse.jgit.lib.TextProgressMonitor;
 
+/**
+ * Implementation that can index all projects on a host. Used by Gerrit's initialization and upgrade
+ * programs as well as by REST API endpoints that offer this functionality.
+ */
 @Singleton
 public class AllProjectsIndexer extends SiteIndexer<Project.NameKey, ProjectData, ProjectIndex> {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
@@ -91,11 +95,11 @@ public class AllProjectsIndexer extends SiteIndexer<Project.NameKey, ProjectData
       Futures.successfulAsList(futures).get();
     } catch (ExecutionException | InterruptedException e) {
       logger.atSevere().withCause(e).log("Error waiting on project futures");
-      return new SiteIndexer.Result(sw, false, 0, 0);
+      return SiteIndexer.Result.create(sw, false, 0, 0);
     }
 
     progress.endTask();
-    return new SiteIndexer.Result(sw, ok.get(), done.get(), failed.get());
+    return SiteIndexer.Result.create(sw, ok.get(), done.get(), failed.get());
   }
 
   private List<Project.NameKey> collectProjects(ProgressMonitor progress) {

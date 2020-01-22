@@ -14,21 +14,25 @@
 
 package com.google.gerrit.acceptance.rest.project;
 
-import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.gerrit.acceptance.GitUtil.createAnnotatedTag;
 import static com.google.gerrit.acceptance.GitUtil.deleteRef;
 import static com.google.gerrit.acceptance.GitUtil.pushHead;
 import static com.google.gerrit.acceptance.GitUtil.updateAnnotatedTag;
 import static com.google.gerrit.acceptance.rest.project.AbstractPushTag.TagType.ANNOTATED;
 import static com.google.gerrit.acceptance.rest.project.AbstractPushTag.TagType.LIGHTWEIGHT;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.permissionKey;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
 
 import com.google.common.base.MoreObjects;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.GitUtil;
 import com.google.gerrit.acceptance.NoHttpd;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.common.data.Permission;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.gerrit.entities.RefNames;
+import com.google.inject.Inject;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.transport.PushResult;
@@ -50,6 +54,8 @@ public abstract class AbstractPushTag extends AbstractDaemonTest {
     }
   }
 
+  @Inject private ProjectOperations projectOperations;
+
   private RevCommit initialHead;
   private TagType tagType;
 
@@ -58,7 +64,7 @@ public abstract class AbstractPushTag extends AbstractDaemonTest {
     // clone with user to avoid inherited tag permissions of admin user
     testRepo = cloneProject(project, user);
 
-    initialHead = getRemoteHead();
+    initialHead = projectOperations.project(project).getHead("master");
     tagType = getTagType();
   }
 
@@ -188,7 +194,7 @@ public abstract class AbstractPushTag extends AbstractDaemonTest {
     if (force) {
       testRepo.reset(initialHead);
     }
-    commit(user.getIdent(), "subject");
+    commit(user.newIdent(), "subject");
 
     boolean createTag = tagName == null;
     tagName = MoreObjects.firstNonNull(tagName, "v1_" + System.nanoTime());
@@ -197,9 +203,9 @@ public abstract class AbstractPushTag extends AbstractDaemonTest {
         break;
       case ANNOTATED:
         if (createTag) {
-          createAnnotatedTag(testRepo, tagName, user.getIdent());
+          createAnnotatedTag(testRepo, tagName, user.newIdent());
         } else {
-          updateAnnotatedTag(testRepo, tagName, user.getIdent());
+          updateAnnotatedTag(testRepo, tagName, user.newIdent());
         }
         break;
       default:
@@ -207,7 +213,11 @@ public abstract class AbstractPushTag extends AbstractDaemonTest {
     }
 
     if (!newCommit) {
-      grant(project, "refs/for/refs/heads/master", Permission.SUBMIT, false, REGISTERED_USERS);
+      projectOperations
+          .project(project)
+          .forUpdate()
+          .add(allow(Permission.SUBMIT).ref("refs/for/refs/heads/master").group(REGISTERED_USERS))
+          .update();
       pushHead(testRepo, "refs/for/master%submit");
     }
 
@@ -217,7 +227,7 @@ public abstract class AbstractPushTag extends AbstractDaemonTest {
             ? pushHead(testRepo, tagRef, false, force)
             : GitUtil.pushTag(testRepo, tagName, !createTag);
     RemoteRefUpdate refUpdate = r.getRemoteUpdate(tagRef);
-    assertThat(refUpdate.getStatus()).named(tagType.name()).isEqualTo(expectedStatus);
+    assertWithMessage(tagType.name()).that(refUpdate.getStatus()).isEqualTo(expectedStatus);
     return tagName;
   }
 
@@ -225,30 +235,50 @@ public abstract class AbstractPushTag extends AbstractDaemonTest {
     String tagRef = tagRef(tagName);
     PushResult r = deleteRef(testRepo, tagRef);
     RemoteRefUpdate refUpdate = r.getRemoteUpdate(tagRef);
-    assertThat(refUpdate.getStatus()).named(tagType.name()).isEqualTo(expectedStatus);
+    assertWithMessage(tagType.name()).that(refUpdate.getStatus()).isEqualTo(expectedStatus);
   }
 
   private void allowTagCreation() throws Exception {
-    grant(project, "refs/tags/*", tagType.createPermission, false, REGISTERED_USERS);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(tagType.createPermission).ref("refs/tags/*").group(REGISTERED_USERS))
+        .update();
   }
 
   private void allowPushOnRefsTags() throws Exception {
     removePushFromRefsTags();
-    grant(project, "refs/tags/*", Permission.PUSH, false, REGISTERED_USERS);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.PUSH).ref("refs/tags/*").group(REGISTERED_USERS))
+        .update();
   }
 
   private void allowForcePushOnRefsTags() throws Exception {
     removePushFromRefsTags();
-    grant(project, "refs/tags/*", Permission.PUSH, true, REGISTERED_USERS);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.PUSH).ref("refs/tags/*").group(REGISTERED_USERS).force(true))
+        .update();
   }
 
   private void allowTagDeletion() throws Exception {
     removePushFromRefsTags();
-    grant(project, "refs/tags/*", Permission.DELETE, true, REGISTERED_USERS);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.DELETE).ref("refs/tags/*").group(REGISTERED_USERS).force(true))
+        .update();
   }
 
   private void removePushFromRefsTags() throws Exception {
-    removePermission(project, "refs/tags/*", Permission.PUSH);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .remove(permissionKey(Permission.PUSH).ref("refs/tags/*"))
+        .update();
   }
 
   private void commit(PersonIdent ident, String subject) throws Exception {

@@ -14,26 +14,25 @@
 
 package com.google.gerrit.server.change;
 
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allowLabel;
 import static com.google.gerrit.common.data.Permission.forLabel;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
-import static com.google.gerrit.server.project.testing.Util.allow;
-import static com.google.gerrit.server.project.testing.Util.category;
-import static com.google.gerrit.server.project.testing.Util.value;
+import static com.google.gerrit.server.project.testing.TestLabels.label;
+import static com.google.gerrit.server.project.testing.TestLabels.value;
 import static org.junit.Assert.assertEquals;
 
 import com.google.common.collect.ImmutableList;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.common.data.AccessSection;
 import com.google.gerrit.common.data.LabelType;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.LabelId;
+import com.google.gerrit.entities.PatchSetApproval;
+import com.google.gerrit.extensions.api.GerritApi;
+import com.google.gerrit.extensions.common.ChangeInfo;
+import com.google.gerrit.extensions.common.ChangeInput;
 import com.google.gerrit.lifecycle.LifecycleManager;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.LabelId;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.PatchSetApproval;
-import com.google.gerrit.reviewdb.client.PatchSetInfo;
-import com.google.gerrit.reviewdb.server.ReviewDb;
-import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.AccountManager;
 import com.google.gerrit.server.account.AuthRequest;
@@ -45,16 +44,12 @@ import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectConfig;
 import com.google.gerrit.server.schema.SchemaCreator;
-import com.google.gerrit.server.util.RequestContext;
 import com.google.gerrit.server.util.ThreadLocalRequestContext;
 import com.google.gerrit.server.util.time.TimeUtil;
-import com.google.gerrit.testing.InMemoryDatabase;
 import com.google.gerrit.testing.InMemoryModule;
 import com.google.inject.Guice;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
-import com.google.inject.Provider;
-import com.google.inject.util.Providers;
 import java.util.List;
 import org.eclipse.jgit.lib.Repository;
 import org.junit.After;
@@ -67,16 +62,17 @@ public class LabelNormalizerTest {
   @Inject private AllProjectsName allProjects;
   @Inject private GitRepositoryManager repoManager;
   @Inject private IdentifiedUser.GenericFactory userFactory;
-  @Inject private InMemoryDatabase schemaFactory;
   @Inject private LabelNormalizer norm;
   @Inject private MetaDataUpdate.User metaDataUpdateFactory;
   @Inject private ProjectCache projectCache;
   @Inject private SchemaCreator schemaCreator;
   @Inject protected ThreadLocalRequestContext requestContext;
   @Inject private ChangeNotes.Factory changeNotesFactory;
+  @Inject private ProjectConfig.Factory projectConfigFactory;
+  @Inject private GerritApi gApi;
+  @Inject private ProjectOperations projectOperations;
 
   private LifecycleManager lifecycle;
-  private ReviewDb db;
   private Account.Id userId;
   private IdentifiedUser user;
   private Change change;
@@ -90,23 +86,11 @@ public class LabelNormalizerTest {
     lifecycle.add(injector);
     lifecycle.start();
 
-    db = schemaFactory.open();
-    schemaCreator.create(db);
+    schemaCreator.create();
     userId = accountManager.authenticate(AuthRequest.forUser("user")).getAccountId();
     user = userFactory.create(userId);
 
-    requestContext.setContext(
-        new RequestContext() {
-          @Override
-          public CurrentUser getUser() {
-            return user;
-          }
-
-          @Override
-          public Provider<ReviewDb> getReviewDbProvider() {
-            return Providers.of(db);
-          }
-        });
+    requestContext.setContext(() -> user);
 
     configureProject();
     setUpChange();
@@ -120,24 +104,20 @@ public class LabelNormalizerTest {
       }
     }
     LabelType lt =
-        category("Verified", value(1, "Verified"), value(0, "No score"), value(-1, "Fails"));
+        label("Verified", value(1, "Verified"), value(0, "No score"), value(-1, "Fails"));
     pc.getLabelSections().put(lt.getName(), lt);
     save(pc);
   }
 
   private void setUpChange() throws Exception {
-    change =
-        new Change(
-            new Change.Key("Iabcd1234abcd1234abcd1234abcd1234abcd1234"),
-            new Change.Id(1),
-            userId,
-            new Branch.NameKey(allProjects, "refs/heads/master"),
-            TimeUtil.nowTs());
-    PatchSetInfo ps = new PatchSetInfo(new PatchSet.Id(change.getId(), 1));
-    ps.setSubject("Test change");
-    change.setCurrentPatchSet(ps);
-    db.changes().insert(ImmutableList.of(change));
-    notes = changeNotesFactory.createChecked(db, change);
+    ChangeInput input = new ChangeInput();
+    input.project = allProjects.get();
+    input.branch = "master";
+    input.newBranch = true;
+    input.subject = "Test change";
+    ChangeInfo info = gApi.changes().create(input).get();
+    notes = changeNotesFactory.createChecked(allProjects, Change.id(info._number));
+    change = notes.getChange();
   }
 
   @After
@@ -146,18 +126,15 @@ public class LabelNormalizerTest {
       lifecycle.stop();
     }
     requestContext.setContext(null);
-    if (db != null) {
-      db.close();
-    }
-    InMemoryDatabase.drop(schemaFactory);
   }
 
   @Test
   public void noNormalizeByPermission() throws Exception {
-    ProjectConfig pc = loadAllProjects();
-    allow(pc, forLabel("Code-Review"), -1, 1, REGISTERED_USERS, "refs/heads/*");
-    allow(pc, forLabel("Verified"), -1, 1, REGISTERED_USERS, "refs/heads/*");
-    save(pc);
+    projectOperations
+        .allProjectsForUpdate()
+        .add(allowLabel("Code-Review").ref("refs/heads/*").group(REGISTERED_USERS).range(-1, 1))
+        .add(allowLabel("Verified").ref("refs/heads/*").group(REGISTERED_USERS).range(-1, 1))
+        .update();
 
     PatchSetApproval cr = psa(userId, "Code-Review", 2);
     PatchSetApproval v = psa(userId, "Verified", 1);
@@ -166,10 +143,11 @@ public class LabelNormalizerTest {
 
   @Test
   public void normalizeByType() throws Exception {
-    ProjectConfig pc = loadAllProjects();
-    allow(pc, forLabel("Code-Review"), -5, 5, REGISTERED_USERS, "refs/heads/*");
-    allow(pc, forLabel("Verified"), -5, 5, REGISTERED_USERS, "refs/heads/*");
-    save(pc);
+    projectOperations
+        .allProjectsForUpdate()
+        .add(allowLabel("Code-Review").ref("refs/heads/*").group(REGISTERED_USERS).range(-5, 5))
+        .add(allowLabel("Verified").ref("refs/heads/*").group(REGISTERED_USERS).range(-5, 5))
+        .update();
 
     PatchSetApproval cr = psa(userId, "Code-Review", 5);
     PatchSetApproval v = psa(userId, "Verified", 5);
@@ -187,9 +165,10 @@ public class LabelNormalizerTest {
 
   @Test
   public void explicitZeroVoteOnNonEmptyRangeIsPresent() throws Exception {
-    ProjectConfig pc = loadAllProjects();
-    allow(pc, forLabel("Code-Review"), -1, 1, REGISTERED_USERS, "refs/heads/*");
-    save(pc);
+    projectOperations
+        .allProjectsForUpdate()
+        .add(allowLabel("Code-Review").ref("refs/heads/*").group(REGISTERED_USERS).range(-1, 1))
+        .update();
 
     PatchSetApproval cr = psa(userId, "Code-Review", 0);
     PatchSetApproval v = psa(userId, "Verified", 0);
@@ -198,7 +177,7 @@ public class LabelNormalizerTest {
 
   private ProjectConfig loadAllProjects() throws Exception {
     try (Repository repo = repoManager.openRepository(allProjects)) {
-      ProjectConfig pc = new ProjectConfig(allProjects);
+      ProjectConfig pc = projectConfigFactory.create(allProjects);
       pc.load(repo);
       return pc;
     }
@@ -212,19 +191,18 @@ public class LabelNormalizerTest {
   }
 
   private PatchSetApproval psa(Account.Id accountId, String label, int value) {
-    return new PatchSetApproval(
-        new PatchSetApproval.Key(change.currentPatchSetId(), accountId, new LabelId(label)),
-        (short) value,
-        TimeUtil.nowTs());
+    return PatchSetApproval.builder()
+        .key(PatchSetApproval.key(change.currentPatchSetId(), accountId, LabelId.create(label)))
+        .value(value)
+        .granted(TimeUtil.nowTs())
+        .build();
   }
 
   private PatchSetApproval copy(PatchSetApproval src, int newValue) {
-    PatchSetApproval result = new PatchSetApproval(src.getKey().getParentKey(), src);
-    result.setValue((short) newValue);
-    return result;
+    return src.toBuilder().value(newValue).build();
   }
 
   private static List<PatchSetApproval> list(PatchSetApproval... psas) {
-    return ImmutableList.<PatchSetApproval>copyOf(psas);
+    return ImmutableList.copyOf(psas);
   }
 }

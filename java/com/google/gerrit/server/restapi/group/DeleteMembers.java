@@ -14,17 +14,18 @@
 
 package com.google.gerrit.server.restapi.group;
 
+import com.google.common.base.Strings;
 import com.google.common.collect.Sets;
 import com.google.gerrit.common.data.GroupDescription;
-import com.google.gerrit.common.errors.NoSuchGroupException;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.exceptions.NoSuchGroupException;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
 import com.google.gerrit.server.UserInitiated;
 import com.google.gerrit.server.account.AccountResolver;
 import com.google.gerrit.server.account.GroupControl;
@@ -33,7 +34,6 @@ import com.google.gerrit.server.group.MemberResource;
 import com.google.gerrit.server.group.db.GroupsUpdate;
 import com.google.gerrit.server.group.db.InternalGroupUpdate;
 import com.google.gerrit.server.restapi.group.AddMembers.Input;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -56,8 +56,8 @@ public class DeleteMembers implements RestModifyView<GroupResource, Input> {
 
   @Override
   public Response<?> apply(GroupResource resource, Input input)
-      throws AuthException, NotInternalGroupException, UnprocessableEntityException, OrmException,
-          IOException, ConfigInvalidException, ResourceNotFoundException {
+      throws AuthException, NotInternalGroupException, UnprocessableEntityException, IOException,
+          ConfigInvalidException, ResourceNotFoundException {
     GroupDescription.Internal internalGroup =
         resource.asInternalGroup().orElseThrow(NotInternalGroupException::new);
     input = Input.init(input);
@@ -69,8 +69,10 @@ public class DeleteMembers implements RestModifyView<GroupResource, Input> {
 
     Set<Account.Id> membersToRemove = new HashSet<>();
     for (String nameOrEmail : input.members) {
-      Account a = accountResolver.parse(nameOrEmail).getAccount();
-      membersToRemove.add(a.getId());
+      if (Strings.isNullOrEmpty(nameOrEmail)) {
+        continue;
+      }
+      membersToRemove.add(accountResolver.resolve(nameOrEmail).asUnique().account().id());
     }
     AccountGroup.UUID groupUuid = internalGroup.getGroupUUID();
     try {
@@ -83,7 +85,7 @@ public class DeleteMembers implements RestModifyView<GroupResource, Input> {
   }
 
   private void removeGroupMembers(AccountGroup.UUID groupUuid, Set<Account.Id> accountIds)
-      throws OrmException, IOException, NoSuchGroupException, ConfigInvalidException {
+      throws IOException, NoSuchGroupException, ConfigInvalidException {
     InternalGroupUpdate groupUpdate =
         InternalGroupUpdate.builder()
             .setMemberModification(memberIds -> Sets.difference(memberIds, accountIds))
@@ -103,8 +105,8 @@ public class DeleteMembers implements RestModifyView<GroupResource, Input> {
 
     @Override
     public Response<?> apply(MemberResource resource, Input input)
-        throws AuthException, MethodNotAllowedException, UnprocessableEntityException, OrmException,
-            IOException, ConfigInvalidException, ResourceNotFoundException {
+        throws AuthException, MethodNotAllowedException, UnprocessableEntityException, IOException,
+            ConfigInvalidException, ResourceNotFoundException {
       AddMembers.Input in = new AddMembers.Input();
       in._oneMember = resource.getMember().getAccountId().toString();
       return delete.get().apply(resource, in);

@@ -17,14 +17,19 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-repo-command',
+  /** @extends Polymer.Element */
+  class GrRepoCommand extends Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element)) {
+    static get is() { return 'gr-repo-command'; }
 
-    properties: {
-      title: String,
-      disabled: Boolean,
-      tooltip: String,
-    },
+    static get properties() {
+      return {
+        title: String,
+        disabled: Boolean,
+        tooltip: String,
+      };
+    }
 
     /**
      * Fired when command button is tapped.
@@ -33,7 +38,10 @@
      */
 
     _onCommandTap() {
-      this.dispatchEvent(new CustomEvent('command-tap', {bubbles: true}));
-    },
-  });
+      this.dispatchEvent(
+          new CustomEvent('command-tap', {bubbles: true, composed: true}));
+    }
+  }
+
+  customElements.define(GrRepoCommand.is, GrRepoCommand);
 })();

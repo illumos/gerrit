@@ -22,7 +22,7 @@ import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.acceptance.SshSession;
 import com.google.gerrit.acceptance.UseSsh;
-import com.google.gerrit.reviewdb.client.Account.Id;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.testing.ConfigSuite;
 import org.eclipse.jgit.lib.Config;
 import org.junit.Before;
@@ -62,13 +62,14 @@ public class SetReviewersIT extends AbstractDaemonTest {
   }
 
   private void setReviewer(boolean add, String id) throws Exception {
-    session.exec(String.format("gerrit set-reviewers -%s %s %s", add ? "a" : "r", user.email, id));
+    session.exec(
+        String.format("gerrit set-reviewers -%s %s %s", add ? "a" : "r", user.email(), id));
     session.assertSuccess();
-    ImmutableSet<Id> reviewers = change.getChange().getReviewers().all();
+    ImmutableSet<Account.Id> reviewers = change.getChange().getReviewers().all();
     if (add) {
-      assertThat(reviewers).contains(user.id);
+      assertThat(reviewers).contains(user.id());
     } else {
-      assertThat(reviewers).doesNotContain(user.id);
+      assertThat(reviewers).doesNotContain(user.id());
     }
   }
 

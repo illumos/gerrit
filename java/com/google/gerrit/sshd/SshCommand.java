@@ -14,14 +14,28 @@
 
 package com.google.gerrit.sshd;
 
+import com.google.gerrit.extensions.registration.DynamicSet;
 import com.google.gerrit.server.AccessPath;
+import com.google.gerrit.server.RequestInfo;
+import com.google.gerrit.server.RequestListener;
+import com.google.gerrit.server.config.GerritServerConfig;
+import com.google.gerrit.server.logging.PerformanceLogContext;
+import com.google.gerrit.server.logging.PerformanceLogger;
 import com.google.gerrit.server.logging.TraceContext;
+import com.google.gerrit.server.plugincontext.PluginSetContext;
+import com.google.inject.Inject;
 import java.io.IOException;
 import java.io.PrintWriter;
 import org.apache.sshd.server.Environment;
+import org.apache.sshd.server.channel.ChannelSession;
+import org.eclipse.jgit.lib.Config;
 import org.kohsuke.args4j.Option;
 
 public abstract class SshCommand extends BaseCommand {
+  @Inject private DynamicSet<PerformanceLogger> performanceLoggers;
+  @Inject private PluginSetContext<RequestListener> requestListeners;
+  @Inject @GerritServerConfig private Config config;
+
   @Option(name = "--trace", usage = "enable request tracing")
   private boolean trace;
 
@@ -32,20 +46,22 @@ public abstract class SshCommand extends BaseCommand {
   protected PrintWriter stderr;
 
   @Override
-  public void start(Environment env) throws IOException {
+  public void start(ChannelSession channel, Environment env) throws IOException {
     startThread(
-        new CommandRunnable() {
-          @Override
-          public void run() throws Exception {
-            parseCommandLine();
-            stdout = toPrintWriter(out);
-            stderr = toPrintWriter(err);
-            try (TraceContext traceContext = enableTracing()) {
-              SshCommand.this.run();
-            } finally {
-              stdout.flush();
-              stderr.flush();
-            }
+        () -> {
+          parseCommandLine();
+          stdout = toPrintWriter(out);
+          stderr = toPrintWriter(err);
+          try (TraceContext traceContext = enableTracing();
+              PerformanceLogContext performanceLogContext =
+                  new PerformanceLogContext(config, performanceLoggers)) {
+            RequestInfo requestInfo =
+                RequestInfo.builder(RequestInfo.RequestType.SSH, user, traceContext).build();
+            requestListeners.runEach(l -> l.onRequest(requestInfo));
+            SshCommand.this.run();
+          } finally {
+            stdout.flush();
+            stderr.flush();
           }
         },
         AccessPath.SSH_COMMAND);

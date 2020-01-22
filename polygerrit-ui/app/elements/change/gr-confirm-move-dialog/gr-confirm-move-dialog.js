@@ -19,9 +19,16 @@
 
   const SUGGESTIONS_LIMIT = 15;
 
-  Polymer({
-    is: 'gr-confirm-move-dialog',
-
+  /**
+   * @appliesMixin Gerrit.FireMixin
+   * @extends Polymer.Element
+   */
+  class GrConfirmMoveDialog extends Polymer.mixinBehaviors( [
+    Gerrit.FireBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-confirm-move-dialog'; }
     /**
      * Fired when the confirm button is pressed.
      *
@@ -34,27 +41,31 @@
      * @event cancel
      */
 
-    properties: {
-      branch: String,
-      message: String,
-      project: String,
-      _query: {
-        type: Function,
-        value() {
-          return this._getProjectBranchesSuggestions.bind(this);
+    static get properties() {
+      return {
+        branch: String,
+        message: String,
+        project: String,
+        _query: {
+          type: Function,
+          value() {
+            return this._getProjectBranchesSuggestions.bind(this);
+          },
         },
-      },
-    },
+      };
+    }
 
     _handleConfirmTap(e) {
       e.preventDefault();
+      e.stopPropagation();
       this.fire('confirm', null, {bubbles: false});
-    },
+    }
 
     _handleCancelTap(e) {
       e.preventDefault();
+      e.stopPropagation();
       this.fire('cancel', null, {bubbles: false});
-    },
+    }
 
     _getProjectBranchesSuggestions(input) {
       if (input.startsWith('refs/heads/')) {
@@ -77,6 +88,8 @@
         }
         return branches;
       });
-    },
-  });
+    }
+  }
+
+  customElements.define(GrConfirmMoveDialog.is, GrConfirmMoveDialog);
 })();

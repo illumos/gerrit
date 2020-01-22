@@ -15,16 +15,15 @@
 package com.google.gerrit.metrics.proc;
 
 import com.google.common.base.Strings;
-import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableSet;
 import com.google.gerrit.common.Version;
-import com.google.gerrit.metrics.CallbackMetric;
 import com.google.gerrit.metrics.CallbackMetric0;
 import com.google.gerrit.metrics.CallbackMetric1;
 import com.google.gerrit.metrics.Description;
 import com.google.gerrit.metrics.Description.Units;
 import com.google.gerrit.metrics.Field;
 import com.google.gerrit.metrics.MetricMaker;
+import com.google.gerrit.server.logging.Metadata;
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
@@ -75,12 +74,7 @@ public class ProcMetricModule extends MetricModule {
           "proc/cpu/usage",
           Double.class,
           new Description("CPU time used by the process").setCumulative().setUnit(Units.SECONDS),
-          new Supplier<Double>() {
-            @Override
-            public Double get() {
-              return provider.getProcessCpuTime() / 1e9;
-            }
-          });
+          () -> provider.getProcessCpuTime() / 1e9);
     }
 
     if (provider.getOpenFileDescriptorCount() != -1) {
@@ -135,7 +129,7 @@ public class ProcMetricModule extends MetricModule {
 
     MemoryMXBean memory = ManagementFactory.getMemoryMXBean();
     metrics.newTrigger(
-        ImmutableSet.<CallbackMetric<?>>of(
+        ImmutableSet.of(
             heapCommitted, heapUsed, nonHeapCommitted, nonHeapUsed, objectPendingFinalizationCount),
         () -> {
           try {
@@ -155,12 +149,17 @@ public class ProcMetricModule extends MetricModule {
   }
 
   private void procJvmGc(MetricMaker metrics) {
+    Field<String> gcNameField =
+        Field.ofString("gc_name", Metadata.Builder::garbageCollectorName)
+            .description("The name of the garbage collector")
+            .build();
+
     CallbackMetric1<String, Long> gcCount =
         metrics.newCallbackMetric(
             "proc/jvm/gc/count",
             Long.class,
             new Description("Number of GCs").setCumulative(),
-            Field.ofString("gc_name", "The name of the garbage collector"));
+            gcNameField);
 
     CallbackMetric1<String, Long> gcTime =
         metrics.newCallbackMetric(
@@ -169,7 +168,7 @@ public class ProcMetricModule extends MetricModule {
             new Description("Approximate accumulated GC elapsed time")
                 .setCumulative()
                 .setUnit(Units.MILLISECONDS),
-            Field.ofString("gc_name", "The name of the garbage collector"));
+            gcNameField);
 
     metrics.newTrigger(
         gcCount,

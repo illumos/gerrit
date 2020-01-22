@@ -16,34 +16,36 @@ package com.google.gerrit.metrics;
 
 import static com.google.common.base.Preconditions.checkArgument;
 
-import com.google.common.base.Function;
-import com.google.common.base.Functions;
+import com.google.auto.value.AutoValue;
+import com.google.gerrit.server.logging.Metadata;
+import java.util.Optional;
+import java.util.function.BiConsumer;
+import java.util.function.Function;
 
 /**
  * Describes a bucketing field used by a metric.
  *
  * @param <T> type of field
  */
-public class Field<T> {
-  /**
-   * Break down metrics by boolean true/false.
-   *
-   * @param name field name
-   * @return boolean field
-   */
-  public static Field<Boolean> ofBoolean(String name) {
-    return ofBoolean(name, null);
+@AutoValue
+public abstract class Field<T> {
+  public static <T> BiConsumer<Metadata.Builder, T> ignoreMetadata() {
+    return (metadataBuilder, fieldValue) -> {};
   }
 
   /**
    * Break down metrics by boolean true/false.
    *
    * @param name field name
-   * @param description field description
-   * @return boolean field
+   * @return builder for the boolean field
    */
-  public static Field<Boolean> ofBoolean(String name, String description) {
-    return new Field<>(name, Boolean.class, description);
+  public static Field.Builder<Boolean> ofBoolean(
+      String name, BiConsumer<Metadata.Builder, Boolean> metadataMapper) {
+    return new AutoValue_Field.Builder<Boolean>()
+        .valueType(Boolean.class)
+        .formatter(Object::toString)
+        .name(name)
+        .metadataMapper(metadataMapper);
   }
 
   /**
@@ -51,50 +53,17 @@ public class Field<T> {
    *
    * @param enumType type of enum
    * @param name field name
-   * @return enum field
+   * @return builder for the enum field
    */
-  public static <E extends Enum<E>> Field<E> ofEnum(Class<E> enumType, String name) {
-    return ofEnum(enumType, name, null);
-  }
-
-  /**
-   * Break down metrics by cases of an enum.
-   *
-   * @param enumType type of enum
-   * @param name field name
-   * @param description field description
-   * @return enum field
-   */
-  public static <E extends Enum<E>> Field<E> ofEnum(
-      Class<E> enumType, String name, String description) {
-    return new Field<>(name, enumType, description);
-  }
-
-  /**
-   * Break down metrics by string.
-   *
-   * <p>Each unique string will allocate a new submetric. <b>Do not use user content as a field
-   * value</b> as field values are never reclaimed.
-   *
-   * @param name field name
-   * @return string field
-   */
-  public static Field<String> ofString(String name) {
-    return ofString(name, null);
-  }
-
-  /**
-   * Break down metrics by string.
-   *
-   * <p>Each unique string will allocate a new submetric. <b>Do not use user content as a field
-   * value</b> as field values are never reclaimed.
-   *
-   * @param name field name
-   * @param description field description
-   * @return string field
-   */
-  public static Field<String> ofString(String name, String description) {
-    return new Field<>(name, String.class, description);
+  public static <E extends Enum<E>> Field.Builder<E> ofEnum(
+      Class<E> enumType, String name, BiConsumer<Metadata.Builder, String> metadataMapper) {
+    return new AutoValue_Field.Builder<E>()
+        .valueType(enumType)
+        .formatter(Enum::name)
+        .name(name)
+        .metadataMapper(
+            (metadataBuilder, fieldValue) ->
+                metadataMapper.accept(metadataBuilder, fieldValue.name()));
   }
 
   /**
@@ -104,67 +73,68 @@ public class Field<T> {
    * value</b> as field values are never reclaimed.
    *
    * @param name field name
-   * @return integer field
+   * @return builder for the integer field
    */
-  public static Field<Integer> ofInteger(String name) {
-    return ofInteger(name, null);
+  public static Field.Builder<Integer> ofInteger(
+      String name, BiConsumer<Metadata.Builder, Integer> metadataMapper) {
+    return new AutoValue_Field.Builder<Integer>()
+        .valueType(Integer.class)
+        .formatter(Object::toString)
+        .name(name)
+        .metadataMapper(metadataMapper);
   }
 
   /**
-   * Break down metrics by integer.
+   * Break down metrics by string.
    *
-   * <p>Each unique integer will allocate a new submetric. <b>Do not use user content as a field
+   * <p>Each unique string will allocate a new submetric. <b>Do not use user content as a field
    * value</b> as field values are never reclaimed.
    *
    * @param name field name
-   * @param description field description
-   * @return integer field
+   * @return builder for the string field
    */
-  public static Field<Integer> ofInteger(String name, String description) {
-    return new Field<>(name, Integer.class, description);
-  }
-
-  private final String name;
-  private final Class<T> keyType;
-  private final Function<T, String> formatter;
-  private final String description;
-
-  private Field(String name, Class<T> keyType, String description) {
-    checkArgument(name.matches("^[a-z_]+$"), "name must match [a-z_]");
-    this.name = name;
-    this.keyType = keyType;
-    this.formatter = initFormatter(keyType);
-    this.description = description;
+  public static Field.Builder<String> ofString(
+      String name, BiConsumer<Metadata.Builder, String> metadataMapper) {
+    return new AutoValue_Field.Builder<String>()
+        .valueType(String.class)
+        .formatter(s -> s)
+        .name(name)
+        .metadataMapper(metadataMapper);
   }
 
   /** @return name of this field within the metric. */
-  public String getName() {
-    return name;
-  }
+  public abstract String name();
 
   /** @return type of value used within the field. */
-  public Class<T> getType() {
-    return keyType;
-  }
+  public abstract Class<T> valueType();
+
+  /** @return mapper that maps a field value to a field in the {@link Metadata} class. */
+  public abstract BiConsumer<Metadata.Builder, T> metadataMapper();
 
   /** @return description text for the field explaining its range of values. */
-  public String getDescription() {
-    return description;
-  }
+  public abstract Optional<String> description();
 
-  public Function<T, String> formatter() {
-    return formatter;
-  }
+  /** @return formatter to format field values. */
+  public abstract Function<T, String> formatter();
 
-  @SuppressWarnings("unchecked")
-  private static <T> Function<T, String> initFormatter(Class<T> keyType) {
-    if (keyType == String.class) {
-      return (Function<T, String>) Functions.<String>identity();
-    } else if (keyType == Integer.class || keyType == Boolean.class) {
-      return (Function<T, String>) Functions.toStringFunction();
-    } else if (Enum.class.isAssignableFrom(keyType)) {
-      return in -> ((Enum<?>) in).name();
+  @AutoValue.Builder
+  public abstract static class Builder<T> {
+    abstract Builder<T> name(String name);
+
+    abstract Builder<T> valueType(Class<T> type);
+
+    abstract Builder<T> formatter(Function<T, String> formatter);
+
+    abstract Builder<T> metadataMapper(BiConsumer<Metadata.Builder, T> metadataMapper);
+
+    public abstract Builder<T> description(String description);
+
+    abstract Field<T> autoBuild();
+
+    public Field<T> build() {
+      Field<T> field = autoBuild();
+      checkArgument(field.name().matches("^[a-z_]+$"), "name must match [a-z_]");
+      return field;
     }
-    throw new IllegalStateException("unsupported type " + keyType.getName());
   }
 }

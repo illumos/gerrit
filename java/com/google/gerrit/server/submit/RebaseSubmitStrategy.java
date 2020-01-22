@@ -19,11 +19,12 @@ import static com.google.gerrit.server.submit.CommitMergeStatus.EMPTY_COMMIT;
 import static com.google.gerrit.server.submit.CommitMergeStatus.SKIPPED_IDENTICAL_TREE;
 
 import com.google.common.collect.ImmutableList;
+import com.google.gerrit.entities.BooleanProjectConfig;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.restapi.MergeConflictException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.RestApiException;
-import com.google.gerrit.reviewdb.client.BooleanProjectConfig;
-import com.google.gerrit.reviewdb.client.PatchSet;
 import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.change.RebaseChangeOp;
 import com.google.gerrit.server.git.CodeReviewCommit;
@@ -34,7 +35,6 @@ import com.google.gerrit.server.project.NoSuchChangeException;
 import com.google.gerrit.server.update.ChangeContext;
 import com.google.gerrit.server.update.Context;
 import com.google.gerrit.server.update.RepoContext;
-import com.google.gwtorm.server.OrmException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -59,7 +59,7 @@ public class RebaseSubmitStrategy extends SubmitStrategy {
     List<CodeReviewCommit> sorted;
     try {
       sorted = args.rebaseSorter.sort(toMerge);
-    } catch (IOException | OrmException e) {
+    } catch (IOException | StorageException e) {
       throw new IntegrationException("Commit sorting failed", e);
     }
     List<SubmitStrategyOp> ops = new ArrayList<>(sorted.size());
@@ -119,7 +119,7 @@ public class RebaseSubmitStrategy extends SubmitStrategy {
     @Override
     public void updateRepoImpl(RepoContext ctx)
         throws IntegrationException, InvalidChangeOperationException, RestApiException, IOException,
-            OrmException, PermissionBackendException {
+            PermissionBackendException {
       if (args.mergeUtil.canFastForward(
           args.mergeSorter, args.mergeTip.getCurrentTip(), args.rw, toMerge)) {
         if (!rebaseAlways) {
@@ -137,8 +137,8 @@ public class RebaseSubmitStrategy extends SubmitStrategy {
         // RebaseAlways means we modify commit message.
         args.rw.parseBody(toMerge);
         newPatchSetId =
-            ChangeUtil.nextPatchSetIdFromChangeRefsMap(
-                ctx.getRepoView().getRefs(getId().toRefPrefix()),
+            ChangeUtil.nextPatchSetIdFromChangeRefs(
+                ctx.getRepoView().getRefs(getId().toRefPrefix()).keySet(),
                 toMerge.change().currentPatchSetId());
         RevCommit mergeTip = args.mergeTip.getCurrentTip();
         args.rw.parseBody(mergeTip);
@@ -170,14 +170,13 @@ public class RebaseSubmitStrategy extends SubmitStrategy {
         ctx.addRefUpdate(ObjectId.zeroId(), newCommit, newPatchSetId.toRefName());
       } else {
         // Stale read of patch set is ok; see comments in RebaseChangeOp.
-        PatchSet origPs = args.psUtil.get(ctx.getDb(), toMerge.getNotes(), toMerge.getPatchsetId());
+        PatchSet origPs = args.psUtil.get(toMerge.getNotes(), toMerge.getPatchsetId());
         rebaseOp =
             args.rebaseFactory
                 .create(toMerge.notes(), origPs, args.mergeTip.getCurrentTip())
                 .setFireRevisionCreated(false)
                 // Bypass approval copier since SubmitStrategyOp copy all approvals
                 // later anyway.
-                .setCopyApprovals(false)
                 .setValidate(false)
                 .setCheckAddPatchSetPermission(false)
                 // RebaseAlways should set always modify commit message like
@@ -186,6 +185,7 @@ public class RebaseSubmitStrategy extends SubmitStrategy {
                 // Do not post message after inserting new patchset because there
                 // will be one about change being merged already.
                 .setPostMessage(false)
+                .setSendEmail(false)
                 .setMatchAuthorToCommitterDate(
                     args.project.is(BooleanProjectConfig.MATCH_AUTHOR_TO_COMMITTER_DATE));
         try {
@@ -214,7 +214,7 @@ public class RebaseSubmitStrategy extends SubmitStrategy {
 
     @Override
     public PatchSet updateChangeImpl(ChangeContext ctx)
-        throws NoSuchChangeException, ResourceConflictException, OrmException, IOException {
+        throws NoSuchChangeException, ResourceConflictException, IOException {
       if (newCommit == null) {
         checkState(!rebaseAlways, "RebaseAlways must never fast forward");
         // otherwise, took the fast-forward option, nothing to do.
@@ -227,15 +227,14 @@ public class RebaseSubmitStrategy extends SubmitStrategy {
         newPs = rebaseOp.getPatchSet();
       } else {
         // CherryPick
-        PatchSet prevPs = args.psUtil.current(ctx.getDb(), ctx.getNotes());
+        PatchSet prevPs = args.psUtil.current(ctx.getNotes());
         newPs =
             args.psUtil.insert(
-                ctx.getDb(),
                 ctx.getRevWalk(),
                 ctx.getUpdate(newPatchSetId),
                 newPatchSetId,
                 newCommit,
-                prevPs != null ? prevPs.getGroups() : ImmutableList.<String>of(),
+                prevPs != null ? prevPs.groups() : ImmutableList.of(),
                 null,
                 null);
       }
@@ -247,7 +246,7 @@ public class RebaseSubmitStrategy extends SubmitStrategy {
     }
 
     @Override
-    public void postUpdateImpl(Context ctx) throws OrmException {
+    public void postUpdateImpl(Context ctx) {
       if (rebaseOp != null) {
         rebaseOp.postUpdate(ctx);
       }
@@ -310,7 +309,6 @@ public class RebaseSubmitStrategy extends SubmitStrategy {
       throws IntegrationException {
     // Test for merge instead of cherry pick to avoid false negatives
     // on commit chains.
-    return !args.mergeUtil.hasMissingDependencies(args.mergeSorter, toMerge)
-        && args.mergeUtil.canMerge(args.mergeSorter, repo, mergeTip, toMerge);
+    return args.mergeUtil.canMerge(args.mergeSorter, repo, mergeTip, toMerge);
   }
 }

@@ -16,14 +16,17 @@ package com.google.gerrit.server.patch;
 
 import static com.google.common.base.Preconditions.checkArgument;
 
-import com.google.common.flogger.FluentLogger;
+import com.google.common.base.Throwables;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.gerrit.common.UsedAt;
+import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.git.LockFailureException;
 import com.google.gerrit.server.GerritPersonIdent;
-import com.google.gerrit.server.UsedAt;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.git.InMemoryInserter;
 import com.google.gerrit.server.git.MergeUtil;
+import com.google.gerrit.server.update.RetryHelper;
+import com.google.gerrit.server.update.RetryableAction.ActionType;
 import com.google.inject.Inject;
 import java.io.IOException;
 import org.eclipse.jgit.dircache.DirCache;
@@ -42,28 +45,54 @@ import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevObject;
 import org.eclipse.jgit.revwalk.RevWalk;
 
+/**
+ * Utility class for creating an auto-merge commit of a merge commit.
+ *
+ * <p>An auto-merge commit is the result of merging the 2 parents of a merge commit automatically.
+ * If there are conflicts the auto-merge commit contains Git conflict markers that indicate these
+ * conflicts.
+ *
+ * <p>Creating auto-merge commits for octopus merges (merge commits with more than 2 parents) is not
+ * supported. In this case the auto-merge is created between the first 2 parent commits.
+ *
+ * <p>All created auto-merge commits are stored in the repository of their merge commit as {@code
+ * refs/cache-automerge/} branches. These branches serve:
+ *
+ * <ul>
+ *   <li>as a cache so that the each auto-merge gets computed only once
+ *   <li>as base for merge commits on which users can comment
+ * </ul>
+ *
+ * <p>The second point means that these commits are referenced from NoteDb. The consequence of this
+ * is that these refs should never be deleted.
+ */
 public class AutoMerger {
-  private static final FluentLogger logger = FluentLogger.forEnclosingClass();
-
   @UsedAt(UsedAt.Project.GOOGLE)
   public static boolean cacheAutomerge(Config cfg) {
     return cfg.getBoolean("change", null, "cacheAutomerge", true);
   }
 
+  private final RetryHelper retryHelper;
   private final PersonIdent gerritIdent;
   private final boolean save;
 
   @Inject
-  AutoMerger(@GerritServerConfig Config cfg, @GerritPersonIdent PersonIdent gerritIdent) {
+  AutoMerger(
+      RetryHelper retryHelper,
+      @GerritServerConfig Config cfg,
+      @GerritPersonIdent PersonIdent gerritIdent) {
+    this.retryHelper = retryHelper;
     save = cacheAutomerge(cfg);
     this.gerritIdent = gerritIdent;
   }
 
   /**
-   * Perform an auto-merge of the parents of the given merge commit.
+   * Creates an auto-merge commit of the parents of the given merge commit.
    *
-   * @return auto-merge commit or {@code null} if an auto-merge commit couldn't be created. Headers
-   *     of the returned RevCommit are parsed.
+   * <p>In case of an exception the creation of the auto-merge commit is retried a few times. E.g.
+   * this allows the operation to succeed if a Git update fails due to a temporary issue.
+   *
+   * @return auto-merge commit. Headers of the returned RevCommit are parsed.
    */
   public RevCommit merge(
       Repository repo,
@@ -72,7 +101,34 @@ public class AutoMerger {
       RevCommit merge,
       ThreeWayMergeStrategy mergeStrategy)
       throws IOException {
+    try {
+      return retryHelper
+          .action(
+              ActionType.GIT_UPDATE,
+              "createAutoMerge",
+              () -> createAutoMergeCommit(repo, rw, ins, merge, mergeStrategy))
+          .call();
+    } catch (Exception e) {
+      Throwables.throwIfUnchecked(e);
+      Throwables.throwIfInstanceOf(e, IOException.class);
+      throw new IllegalStateException(e);
+    }
+  }
+
+  /**
+   * Creates an auto-merge commit of the parents of the given merge commit.
+   *
+   * @return auto-merge commit. Headers of the returned RevCommit are parsed.
+   */
+  private RevCommit createAutoMergeCommit(
+      Repository repo,
+      RevWalk rw,
+      ObjectInserter ins,
+      RevCommit merge,
+      ThreeWayMergeStrategy mergeStrategy)
+      throws IOException {
     checkArgument(rw.getObjectReader().getCreatedFromInserter() == ins);
+
     InMemoryInserter tmpIns = null;
     if (ins instanceof InMemoryInserter) {
       // Caller gave us an in-memory inserter, so ensure anything we write from
@@ -102,17 +158,7 @@ public class AutoMerger {
     m.setDirCache(dc);
     m.setObjectInserter(tmpIns == null ? new NonFlushingWrapper(ins) : tmpIns);
 
-    boolean couldMerge;
-    try {
-      couldMerge = m.merge(merge.getParents());
-    } catch (IOException | RuntimeException e) {
-      // It is not safe to continue further down in this method as throwing
-      // an exception most likely means that the merge tree was not created
-      // and m.getMergeResults() is empty. This would mean that all paths are
-      // unmerged and Gerrit UI would show all paths in the patch list.
-      logger.atWarning().withCause(e).log("Error attempting automerge %s", refName);
-      return null;
-    }
+    boolean couldMerge = m.merge(merge.getParents());
 
     ObjectId treeId;
     if (couldMerge) {
@@ -173,8 +219,28 @@ public class AutoMerger {
     RefUpdate ru = repo.updateRef(refName);
     ru.setNewObjectId(commitId);
     ru.disableRefLog();
-    ru.forceUpdate();
-    return rw.parseCommit(commitId);
+    switch (ru.forceUpdate()) {
+      case FAST_FORWARD:
+      case FORCED:
+      case NEW:
+      case NO_CHANGE:
+        return rw.parseCommit(commitId);
+      case LOCK_FAILURE:
+        throw new LockFailureException(
+            String.format("Failed to create auto-merge of %s", merge.name()), ru);
+      case IO_FAILURE:
+      case NOT_ATTEMPTED:
+      case REJECTED:
+      case REJECTED_CURRENT_BRANCH:
+      case REJECTED_MISSING_OBJECT:
+      case REJECTED_OTHER_REASON:
+      case RENAMED:
+      default:
+        throw new IOException(
+            String.format(
+                "Failed to create auto-merge of %s: Cannot write %s (%s)",
+                merge.name(), refName, ru.getResult()));
+    }
   }
 
   private static class NonFlushingWrapper extends ObjectInserter.Filter {

@@ -16,8 +16,7 @@ package com.google.gerrit.server.query.change;
 
 import static com.google.gerrit.server.index.change.ChangeField.EXACT_TOPIC;
 
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gwtorm.server.OrmException;
+import com.google.gerrit.entities.Change;
 
 public class ExactTopicPredicate extends ChangeIndexPredicate {
   public ExactTopicPredicate(String topic) {
@@ -25,7 +24,7 @@ public class ExactTopicPredicate extends ChangeIndexPredicate {
   }
 
   @Override
-  public boolean match(ChangeData object) throws OrmException {
+  public boolean match(ChangeData object) {
     Change change = object.change();
     if (change == null) {
       return false;

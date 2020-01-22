@@ -14,32 +14,28 @@
 
 package com.google.gerrit.server.restapi.change;
 
-import com.google.gerrit.reviewdb.client.Comment;
-import com.google.gerrit.reviewdb.server.ReviewDb;
+import com.google.gerrit.entities.Comment;
 import com.google.gerrit.server.CommentsUtil;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 
 @Singleton
 public class ListChangeComments extends ListChangeDrafts {
-
   @Inject
   ListChangeComments(
-      Provider<ReviewDb> db,
       ChangeData.Factory changeDataFactory,
       Provider<CommentJson> commentJson,
       CommentsUtil commentsUtil) {
-    super(db, changeDataFactory, commentJson, commentsUtil);
+    super(changeDataFactory, commentJson, commentsUtil);
   }
 
   @Override
-  protected Iterable<Comment> listComments(ChangeResource rsrc) throws OrmException {
-    ChangeData cd = changeDataFactory.create(db.get(), rsrc.getNotes());
-    return commentsUtil.publishedByChange(db.get(), cd.notes());
+  protected Iterable<Comment> listComments(ChangeResource rsrc) {
+    ChangeData cd = changeDataFactory.create(rsrc.getNotes());
+    return commentsUtil.publishedByChange(cd.notes());
   }
 
   @Override

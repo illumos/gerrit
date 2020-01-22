@@ -21,11 +21,14 @@ import static com.google.gerrit.extensions.client.SubmitType.MERGE_ALWAYS;
 import static com.google.gerrit.extensions.client.SubmitType.MERGE_IF_NECESSARY;
 import static com.google.gerrit.extensions.client.SubmitType.REBASE_ALWAYS;
 import static com.google.gerrit.extensions.client.SubmitType.REBASE_IF_NECESSARY;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
 import com.google.common.collect.ImmutableList;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.PushOneCommit;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.api.projects.BranchInput;
 import com.google.gerrit.extensions.client.SubmitType;
@@ -33,8 +36,6 @@ import com.google.gerrit.extensions.common.TestSubmitRuleInfo;
 import com.google.gerrit.extensions.common.TestSubmitRuleInput;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.RestApiException;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.RefNames;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.git.meta.VersionedMetaData;
 import com.google.gerrit.testing.ConfigSuite;
@@ -137,8 +138,7 @@ public class SubmitTypeRuleIT extends AbstractDaemonTest {
   private PushOneCommit.Result createChange(String dest, String subject) throws Exception {
     PushOneCommit push =
         pushFactory.create(
-            db,
-            admin.getIdent(),
+            admin.newIdent(),
             testRepo,
             subject,
             "file" + fileCounter.incrementAndGet(),
@@ -238,22 +238,21 @@ public class SubmitTypeRuleIT extends AbstractDaemonTest {
     gApi.changes().id(r1.getChangeId()).current().review(ReviewInput.approve());
     gApi.changes().id(r2.getChangeId()).current().review(ReviewInput.approve());
 
-    try {
-      gApi.changes().id(r2.getChangeId()).current().submit();
-      fail("Expected ResourceConflictException");
-    } catch (ResourceConflictException e) {
-      assertThat(e)
-          .hasMessageThat()
-          .isEqualTo(
-              "Failed to submit 2 changes due to the following problems:\n"
-                  + "Change "
-                  + r1.getChange().getId()
-                  + ": Change has submit type "
-                  + "CHERRY_PICK, but previously chose submit type MERGE_IF_NECESSARY "
-                  + "from change "
-                  + r2.getChange().getId()
-                  + " in the same batch");
-    }
+    ResourceConflictException thrown =
+        assertThrows(
+            ResourceConflictException.class,
+            () -> gApi.changes().id(r2.getChangeId()).current().submit());
+    assertThat(thrown)
+        .hasMessageThat()
+        .isEqualTo(
+            "Failed to submit 2 changes due to the following problems:\n"
+                + "Change "
+                + r1.getChange().getId()
+                + ": Change has submit type "
+                + "CHERRY_PICK, but previously chose submit type MERGE_IF_NECESSARY "
+                + "from change "
+                + r2.getChange().getId()
+                + " in the same batch");
   }
 
   @Test
@@ -263,8 +262,8 @@ public class SubmitTypeRuleIT extends AbstractDaemonTest {
     TestSubmitRuleInput in = new TestSubmitRuleInput();
     in.rule = "invalid prolog rule";
     // We have no rules.pl by default. The fact that the default rules are showing up here is a bug.
-    List<TestSubmitRuleInfo> response = gApi.changes().id(changeId).current().testSubmitRule(in);
-    assertThat(response).containsExactly(invalidPrologRuleInfo());
+    TestSubmitRuleInfo response = gApi.changes().id(changeId).current().testSubmitRule(in);
+    assertThat(response).isEqualTo(invalidPrologRuleInfo());
   }
 
   @Test
@@ -275,8 +274,8 @@ public class SubmitTypeRuleIT extends AbstractDaemonTest {
 
     TestSubmitRuleInput in = new TestSubmitRuleInput();
     in.rule = "invalid prolog rule";
-    List<TestSubmitRuleInfo> response = gApi.changes().id(changeId).current().testSubmitRule(in);
-    assertThat(response).containsExactly(invalidPrologRuleInfo());
+    TestSubmitRuleInfo response = gApi.changes().id(changeId).current().testSubmitRule(in);
+    assertThat(response).isEqualTo(invalidPrologRuleInfo());
   }
 
   private static TestSubmitRuleInfo invalidPrologRuleInfo() {

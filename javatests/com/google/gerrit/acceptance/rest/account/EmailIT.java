@@ -16,6 +16,7 @@ package com.google.gerrit.acceptance.rest.account;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth8.assertThat;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static java.util.stream.Collectors.toSet;
 
 import com.google.common.collect.ImmutableMultimap;
@@ -23,14 +24,14 @@ import com.google.common.collect.Multimap;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.AcceptanceTestRequestScope.Context;
 import com.google.gerrit.acceptance.RestResponse;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.api.accounts.EmailApi;
 import com.google.gerrit.extensions.api.accounts.EmailInput;
 import com.google.gerrit.extensions.common.EmailInfo;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.ServerInitiated;
 import com.google.gerrit.server.account.AccountsUpdate;
@@ -43,9 +44,8 @@ import com.google.gerrit.server.account.externalids.ExternalIds;
 import com.google.gerrit.server.config.AnonymousCowardName;
 import com.google.gerrit.server.config.AuthConfig;
 import com.google.gerrit.server.config.CanonicalWebUrl;
-import com.google.gerrit.server.config.DisableReverseDnsLookup;
+import com.google.gerrit.server.config.EnableReverseDnsLookup;
 import com.google.gson.reflect.TypeToken;
-import com.google.gwtorm.server.SchemaFactory;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import java.util.List;
@@ -54,15 +54,15 @@ import java.util.Set;
 import org.junit.Test;
 
 public class EmailIT extends AbstractDaemonTest {
-  @Inject private @ServerInitiated Provider<AccountsUpdate> accountsUpdateProvider;
-  @Inject private ExternalIds externalIds;
-  @Inject private SchemaFactory<ReviewDb> reviewDbProvider;
-  @Inject private AuthConfig authConfig;
   @Inject private @AnonymousCowardName String anonymousCowardName;
   @Inject private @CanonicalWebUrl Provider<String> canonicalUrl;
-  @Inject private @DisableReverseDnsLookup Boolean disableReverseDnsLookup;
+  @Inject private @EnableReverseDnsLookup boolean enableReverseDnsLookup;
+  @Inject private @ServerInitiated Provider<AccountsUpdate> accountsUpdateProvider;
+  @Inject private AuthConfig authConfig;
   @Inject private EmailExpander emailExpander;
+  @Inject private ExternalIds externalIds;
   @Inject private Provider<Emails> emails;
+  @Inject private RequestScopeOperations requestScopeOperations;
 
   @Test
   public void addEmail() throws Exception {
@@ -123,7 +123,7 @@ public class EmailIT extends AbstractDaemonTest {
     createEmail(email);
     assertThat(gApi.accounts().self().get().email).isNotEqualTo(email);
 
-    resetCurrentApiUser();
+    requestScopeOperations.resetCurrentApiUser();
     gApi.accounts().self().email(email).setPreferred();
     assertThat(gApi.accounts().self().get().email).isEqualTo(email);
   }
@@ -135,14 +135,14 @@ public class EmailIT extends AbstractDaemonTest {
         .get()
         .update(
             "Add External ID",
-            admin.id,
+            admin.id(),
             u ->
                 u.addExternalId(
                     ExternalId.createWithEmail(
-                        ExternalId.SCHEME_EXTERNAL, "foo", admin.id, email)));
+                        ExternalId.SCHEME_EXTERNAL, "foo", admin.id(), email)));
     assertThat(gApi.accounts().self().get().email).isNotEqualTo(email);
 
-    resetCurrentApiUser();
+    requestScopeOperations.resetCurrentApiUser();
     gApi.accounts().self().email(email).setPreferred();
     assertThat(gApi.accounts().self().get().email).isEqualTo(email);
   }
@@ -150,16 +150,20 @@ public class EmailIT extends AbstractDaemonTest {
   @Test
   public void setPreferredEmailToNonExistingEmail() throws Exception {
     String email = "non-existing@example.com";
-    exception.expect(ResourceNotFoundException.class);
-    exception.expectMessage("Not found: " + email);
-    gApi.accounts().self().email(email).setPreferred();
+    ResourceNotFoundException thrown =
+        assertThrows(
+            ResourceNotFoundException.class,
+            () -> gApi.accounts().self().email(email).setPreferred());
+    assertThat(thrown).hasMessageThat().contains("Not found: " + email);
   }
 
   @Test
   public void setPreferredEmailToEmailOfOtherAccount() throws Exception {
-    exception.expect(ResourceNotFoundException.class);
-    exception.expectMessage("Not found: " + user.email);
-    gApi.accounts().self().email(user.email).setPreferred();
+    ResourceNotFoundException thrown =
+        assertThrows(
+            ResourceNotFoundException.class,
+            () -> gApi.accounts().self().email(user.email()).setPreferred());
+    assertThat(thrown).hasMessageThat().contains("Not found: " + user.email());
   }
 
   @Test
@@ -168,7 +172,7 @@ public class EmailIT extends AbstractDaemonTest {
     createEmail(email);
     assertThat(gApi.accounts().self().get().email).isNotEqualTo(email);
 
-    resetCurrentApiUser();
+    requestScopeOperations.resetCurrentApiUser();
     String emailOtherCase = email.toUpperCase();
     gApi.accounts().self().email(emailOtherCase).setPreferred();
     assertThat(gApi.accounts().self().get().email).isEqualTo(email);
@@ -182,12 +186,12 @@ public class EmailIT extends AbstractDaemonTest {
     assertThat(externalIds.get(mailtoExtIdKey)).isEmpty();
     assertThat(gApi.accounts().self().get().email).isNotEqualTo(email);
 
-    Context oldCtx = createContextWithCustomRealm(new RealmWithAdditionalEmails(admin.id, email));
+    Context oldCtx = createContextWithCustomRealm(new RealmWithAdditionalEmails(admin.id(), email));
     try {
       gApi.accounts().self().email(email).setPreferred();
       Optional<ExternalId> mailtoExtId = externalIds.get(mailtoExtIdKey);
       assertThat(mailtoExtId).isPresent();
-      assertThat(mailtoExtId.get().accountId()).isEqualTo(admin.id);
+      assertThat(mailtoExtId.get().accountId()).isEqualTo(admin.id());
       assertThat(gApi.accounts().self().get().email).isEqualTo(email);
     } finally {
       atrScope.set(oldCtx);
@@ -196,15 +200,17 @@ public class EmailIT extends AbstractDaemonTest {
 
   @Test
   public void setPreferredEmailToEmailFromCustomRealmThatBelongsToOtherAccount() throws Exception {
-    ExternalId mailToExtId = ExternalId.createEmail(user.id, user.email);
+    ExternalId mailToExtId = ExternalId.createEmail(user.id(), user.email());
     assertThat(externalIds.get(mailToExtId.key())).isPresent();
 
     Context oldCtx =
-        createContextWithCustomRealm(new RealmWithAdditionalEmails(admin.id, user.email));
+        createContextWithCustomRealm(new RealmWithAdditionalEmails(admin.id(), user.email()));
     try {
-      exception.expect(ResourceConflictException.class);
-      exception.expectMessage("email in use by another account");
-      gApi.accounts().self().email(user.email).setPreferred();
+      ResourceConflictException thrown =
+          assertThrows(
+              ResourceConflictException.class,
+              () -> gApi.accounts().self().email(user.email()).setPreferred());
+      assertThat(thrown).hasMessageThat().contains("email in use by another account");
     } finally {
       atrScope.set(oldCtx);
     }
@@ -224,7 +230,7 @@ public class EmailIT extends AbstractDaemonTest {
     assertThat(gApi.accounts().self().get().email).isNotEqualTo(email);
 
     // Get email
-    resetCurrentApiUser();
+    requestScopeOperations.resetCurrentApiUser();
     EmailApi emailApi = gApi.accounts().self().email(email);
     EmailInfo emailInfo = emailApi.get();
     assertThat(emailInfo.email).isEqualTo(email);
@@ -236,7 +242,7 @@ public class EmailIT extends AbstractDaemonTest {
     assertThat(gApi.accounts().self().get().email).isEqualTo(email);
 
     // Get email again (now it's the preferred email)
-    resetCurrentApiUser();
+    requestScopeOperations.resetCurrentApiUser();
     emailApi = gApi.accounts().self().email(email);
     emailInfo = emailApi.get();
     assertThat(emailInfo.email).isEqualTo(email);
@@ -248,10 +254,8 @@ public class EmailIT extends AbstractDaemonTest {
     assertThat(getEmails()).doesNotContain(email);
 
     // Now the email is no longer found
-    resetCurrentApiUser();
-    emailApi = gApi.accounts().self().email(email);
-    exception.expect(ResourceNotFoundException.class);
-    emailApi.get();
+    requestScopeOperations.resetCurrentApiUser();
+    assertThrows(ResourceNotFoundException.class, () -> gApi.accounts().self().email(email).get());
   }
 
   private Set<String> getEmails() throws Exception {
@@ -276,10 +280,10 @@ public class EmailIT extends AbstractDaemonTest {
             realm,
             anonymousCowardName,
             canonicalUrl,
-            disableReverseDnsLookup,
+            enableReverseDnsLookup,
             accountCache,
             groupBackend);
-    return atrScope.set(atrScope.newContext(reviewDbProvider, null, userFactory.create(admin.id)));
+    return atrScope.set(atrScope.newContext(null, userFactory.create(admin.id())));
   }
 
   private class RealmWithAdditionalEmails extends DefaultRealm {

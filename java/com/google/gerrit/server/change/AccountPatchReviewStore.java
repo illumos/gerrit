@@ -16,9 +16,9 @@ package com.google.gerrit.server.change;
 
 import com.google.auto.value.AutoValue;
 import com.google.common.collect.ImmutableSet;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gwtorm.server.OrmException;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
 import java.util.Collection;
 import java.util.Optional;
 
@@ -30,7 +30,8 @@ import java.util.Optional;
  * number of reviewed flags is growing without bound. The store must be able handle this data volume
  * efficiently.
  *
- * <p>For a multi-master setup the store must replicate the data between the masters.
+ * <p>For a cluster setups with multiple primary nodes the store must replicate the data between the
+ * primary servers.
  */
 public interface AccountPatchReviewStore {
 
@@ -54,9 +55,8 @@ public interface AccountPatchReviewStore {
    * @param path file path
    * @return {@code true} if the reviewed flag was updated, {@code false} if the reviewed flag was
    *     already set
-   * @throws OrmException thrown if updating the reviewed flag failed
    */
-  boolean markReviewed(PatchSet.Id psId, Account.Id accountId, String path) throws OrmException;
+  boolean markReviewed(PatchSet.Id psId, Account.Id accountId, String path);
 
   /**
    * Marks the given files in the given patch set as reviewed by the given user.
@@ -64,10 +64,8 @@ public interface AccountPatchReviewStore {
    * @param psId patch set ID
    * @param accountId account ID of the user
    * @param paths file paths
-   * @throws OrmException thrown if updating the reviewed flag failed
    */
-  void markReviewed(PatchSet.Id psId, Account.Id accountId, Collection<String> paths)
-      throws OrmException;
+  void markReviewed(PatchSet.Id psId, Account.Id accountId, Collection<String> paths);
 
   /**
    * Clears the reviewed flag for the given file in the given patch set for the given user.
@@ -75,17 +73,22 @@ public interface AccountPatchReviewStore {
    * @param psId patch set ID
    * @param accountId account ID of the user
    * @param path file path
-   * @throws OrmException thrown if clearing the reviewed flag failed
    */
-  void clearReviewed(PatchSet.Id psId, Account.Id accountId, String path) throws OrmException;
+  void clearReviewed(PatchSet.Id psId, Account.Id accountId, String path);
 
   /**
    * Clears the reviewed flags for all files in the given patch set for all users.
    *
    * @param psId patch set ID
-   * @throws OrmException thrown if clearing the reviewed flags failed
    */
-  void clearReviewed(PatchSet.Id psId) throws OrmException;
+  void clearReviewed(PatchSet.Id psId);
+
+  /**
+   * Clears the reviewed flags for all files in all patch sets in the given change for all users.
+   *
+   * @param changeId change ID
+   */
+  void clearReviewed(Change.Id changeId);
 
   /**
    * Find the latest patch set, that is smaller or equals to the given patch set, where at least,
@@ -95,8 +98,6 @@ public interface AccountPatchReviewStore {
    * @param accountId account ID of the user
    * @return optionally, all files the have been reviewed by the given user that belong to the patch
    *     set that is smaller or equals to the given patch set
-   * @throws OrmException thrown if accessing the reviewed flags failed
    */
-  Optional<PatchSetWithReviewedFiles> findReviewed(PatchSet.Id psId, Account.Id accountId)
-      throws OrmException;
+  Optional<PatchSetWithReviewedFiles> findReviewed(PatchSet.Id psId, Account.Id accountId);
 }

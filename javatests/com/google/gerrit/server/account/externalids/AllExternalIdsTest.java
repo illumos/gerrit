@@ -16,12 +16,12 @@ package com.google.gerrit.server.account.externalids;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.extensions.proto.ProtoTruth.assertThat;
+import static com.google.gerrit.proto.testing.SerializedClassSubject.assertThatSerializedClass;
 import static com.google.gerrit.server.cache.testing.CacheSerializerTestUtil.byteString;
-import static com.google.gerrit.server.cache.testing.SerializedClassSubject.assertThatSerializedClass;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSetMultimap;
-import com.google.gerrit.reviewdb.client.Account;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.server.account.externalids.AllExternalIds.Serializer;
 import com.google.gerrit.server.cache.proto.Cache.AllExternalIdsProto;
 import com.google.gerrit.server.cache.proto.Cache.AllExternalIdsProto.ExternalIdProto;
@@ -38,8 +38,8 @@ public class AllExternalIdsTest {
 
   @Test
   public void serializeMultipleExternalIds() throws Exception {
-    Account.Id accountId1 = new Account.Id(1001);
-    Account.Id accountId2 = new Account.Id(1002);
+    Account.Id accountId1 = Account.id(1001);
+    Account.Id accountId2 = Account.id(1002);
     assertRoundTrip(
         allExternalIds(
             ExternalId.create("scheme1", "id1", accountId1),
@@ -61,7 +61,7 @@ public class AllExternalIdsTest {
   @Test
   public void serializeExternalIdWithEmail() throws Exception {
     assertRoundTrip(
-        allExternalIds(ExternalId.createEmail(new Account.Id(1001), "foo@example.com")),
+        allExternalIds(ExternalId.createEmail(Account.id(1001), "foo@example.com")),
         AllExternalIdsProto.newBuilder()
             .addExternalId(
                 ExternalIdProto.newBuilder()
@@ -75,7 +75,7 @@ public class AllExternalIdsTest {
   public void serializeExternalIdWithPassword() throws Exception {
     assertRoundTrip(
         allExternalIds(
-            ExternalId.create("scheme", "id", new Account.Id(1001), null, "hashed password")),
+            ExternalId.create("scheme", "id", Account.id(1001), null, "hashed password")),
         AllExternalIdsProto.newBuilder()
             .addExternalId(
                 ExternalIdProto.newBuilder()
@@ -90,7 +90,7 @@ public class AllExternalIdsTest {
     assertRoundTrip(
         allExternalIds(
             ExternalId.create(
-                ExternalId.create("scheme", "id", new Account.Id(1001)),
+                ExternalId.create("scheme", "id", Account.id(1001)),
                 ObjectId.fromString("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"))),
         AllExternalIdsProto.newBuilder()
             .addExternalId(

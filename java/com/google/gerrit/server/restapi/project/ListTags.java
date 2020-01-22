@@ -14,18 +14,19 @@
 
 package com.google.gerrit.server.restapi.project;
 
-import static com.google.gerrit.reviewdb.client.RefNames.isConfigRef;
+import static com.google.gerrit.entities.RefNames.isConfigRef;
 import static java.util.Comparator.comparing;
 
-import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableList;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.api.projects.ProjectApi.ListRefsRequest;
 import com.google.gerrit.extensions.api.projects.TagInfo;
 import com.google.gerrit.extensions.common.WebLinkInfo;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestReadView;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.CommonConverters;
 import com.google.gerrit.server.WebLinks;
 import com.google.gerrit.server.git.GitRepositoryManager;
@@ -40,8 +41,8 @@ import com.google.inject.Inject;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
-import java.util.Map;
 import org.eclipse.jgit.errors.RepositoryNotFoundException;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.PersonIdent;
@@ -116,7 +117,7 @@ public class ListTags implements RestReadView<ProjectResource> {
   }
 
   @Override
-  public List<TagInfo> apply(ProjectResource resource)
+  public Response<ImmutableList<TagInfo>> apply(ProjectResource resource)
       throws IOException, ResourceNotFoundException, RestApiException, PermissionBackendException {
     resource.getProjectState().checkStatePermitsRead();
 
@@ -126,9 +127,10 @@ public class ListTags implements RestReadView<ProjectResource> {
         permissionBackend.currentUser().project(resource.getNameKey());
     try (Repository repo = getRepository(resource.getNameKey());
         RevWalk rw = new RevWalk(repo)) {
-      Map<String, Ref> all =
-          visibleTags(resource.getNameKey(), repo, repo.getRefDatabase().getRefs(Constants.R_TAGS));
-      for (Ref ref : all.values()) {
+      Collection<Ref> all =
+          visibleTags(
+              resource.getNameKey(), repo, repo.getRefDatabase().getRefsByPrefix(Constants.R_TAGS));
+      for (Ref ref : all) {
         tags.add(
             createTagInfo(perm.ref(ref.getName()), ref, rw, resource.getProjectState(), links));
       }
@@ -136,12 +138,13 @@ public class ListTags implements RestReadView<ProjectResource> {
 
     tags.sort(comparing(t -> t.ref));
 
-    return new RefFilter<TagInfo>(Constants.R_TAGS)
-        .start(start)
-        .limit(limit)
-        .subString(matchSubstring)
-        .regex(matchRegex)
-        .filter(tags);
+    return Response.ok(
+        new RefFilter<TagInfo>(Constants.R_TAGS)
+            .start(start)
+            .limit(limit)
+            .subString(matchSubstring)
+            .regex(matchRegex)
+            .filter(tags));
   }
 
   public TagInfo get(ProjectResource resource, IdString id)
@@ -154,8 +157,7 @@ public class ListTags implements RestReadView<ProjectResource> {
       }
       Ref ref = repo.getRefDatabase().exactRef(tagName);
       if (ref != null
-          && !visibleTags(resource.getNameKey(), repo, ImmutableMap.of(ref.getName(), ref))
-              .isEmpty()) {
+          && !visibleTags(resource.getNameKey(), repo, ImmutableList.of(ref)).isEmpty()) {
         return createTagInfo(
             permissionBackend
                 .user(resource.getUser())
@@ -182,7 +184,7 @@ public class ListTags implements RestReadView<ProjectResource> {
           perm.testOrFalse(RefPermission.DELETE) && projectState.statePermitsWrite() ? true : null;
     }
 
-    List<WebLinkInfo> webLinks = links.getTagLinks(projectState.getName(), ref.getName());
+    ImmutableList<WebLinkInfo> webLinks = links.getTagLinks(projectState.getName(), ref.getName());
     if (object instanceof RevTag) {
       // Annotated or signed tag
       RevTag tag = (RevTag) object;
@@ -221,15 +223,11 @@ public class ListTags implements RestReadView<ProjectResource> {
     }
   }
 
-  private Map<String, Ref> visibleTags(
-      Project.NameKey project, Repository repo, Map<String, Ref> tags)
+  private Collection<Ref> visibleTags(Project.NameKey project, Repository repo, List<Ref> tags)
       throws PermissionBackendException {
     return permissionBackend
         .currentUser()
         .project(project)
-        .filter(
-            tags,
-            repo,
-            RefFilterOptions.builder().setFilterMeta(true).setFilterTagsSeparately(true).build());
+        .filter(tags, repo, RefFilterOptions.builder().setFilterMeta(true).build());
   }
 }

@@ -15,18 +15,16 @@
 package com.google.gerrit.server.notedb;
 
 import static com.google.common.base.MoreObjects.firstNonNull;
-import static com.google.gerrit.reviewdb.client.RefNames.robotCommentsRef;
+import static com.google.gerrit.entities.RefNames.robotCommentsRef;
 import static org.eclipse.jgit.lib.Constants.OBJ_BLOB;
 
 import com.google.common.collect.Sets;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RevId;
-import com.google.gerrit.reviewdb.client.RobotComment;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RobotComment;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.server.GerritPersonIdent;
-import com.google.gerrit.server.config.GerritServerConfig;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.assistedinject.Assisted;
 import com.google.inject.assistedinject.AssistedInject;
 import java.io.IOException;
@@ -38,7 +36,6 @@ import java.util.Map;
 import java.util.Set;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.CommitBuilder;
-import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.PersonIdent;
@@ -74,50 +71,26 @@ public class RobotCommentUpdate extends AbstractChangeUpdate {
 
   @AssistedInject
   private RobotCommentUpdate(
-      @GerritServerConfig Config cfg,
       @GerritPersonIdent PersonIdent serverIdent,
-      NotesMigration migration,
       ChangeNoteUtil noteUtil,
       @Assisted ChangeNotes notes,
       @Assisted("effective") Account.Id accountId,
       @Assisted("real") Account.Id realAccountId,
       @Assisted PersonIdent authorIdent,
       @Assisted Date when) {
-    super(
-        cfg,
-        migration,
-        noteUtil,
-        serverIdent,
-        notes,
-        null,
-        accountId,
-        realAccountId,
-        authorIdent,
-        when);
+    super(noteUtil, serverIdent, notes, null, accountId, realAccountId, authorIdent, when);
   }
 
   @AssistedInject
   private RobotCommentUpdate(
-      @GerritServerConfig Config cfg,
       @GerritPersonIdent PersonIdent serverIdent,
-      NotesMigration migration,
       ChangeNoteUtil noteUtil,
       @Assisted Change change,
       @Assisted("effective") Account.Id accountId,
       @Assisted("real") Account.Id realAccountId,
       @Assisted PersonIdent authorIdent,
       @Assisted Date when) {
-    super(
-        cfg,
-        migration,
-        noteUtil,
-        serverIdent,
-        null,
-        change,
-        accountId,
-        realAccountId,
-        authorIdent,
-        when);
+    super(noteUtil, serverIdent, null, change, accountId, realAccountId, authorIdent, when);
   }
 
   public void putComment(RobotComment c) {
@@ -127,21 +100,21 @@ public class RobotCommentUpdate extends AbstractChangeUpdate {
 
   private CommitBuilder storeCommentsInNotes(
       RevWalk rw, ObjectInserter ins, ObjectId curr, CommitBuilder cb)
-      throws ConfigInvalidException, OrmException, IOException {
+      throws ConfigInvalidException, IOException {
     RevisionNoteMap<RobotCommentsRevisionNote> rnm = getRevisionNoteMap(rw, curr);
-    Set<RevId> updatedRevs = Sets.newHashSetWithExpectedSize(rnm.revisionNotes.size());
+    Set<ObjectId> updatedRevs = Sets.newHashSetWithExpectedSize(rnm.revisionNotes.size());
     RevisionNoteBuilder.Cache cache = new RevisionNoteBuilder.Cache(rnm);
 
     for (RobotComment c : put) {
-      cache.get(new RevId(c.revId)).putComment(c);
+      cache.get(c.getCommitId()).putComment(c);
     }
 
-    Map<RevId, RevisionNoteBuilder> builders = cache.getBuilders();
+    Map<ObjectId, RevisionNoteBuilder> builders = cache.getBuilders();
     boolean touchedAnyRevs = false;
     boolean hasComments = false;
-    for (Map.Entry<RevId, RevisionNoteBuilder> e : builders.entrySet()) {
-      updatedRevs.add(e.getKey());
-      ObjectId id = ObjectId.fromString(e.getKey().get());
+    for (Map.Entry<ObjectId, RevisionNoteBuilder> e : builders.entrySet()) {
+      ObjectId id = e.getKey();
+      updatedRevs.add(id);
       byte[] data = e.getValue().build(noteUtil);
       if (!Arrays.equals(data, e.getValue().baseRaw)) {
         touchedAnyRevs = true;
@@ -174,23 +147,20 @@ public class RobotCommentUpdate extends AbstractChangeUpdate {
   }
 
   private RevisionNoteMap<RobotCommentsRevisionNote> getRevisionNoteMap(RevWalk rw, ObjectId curr)
-      throws ConfigInvalidException, OrmException, IOException {
+      throws ConfigInvalidException, IOException {
     if (curr.equals(ObjectId.zeroId())) {
       return RevisionNoteMap.emptyMap();
     }
-    if (migration.readChanges()) {
-      // If reading from changes is enabled, then the old RobotCommentNotes
-      // already parsed the revision notes. We can reuse them as long as the ref
-      // hasn't advanced.
-      ChangeNotes changeNotes = getNotes();
-      if (changeNotes != null) {
-        RobotCommentNotes robotCommentNotes = changeNotes.load().getRobotCommentNotes();
-        if (robotCommentNotes != null) {
-          ObjectId idFromNotes = firstNonNull(robotCommentNotes.getRevision(), ObjectId.zeroId());
-          RevisionNoteMap<RobotCommentsRevisionNote> rnm = robotCommentNotes.getRevisionNoteMap();
-          if (idFromNotes.equals(curr) && rnm != null) {
-            return rnm;
-          }
+    // The old RobotCommentNotes already parsed the revision notes. We can reuse them as long as
+    // the ref hasn't advanced.
+    ChangeNotes changeNotes = getNotes();
+    if (changeNotes != null) {
+      RobotCommentNotes robotCommentNotes = changeNotes.load().getRobotCommentNotes();
+      if (robotCommentNotes != null) {
+        ObjectId idFromNotes = firstNonNull(robotCommentNotes.getRevision(), ObjectId.zeroId());
+        RevisionNoteMap<RobotCommentsRevisionNote> rnm = robotCommentNotes.getRevisionNoteMap();
+        if (idFromNotes.equals(curr) && rnm != null) {
+          return rnm;
         }
       }
     }
@@ -208,13 +178,13 @@ public class RobotCommentUpdate extends AbstractChangeUpdate {
 
   @Override
   protected CommitBuilder applyImpl(RevWalk rw, ObjectInserter ins, ObjectId curr)
-      throws OrmException, IOException {
+      throws IOException {
     CommitBuilder cb = new CommitBuilder();
     cb.setMessage("Update robot comments");
     try {
       return storeCommentsInNotes(rw, ins, curr, cb);
     } catch (ConfigInvalidException e) {
-      throw new OrmException(e);
+      throw new StorageException(e);
     }
   }
 

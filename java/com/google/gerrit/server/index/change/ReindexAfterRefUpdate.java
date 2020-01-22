@@ -17,42 +17,42 @@ package com.google.gerrit.server.index.change;
 import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
 import static com.google.gerrit.server.query.change.ChangeData.asChanges;
 
-import com.google.common.base.Objects;
 import com.google.common.flogger.FluentLogger;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListeningExecutorService;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.events.GitReferenceUpdatedListener;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.git.QueueProvider.QueueType;
 import com.google.gerrit.server.index.IndexExecutor;
 import com.google.gerrit.server.index.account.AccountIndexer;
-import com.google.gerrit.server.notedb.ChangeNotes;
-import com.google.gerrit.server.project.NoSuchChangeException;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
 import com.google.gerrit.server.util.ManualRequestContext;
 import com.google.gerrit.server.util.OneOffRequestContext;
 import com.google.gerrit.server.util.RequestContext;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
-import java.io.IOException;
-import java.util.Collections;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.Callable;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
 import org.eclipse.jgit.lib.Config;
 
+/**
+ * Listener for ref update events that reindexes entities in case the updated Git reference was used
+ * to compute contents of an index document.
+ *
+ * <p>Reindexes any open changes that has a destination branch that was updated to ensure that
+ * 'mergeable' is still current.
+ *
+ * <p>Will reindex accounts when the account's NoteDb ref changes.
+ */
 public class ReindexAfterRefUpdate implements GitReferenceUpdatedListener {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
@@ -60,14 +60,11 @@ public class ReindexAfterRefUpdate implements GitReferenceUpdatedListener {
   private final Provider<InternalChangeQuery> queryProvider;
   private final ChangeIndexer.Factory indexerFactory;
   private final ChangeIndexCollection indexes;
-  private final ChangeNotes.Factory notesFactory;
   private final AllUsersName allUsersName;
   private final AccountCache accountCache;
   private final Provider<AccountIndexer> indexer;
   private final ListeningExecutorService executor;
   private final boolean enabled;
-
-  private final Set<Index> queuedIndexTasks = Collections.newSetFromMap(new ConcurrentHashMap<>());
 
   @Inject
   ReindexAfterRefUpdate(
@@ -76,7 +73,6 @@ public class ReindexAfterRefUpdate implements GitReferenceUpdatedListener {
       Provider<InternalChangeQuery> queryProvider,
       ChangeIndexer.Factory indexerFactory,
       ChangeIndexCollection indexes,
-      ChangeNotes.Factory notesFactory,
       AllUsersName allUsersName,
       AccountCache accountCache,
       Provider<AccountIndexer> indexer,
@@ -85,12 +81,11 @@ public class ReindexAfterRefUpdate implements GitReferenceUpdatedListener {
     this.queryProvider = queryProvider;
     this.indexerFactory = indexerFactory;
     this.indexes = indexes;
-    this.notesFactory = notesFactory;
     this.allUsersName = allUsersName;
     this.accountCache = accountCache;
     this.indexer = indexer;
     this.executor = executor;
-    this.enabled = cfg.getBoolean("index", null, "reindexAfterRefUpdate", true);
+    this.enabled = cfg.getBoolean("index", "change", "indexMergeable", true);
   }
 
   @Override
@@ -98,12 +93,8 @@ public class ReindexAfterRefUpdate implements GitReferenceUpdatedListener {
     if (allUsersName.get().equals(event.getProjectName())) {
       Account.Id accountId = Account.Id.fromRef(event.getRefName());
       if (accountId != null && !event.getRefName().startsWith(RefNames.REFS_STARRED_CHANGES)) {
-        try {
-          accountCache.evict(accountId);
-          indexer.get().index(accountId);
-        } catch (IOException e) {
-          logger.atSevere().withCause(e).log("Reindex account %s failed.", accountId);
-        }
+        accountCache.evict(accountId);
+        indexer.get().index(accountId);
       }
     }
 
@@ -119,12 +110,9 @@ public class ReindexAfterRefUpdate implements GitReferenceUpdatedListener {
           @Override
           public void onSuccess(List<Change> changes) {
             for (Change c : changes) {
-              Index task = new Index(event, c.getId());
-              if (queuedIndexTasks.add(task)) {
-                // Don't retry indefinitely; if this fails changes may be stale.
-                @SuppressWarnings("unused")
-                Future<?> possiblyIgnoredError = executor.submit(task);
-              }
+              @SuppressWarnings("unused")
+              Future<?> possiblyIgnoredError =
+                  indexerFactory.create(executor, indexes).indexAsync(c.getProject(), c.getId());
             }
           }
 
@@ -164,13 +152,13 @@ public class ReindexAfterRefUpdate implements GitReferenceUpdatedListener {
     }
 
     @Override
-    protected List<Change> impl(RequestContext ctx) throws OrmException {
+    protected List<Change> impl(RequestContext ctx) {
       String ref = event.getRefName();
-      Project.NameKey project = new Project.NameKey(event.getProjectName());
+      Project.NameKey project = Project.nameKey(event.getProjectName());
       if (ref.equals(RefNames.REFS_CONFIG)) {
         return asChanges(queryProvider.get().byProjectOpen(project));
       }
-      return asChanges(queryProvider.get().byBranchNew(new Branch.NameKey(project, ref)));
+      return asChanges(queryProvider.get().byBranchNew(BranchNameKey.create(project, ref)));
     }
 
     @Override
@@ -183,55 +171,5 @@ public class ReindexAfterRefUpdate implements GitReferenceUpdatedListener {
 
     @Override
     protected void remove() {}
-  }
-
-  private class Index extends Task<Void> {
-    private final Change.Id id;
-
-    Index(Event event, Change.Id id) {
-      super(event);
-      this.id = id;
-    }
-
-    @Override
-    protected Void impl(RequestContext ctx) throws OrmException, IOException {
-      // Reload change, as some time may have passed since GetChanges.
-      ReviewDb db = ctx.getReviewDbProvider().get();
-      remove();
-      try {
-        Change c =
-            notesFactory
-                .createChecked(db, new Project.NameKey(event.getProjectName()), id)
-                .getChange();
-        indexerFactory.create(executor, indexes).index(db, c);
-      } catch (NoSuchChangeException e) {
-        indexerFactory.create(executor, indexes).delete(id);
-      }
-      return null;
-    }
-
-    @Override
-    public int hashCode() {
-      return Objects.hashCode(Index.class, id.get());
-    }
-
-    @Override
-    public boolean equals(Object obj) {
-      if (!(obj instanceof Index)) {
-        return false;
-      }
-      Index other = (Index) obj;
-      return id.get() == other.id.get();
-    }
-
-    @Override
-    public String toString() {
-      return "Index change " + id.get() + " of project " + event.getProjectName();
-    }
-
-    @Override
-    protected void remove() {
-      queuedIndexTasks.remove(this);
-    }
   }
 }

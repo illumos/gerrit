@@ -15,8 +15,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
-<link rel="import" href="../../../bower_components/iron-input/iron-input.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../shared/gr-account-chip/gr-account-chip.html">
 <link rel="import" href="../../shared/gr-button/gr-button.html">
 <link rel="import" href="../../shared/gr-rest-api-interface/gr-rest-api-interface.html">
@@ -32,53 +32,35 @@ limitations under the License.
         opacity: .8;
         pointer-events: none;
       }
-      .autocompleteContainer {
-        position: relative;
-      }
-      .hiddenReviewers {
-        margin-top: .3em;
-      }
-      .inputContainer {
-        display: flex;
-        margin-top: .25em;
-      }
-      .inputContainer input {
-        flex: 1;
-        font: inherit;
-      }
-      gr-account-chip {
-        margin-top: .3em;
+      .container > :not(:first-child) {
+        margin-top: var(--spacing-s);
       }
       gr-button {
         --gr-button: {
-          padding-left: 0;
-          padding-right: 0;
-        }
-      }
-      @media screen and (max-width: 50em), screen and (min-width: 75em) {
-        gr-account-chip:first-of-type {
-          margin-top: 0;
+          padding: 0px 0px;
         }
       }
     </style>
-    <template is="dom-repeat" items="[[_displayedReviewers]]" as="reviewer">
-      <gr-account-chip class="reviewer" account="[[reviewer]]"
-          on-remove="_handleRemove"
-          additional-text="[[_computeReviewerTooltip(reviewer, change)]]"
-          removable="[[_computeCanRemoveReviewer(reviewer, mutable)]]">
-      </gr-account-chip>
-    </template>
-    <gr-button
-        class="hiddenReviewers"
-        link
-        hidden$="[[!_hiddenReviewerCount]]"
-        on-tap="_handleViewAll">and [[_hiddenReviewerCount]] more</gr-button>
-    <div class="controlsContainer" hidden$="[[!mutable]]">
+    <div class="container">
+      <template is="dom-repeat" items="[[_displayedReviewers]]" as="reviewer">
+        <gr-account-chip class="reviewer" account="[[reviewer]]"
+            on-remove="_handleRemove"
+            additional-text="[[_computeReviewerTooltip(reviewer, change)]]"
+            removable="[[_computeCanRemoveReviewer(reviewer, mutable)]]">
+        </gr-account-chip>
+      </template>
       <gr-button
+          class="hiddenReviewers"
           link
-          id="addReviewer"
-          class="addReviewer"
-          on-tap="_handleAddTap">[[_addLabel]]</gr-button>
+          hidden$="[[!_hiddenReviewerCount]]"
+          on-click="_handleViewAll">and [[_hiddenReviewerCount]] more</gr-button>
+      <div class="controlsContainer" hidden$="[[!mutable]]">
+        <gr-button
+            link
+            id="addReviewer"
+            class="addReviewer"
+            on-click="_handleAddTap">[[_addLabel]]</gr-button>
+      </div>
     </div>
     <gr-rest-api-interface id="restAPI"></gr-rest-api-interface>
   </template>

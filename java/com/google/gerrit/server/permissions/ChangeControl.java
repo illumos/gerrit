@@ -14,7 +14,6 @@
 
 package com.google.gerrit.server.permissions;
 
-import static com.google.common.base.Preconditions.checkState;
 import static com.google.gerrit.server.permissions.DefaultPermissionMappings.labelPermissionName;
 import static com.google.gerrit.server.permissions.LabelPermission.ForUser.ON_BEHALF_OF;
 
@@ -23,19 +22,17 @@ import com.google.common.collect.Sets;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.data.Permission;
 import com.google.gerrit.common.data.PermissionRange;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.conditions.BooleanCondition;
 import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.permissions.PermissionBackend.ForChange;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.util.Collection;
 import java.util.EnumSet;
@@ -55,10 +52,8 @@ class ChangeControl {
       this.notesFactory = notesFactory;
     }
 
-    ChangeControl create(
-        RefControl refControl, ReviewDb db, Project.NameKey project, Change.Id changeId)
-        throws OrmException {
-      return create(refControl, notesFactory.create(db, project, changeId));
+    ChangeControl create(RefControl refControl, Project.NameKey project, Change.Id changeId) {
+      return create(refControl, notesFactory.create(project, changeId));
     }
 
     ChangeControl create(RefControl refControl, ChangeNotes notes) {
@@ -77,8 +72,8 @@ class ChangeControl {
     this.notes = notes;
   }
 
-  ForChange asForChange(@Nullable ChangeData cd, @Nullable Provider<ReviewDb> db) {
-    return new ForChangeImpl(cd, db);
+  ForChange asForChange(@Nullable ChangeData cd) {
+    return new ForChangeImpl(cd);
   }
 
   private CurrentUser getUser() {
@@ -94,8 +89,8 @@ class ChangeControl {
   }
 
   /** Can this user see this change? */
-  private boolean isVisible(ReviewDb db, @Nullable ChangeData cd) throws OrmException {
-    if (getChange().isPrivate() && !isPrivateVisible(db, cd)) {
+  private boolean isVisible(ChangeData cd) {
+    if (getChange().isPrivate() && !isPrivateVisible(cd)) {
       return false;
     }
     return refControl.isVisible();
@@ -149,7 +144,7 @@ class ChangeControl {
 
   /** Is this user assigned to this change? */
   private boolean isAssignee() {
-    Account.Id currentAssignee = notes.getChange().getAssignee();
+    Account.Id currentAssignee = getChange().getAssignee();
     if (currentAssignee != null && getUser().isIdentifiedUser()) {
       Account.Id id = getUser().getAccountId();
       return id.equals(currentAssignee);
@@ -158,9 +153,8 @@ class ChangeControl {
   }
 
   /** Is this user a reviewer for the change? */
-  private boolean isReviewer(ReviewDb db, @Nullable ChangeData cd) throws OrmException {
+  private boolean isReviewer(ChangeData cd) {
     if (getUser().isIdentifiedUser()) {
-      cd = cd != null ? cd : changeDataFactory.create(db, notes);
       Collection<Account.Id> results = cd.reviewers().all();
       return results.contains(getUser().getAccountId());
     }
@@ -169,7 +163,7 @@ class ChangeControl {
 
   /** Can this user edit the topic name? */
   private boolean canEditTopicName() {
-    if (getChange().getStatus().isOpen()) {
+    if (getChange().isNew()) {
       return isOwner() // owner (aka creator) of the change can edit topic
           || refControl.isOwner() // branch owner can edit topic
           || getProjectControl().isOwner() // project owner can edit topic
@@ -180,9 +174,17 @@ class ChangeControl {
     return refControl.canForceEditTopicName();
   }
 
+  /** Can this user toggle WorkInProgress state? */
+  private boolean canToggleWorkInProgressState() {
+    return isOwner()
+        || getProjectControl().isOwner()
+        || refControl.canPerform(Permission.TOGGLE_WORK_IN_PROGRESS_STATE)
+        || getProjectControl().isAdmin();
+  }
+
   /** Can this user edit the description? */
   private boolean canEditDescription() {
-    if (getChange().getStatus().isOpen()) {
+    if (getChange().isNew()) {
       return isOwner() // owner (aka creator) of the change can edit desc
           || refControl.isOwner() // branch owner can edit desc
           || getProjectControl().isOwner() // project owner can edit desc
@@ -208,9 +210,9 @@ class ChangeControl {
         || getProjectControl().isAdmin();
   }
 
-  private boolean isPrivateVisible(ReviewDb db, ChangeData cd) throws OrmException {
+  private boolean isPrivateVisible(ChangeData cd) {
     return isOwner()
-        || isReviewer(db, cd)
+        || isReviewer(cd)
         || refControl.canPerform(Permission.VIEW_PRIVATE_CHANGES)
         || getUser().isInternalUser();
   }
@@ -220,26 +222,13 @@ class ChangeControl {
     private Map<String, PermissionRange> labels;
     private String resourcePath;
 
-    ForChangeImpl(@Nullable ChangeData cd, @Nullable Provider<ReviewDb> db) {
+    ForChangeImpl(@Nullable ChangeData cd) {
       this.cd = cd;
-      this.db = db;
-    }
-
-    private ReviewDb db() {
-      if (db != null) {
-        return db.get();
-      } else if (cd != null) {
-        return cd.db();
-      } else {
-        return null;
-      }
     }
 
     private ChangeData changeData() {
       if (cd == null) {
-        ReviewDb reviewDb = db();
-        checkState(reviewDb != null, "need ReviewDb");
-        cd = changeDataFactory.create(reviewDb, notes);
+        cd = changeDataFactory.create(notes);
       }
       return cd;
     }
@@ -295,7 +284,7 @@ class ChangeControl {
       try {
         switch (perm) {
           case READ:
-            return isVisible(db(), changeData());
+            return isVisible(changeData());
           case ABANDON:
             return canAbandon();
           case DELETE:
@@ -316,12 +305,14 @@ class ChangeControl {
             return canRestore();
           case SUBMIT:
             return refControl.canSubmit(isOwner());
+          case TOGGLE_WORK_IN_PROGRESS_STATE:
+            return canToggleWorkInProgressState();
 
           case REMOVE_REVIEWER:
           case SUBMIT_AS:
             return refControl.canPerform(changePermissionName(perm));
         }
-      } catch (OrmException e) {
+      } catch (StorageException e) {
         throw new PermissionBackendException("unavailable", e);
       }
       throw new PermissionBackendException(perm + " unsupported");

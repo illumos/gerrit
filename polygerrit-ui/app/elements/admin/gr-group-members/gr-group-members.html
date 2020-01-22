@@ -16,10 +16,10 @@ limitations under the License.
 -->
 
 <link rel="import" href="../../../behaviors/base-url-behavior/base-url-behavior.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../behaviors/gr-url-encoding-behavior/gr-url-encoding-behavior.html">
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
-<link rel="import" href="../../../bower_components/iron-autogrow-textarea/iron-autogrow-textarea.html">
-<link rel="import" href="../../../bower_components/iron-input/iron-input.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/iron-autogrow-textarea/iron-autogrow-textarea.html">
 <link rel="import" href="../../../styles/gr-form-styles.html">
 <link rel="import" href="../../../styles/gr-subpage-styles.html">
 <link rel="import" href="../../../styles/gr-table-styles.html">
@@ -33,20 +33,21 @@ limitations under the License.
 
 <dom-module id="gr-group-members">
   <template>
-    <style include="gr-form-styles"></style>
-    <style include="gr-table-styles"></style>
-    <style include="gr-subpage-styles"></style>
+    <style include="gr-form-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
+    <style include="gr-table-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
+    <style include="gr-subpage-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <style include="shared-styles">
       .input {
         width: 15em;
       }
       gr-autocomplete {
         width: 20em;
-        --gr-autocomplete: {
-          font-size: var(--font-size-normal);
-          height: 2em;
-          width: 20em;
-        }
       }
       a {
         color: var(--primary-text-color);
@@ -91,7 +92,7 @@ limitations under the License.
             </span>
             <gr-button
                 id="saveGroupMember"
-                on-tap="_handleSavingGroupMember"
+                on-click="_handleSavingGroupMember"
                 disabled="[[!_groupMemberSearchId]]">
               Add
             </gr-button>
@@ -111,7 +112,7 @@ limitations under the License.
                     <td class="deleteColumn">
                       <gr-button
                           class="deleteMembersButton"
-                          on-tap="_handleDeleteMember">
+                          on-click="_handleDeleteMember">
                         Delete
                       </gr-button>
                     </td>
@@ -133,7 +134,7 @@ limitations under the License.
             </span>
             <gr-button
                 id="saveIncludedGroups"
-                on-tap="_handleSavingIncludedGroups"
+                on-click="_handleSavingIncludedGroups"
                 disabled="[[!_includedGroupSearchId]]">
               Add
             </gr-button>
@@ -163,7 +164,7 @@ limitations under the License.
                     <td class="deleteColumn">
                       <gr-button
                           class="deleteIncludedGroupButton"
-                          on-tap="_handleDeleteIncludedGroup">
+                          on-click="_handleDeleteIncludedGroup">
                         Delete
                       </gr-button>
                     </td>

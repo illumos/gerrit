@@ -15,7 +15,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/iron-input/iron-input.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../styles/gr-form-styles.html">
 <link rel="import" href="../../core/gr-navigation/gr-navigation.html">
 <link rel="import" href="../../shared/gr-button/gr-button.html">
@@ -24,7 +26,9 @@ limitations under the License.
 
 <dom-module id="gr-registration-dialog">
   <template>
-    <style include="gr-form-styles"></style>
+    <style include="gr-form-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <style include="shared-styles">
       :host {
         display: block;
@@ -43,23 +47,23 @@ limitations under the License.
         display: block;
       }
       hr {
-        margin-top: 1em;
-        margin-bottom: 1em;
+        margin-top: var(--spacing-l);
+        margin-bottom: var(--spacing-l);
       }
       header {
         border-bottom: 1px solid var(--border-color);
         font-weight: var(--font-weight-bold);
-        margin-bottom: 1em;
+        margin-bottom: var(--spacing-l);
       }
       .container {
-        padding: .5em 1.5em;
+        padding: var(--spacing-m) var(--spacing-xl);
       }
       footer {
         display: flex;
         justify-content: flex-end;
       }
       footer gr-button {
-        margin-left: 1em;
+        margin-left: var(--spacing-l);
       }
       input {
         width: 20em;
@@ -81,19 +85,25 @@ limitations under the License.
         <hr>
         <section>
           <div class="title">Full Name</div>
-          <input
-              is="iron-input"
-              id="name"
-              bind-value="{{_account.name}}"
-              disabled="[[_saving]]">
+          <iron-input
+              bind-value="{{_account.name}}">
+            <input
+                is="iron-input"
+                id="name"
+                bind-value="{{_account.name}}"
+                disabled="[[_saving]]">
+          </iron-input>
         </section>
         <section class$="[[_computeUsernameClass(_usernameMutable)]]">
           <div class="title">Username</div>
-          <input
-              is="iron-input"
-              id="username"
-              bind-value="{{_account.username}}"
-              disabled="[[_saving]]">
+          <iron-input
+              bind-value="{{_account.username}}">
+            <input
+                is="iron-input"
+                id="username"
+                bind-value="{{_account.username}}"
+                disabled="[[_saving]]">
+          </iron-input>
         </section>
         <section>
           <div class="title">Preferred Email</div>
@@ -109,7 +119,7 @@ limitations under the License.
         <hr>
         <p>
           More configuration options for Gerrit may be found in the
-          <a on-tap="close" href$="[[settingsUrl]]">settings</a>.
+          <a on-click="close" href$="[[settingsUrl]]">settings</a>.
         </p>
       </main>
       <footer>
@@ -117,13 +127,13 @@ limitations under the License.
             id="closeButton"
             link
             disabled="[[_saving]]"
-            on-tap="_handleClose">Close</gr-button>
+            on-click="_handleClose">Close</gr-button>
         <gr-button
             id="saveButton"
             primary
             link
             disabled="[[_computeSaveDisabled(_account.name, _account.email, _saving)]]"
-            on-tap="_handleSave">Save</gr-button>
+            on-click="_handleSave">Save</gr-button>
       </footer>
     </div>
     <gr-rest-api-interface id="restAPI"></gr-rest-api-interface>

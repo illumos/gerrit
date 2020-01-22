@@ -16,16 +16,11 @@ package com.google.gerrit.server.change;
 
 import static com.google.gerrit.server.CommentsUtil.COMMENT_ORDER;
 
-import com.google.common.collect.ListMultimap;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.extensions.api.changes.NotifyHandling;
-import com.google.gerrit.extensions.api.changes.RecipientType;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.ChangeMessage;
-import com.google.gerrit.reviewdb.client.Comment;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.server.ReviewDb;
+import com.google.gerrit.entities.ChangeMessage;
+import com.google.gerrit.entities.Comment;
+import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.config.SendEmailExecutor;
@@ -35,11 +30,7 @@ import com.google.gerrit.server.patch.PatchSetInfoFactory;
 import com.google.gerrit.server.util.LabelVote;
 import com.google.gerrit.server.util.RequestContext;
 import com.google.gerrit.server.util.ThreadLocalRequestContext;
-import com.google.gwtorm.server.OrmException;
-import com.google.gwtorm.server.SchemaFactory;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
-import com.google.inject.ProvisionException;
 import com.google.inject.assistedinject.Assisted;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -53,7 +44,6 @@ public class EmailReviewComments implements Runnable, RequestContext {
     // on the same set of inputs.
     /**
      * @param notify setting for handling notification.
-     * @param accountsToNotify detailed map of accounts to notify.
      * @param notes change notes.
      * @param patchSet patch set corresponding to the top-level op
      * @param user user the email should come from.
@@ -68,8 +58,7 @@ public class EmailReviewComments implements Runnable, RequestContext {
      * @return handle for sending email.
      */
     EmailReviewComments create(
-        NotifyHandling notify,
-        ListMultimap<RecipientType, Account.Id> accountsToNotify,
+        NotifyResolver.Result notify,
         ChangeNotes notes,
         PatchSet patchSet,
         IdentifiedUser user,
@@ -82,11 +71,9 @@ public class EmailReviewComments implements Runnable, RequestContext {
   private final ExecutorService sendEmailsExecutor;
   private final PatchSetInfoFactory patchSetInfoFactory;
   private final CommentSender.Factory commentSenderFactory;
-  private final SchemaFactory<ReviewDb> schemaFactory;
   private final ThreadLocalRequestContext requestContext;
 
-  private final NotifyHandling notify;
-  private final ListMultimap<RecipientType, Account.Id> accountsToNotify;
+  private final NotifyResolver.Result notify;
   private final ChangeNotes notes;
   private final PatchSet patchSet;
   private final IdentifiedUser user;
@@ -94,17 +81,14 @@ public class EmailReviewComments implements Runnable, RequestContext {
   private final List<Comment> comments;
   private final String patchSetComment;
   private final List<LabelVote> labels;
-  private ReviewDb db;
 
   @Inject
   EmailReviewComments(
       @SendEmailExecutor ExecutorService executor,
       PatchSetInfoFactory patchSetInfoFactory,
       CommentSender.Factory commentSenderFactory,
-      SchemaFactory<ReviewDb> schemaFactory,
       ThreadLocalRequestContext requestContext,
-      @Assisted NotifyHandling notify,
-      @Assisted ListMultimap<RecipientType, Account.Id> accountsToNotify,
+      @Assisted NotifyResolver.Result notify,
       @Assisted ChangeNotes notes,
       @Assisted PatchSet patchSet,
       @Assisted IdentifiedUser user,
@@ -115,10 +99,8 @@ public class EmailReviewComments implements Runnable, RequestContext {
     this.sendEmailsExecutor = executor;
     this.patchSetInfoFactory = patchSetInfoFactory;
     this.commentSenderFactory = commentSenderFactory;
-    this.schemaFactory = schemaFactory;
     this.requestContext = requestContext;
     this.notify = notify;
-    this.accountsToNotify = accountsToNotify;
     this.notes = notes;
     this.patchSet = patchSet;
     this.user = user;
@@ -137,7 +119,6 @@ public class EmailReviewComments implements Runnable, RequestContext {
   public void run() {
     RequestContext old = requestContext.setContext(this);
     try {
-
       CommentSender cm = commentSenderFactory.create(notes.getProjectName(), notes.getChangeId());
       cm.setFrom(user.getAccountId());
       cm.setPatchSet(patchSet, patchSetInfoFactory.get(notes.getProjectName(), patchSet));
@@ -146,16 +127,11 @@ public class EmailReviewComments implements Runnable, RequestContext {
       cm.setPatchSetComment(patchSetComment);
       cm.setLabels(labels);
       cm.setNotify(notify);
-      cm.setAccountsToNotify(accountsToNotify);
       cm.send();
     } catch (Exception e) {
-      logger.atSevere().withCause(e).log("Cannot email comments for %s", patchSet.getId());
+      logger.atSevere().withCause(e).log("Cannot email comments for %s", patchSet.id());
     } finally {
       requestContext.setContext(old);
-      if (db != null) {
-        db.close();
-        db = null;
-      }
     }
   }
 
@@ -167,22 +143,5 @@ public class EmailReviewComments implements Runnable, RequestContext {
   @Override
   public CurrentUser getUser() {
     return user.getRealUser();
-  }
-
-  @Override
-  public Provider<ReviewDb> getReviewDbProvider() {
-    return new Provider<ReviewDb>() {
-      @Override
-      public ReviewDb get() {
-        if (db == null) {
-          try {
-            db = schemaFactory.open();
-          } catch (OrmException e) {
-            throw new ProvisionException("Cannot open ReviewDb", e);
-          }
-        }
-        return db;
-      }
-    };
   }
 }

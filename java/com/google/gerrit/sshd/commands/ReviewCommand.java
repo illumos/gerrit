@@ -14,13 +14,18 @@
 
 package com.google.gerrit.sshd.commands;
 
+import static com.google.gerrit.util.cli.Localizable.localizable;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.Objects.requireNonNull;
 
 import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableList;
 import com.google.common.flogger.FluentLogger;
 import com.google.common.io.CharStreams;
 import com.google.gerrit.common.data.LabelType;
 import com.google.gerrit.common.data.LabelValue;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.GerritApi;
 import com.google.gerrit.extensions.api.changes.AbandonInput;
 import com.google.gerrit.extensions.api.changes.ChangeApi;
@@ -30,8 +35,7 @@ import com.google.gerrit.extensions.api.changes.RestoreInput;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.api.changes.RevisionApi;
 import com.google.gerrit.extensions.restapi.RestApiException;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.server.OutputFormat;
+import com.google.gerrit.json.OutputFormat;
 import com.google.gerrit.server.config.AllProjectsName;
 import com.google.gerrit.server.project.NoSuchChangeException;
 import com.google.gerrit.server.project.ProjectCache;
@@ -40,20 +44,26 @@ import com.google.gerrit.server.util.LabelVote;
 import com.google.gerrit.sshd.CommandMetaData;
 import com.google.gerrit.sshd.SshCommand;
 import com.google.gerrit.util.cli.CmdLineParser;
+import com.google.gerrit.util.cli.OptionUtil;
 import com.google.gson.JsonSyntaxException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.util.ArrayList;
+import java.lang.reflect.AnnotatedElement;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import org.kohsuke.args4j.Argument;
+import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.Option;
+import org.kohsuke.args4j.OptionDef;
+import org.kohsuke.args4j.spi.FieldSetter;
+import org.kohsuke.args4j.spi.OneArgumentOptionHandler;
+import org.kohsuke.args4j.spi.Setter;
 
 @CommandMetaData(name = "review", description = "Apply reviews to one or more patch sets")
 public class ReviewCommand extends SshCommand {
@@ -61,10 +71,8 @@ public class ReviewCommand extends SshCommand {
 
   @Override
   protected final CmdLineParser newCmdLineParser(Object options) {
-    final CmdLineParser parser = super.newCmdLineParser(options);
-    for (ApproveOption c : optionList) {
-      parser.addOption(c, c);
-    }
+    CmdLineParser parser = super.newCmdLineParser(options);
+    optionMap.forEach((o, s) -> parser.addOption(s, o));
     return parser;
   }
 
@@ -82,7 +90,7 @@ public class ReviewCommand extends SshCommand {
       patchSets.add(ps);
     } catch (UnloggedFailure e) {
       throw new IllegalArgumentException(e.getMessage(), e);
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       throw new IllegalArgumentException("database error", e);
     }
   }
@@ -154,7 +162,7 @@ public class ReviewCommand extends SshCommand {
 
   @Inject private PatchSetParser psParser;
 
-  private List<ApproveOption> optionList;
+  private Map<Option, LabelSetter> optionMap;
   private Map<String, Short> customLabels;
 
   @Override
@@ -220,11 +228,11 @@ public class ReviewCommand extends SshCommand {
         writeError("error", e.getMessage() + "\n");
       } catch (NoSuchChangeException e) {
         ok = false;
-        writeError("error", "no such change " + patchSet.getId().getParentKey().get());
+        writeError("error", "no such change " + patchSet.id().changeId().get());
       } catch (Exception e) {
         ok = false;
-        writeError("fatal", "internal server error while reviewing " + patchSet.getId() + "\n");
-        logger.atSevere().withCause(e).log("internal error while reviewing %s", patchSet.getId());
+        writeError("fatal", "internal server error while reviewing " + patchSet.id() + "\n");
+        logger.atSevere().withCause(e).log("internal error while reviewing %s", patchSet.id());
       }
     }
 
@@ -235,8 +243,8 @@ public class ReviewCommand extends SshCommand {
 
   private void applyReview(PatchSet patchSet, ReviewInput review) throws RestApiException {
     gApi.changes()
-        .id(patchSet.getId().getParentKey().get())
-        .revision(patchSet.getRevision().get())
+        .id(patchSet.id().changeId().get())
+        .revision(patchSet.commitId().name())
         .review(review);
   }
 
@@ -257,11 +265,8 @@ public class ReviewCommand extends SshCommand {
     review.notify = notify;
     review.labels = new TreeMap<>();
     review.drafts = ReviewInput.DraftHandling.PUBLISH;
-    for (ApproveOption ao : optionList) {
-      Short v = ao.value();
-      if (v != null) {
-        review.labels.put(ao.getLabelName(), v);
-      }
+    for (LabelSetter setter : optionMap.values()) {
+      setter.getValue().ifPresent(v -> review.labels.put(setter.getLabelName(), v));
     }
     review.labels.putAll(customLabels);
 
@@ -306,16 +311,16 @@ public class ReviewCommand extends SshCommand {
   }
 
   private ChangeApi changeApi(PatchSet patchSet) throws RestApiException {
-    return gApi.changes().id(patchSet.getId().getParentKey().get());
+    return gApi.changes().id(patchSet.id().changeId().get());
   }
 
   private RevisionApi revisionApi(PatchSet patchSet) throws RestApiException {
-    return changeApi(patchSet).revision(patchSet.getRevision().get());
+    return changeApi(patchSet).revision(patchSet.commitId().name());
   }
 
   @Override
   protected void parseCommandLine() throws UnloggedFailure {
-    optionList = new ArrayList<>();
+    optionMap = new LinkedHashMap<>();
     customLabels = new HashMap<>();
 
     ProjectState allProjectsState;
@@ -332,10 +337,111 @@ public class ReviewCommand extends SshCommand {
         usage.append(v.format()).append("\n");
       }
 
-      final String name = "--" + type.getName().toLowerCase();
-      optionList.add(new ApproveOption(name, usage.toString(), type));
+      optionMap.put(newApproveOption(type, usage.toString()), new LabelSetter(type));
     }
 
     super.parseCommandLine();
+  }
+
+  private static String asOptionName(LabelType type) {
+    return "--" + type.getName().toLowerCase();
+  }
+
+  private static Option newApproveOption(LabelType type, String usage) {
+    return OptionUtil.newOption(
+        asOptionName(type),
+        ImmutableList.of(),
+        usage,
+        "N",
+        false,
+        false,
+        false,
+        LabelHandler.class,
+        ImmutableList.of(),
+        ImmutableList.of());
+  }
+
+  private static class LabelSetter implements Setter<Short> {
+    private final LabelType type;
+    private Optional<Short> value;
+
+    LabelSetter(LabelType type) {
+      this.type = requireNonNull(type);
+      this.value = Optional.empty();
+    }
+
+    Optional<Short> getValue() {
+      return value;
+    }
+
+    LabelType getLabelType() {
+      return type;
+    }
+
+    String getLabelName() {
+      return type.getName();
+    }
+
+    @Override
+    public void addValue(Short value) {
+      this.value = Optional.of(value);
+    }
+
+    @Override
+    public Class<Short> getType() {
+      return Short.class;
+    }
+
+    @Override
+    public boolean isMultiValued() {
+      return false;
+    }
+
+    @Override
+    public FieldSetter asFieldSetter() {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public AnnotatedElement asAnnotatedElement() {
+      throw new UnsupportedOperationException();
+    }
+  }
+
+  public static class LabelHandler extends OneArgumentOptionHandler<Short> {
+    private final LabelType type;
+
+    public LabelHandler(
+        org.kohsuke.args4j.CmdLineParser parser, OptionDef option, Setter<Short> setter) {
+      super(parser, option, setter);
+      this.type = ((LabelSetter) setter).getLabelType();
+    }
+
+    @Override
+    protected Short parse(String token) throws NumberFormatException, CmdLineException {
+      String argument = token;
+      if (argument.startsWith("+")) {
+        argument = argument.substring(1);
+      }
+
+      short value = Short.parseShort(argument);
+      LabelValue min = type.getMin();
+      LabelValue max = type.getMax();
+
+      if (value < min.getValue() || value > max.getValue()) {
+        String e =
+            "\""
+                + token
+                + "\" must be in range "
+                + min.formatValue()
+                + ".."
+                + max.formatValue()
+                + " for \""
+                + asOptionName(type)
+                + "\"";
+        throw new CmdLineException(owner, localizable(e));
+      }
+      return value;
+    }
   }
 }

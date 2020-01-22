@@ -21,8 +21,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Maps;
 import com.google.common.collect.MultimapBuilder;
-import com.google.gerrit.reviewdb.client.Comment;
-import com.google.gerrit.reviewdb.client.RevId;
+import com.google.gerrit.entities.Comment;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -33,27 +32,30 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.eclipse.jgit.lib.AnyObjectId;
+import org.eclipse.jgit.lib.ObjectId;
 
 class RevisionNoteBuilder {
+  /** Construct a new RevisionNoteMap, seeding it with an existing (immutable) RevisionNoteMap */
   static class Cache {
     private final RevisionNoteMap<? extends RevisionNote<? extends Comment>> revisionNoteMap;
-    private final Map<RevId, RevisionNoteBuilder> builders;
+    private final Map<ObjectId, RevisionNoteBuilder> builders;
 
     Cache(RevisionNoteMap<? extends RevisionNote<? extends Comment>> revisionNoteMap) {
       this.revisionNoteMap = revisionNoteMap;
       this.builders = new HashMap<>();
     }
 
-    RevisionNoteBuilder get(RevId revId) {
-      RevisionNoteBuilder b = builders.get(revId);
+    RevisionNoteBuilder get(AnyObjectId commitId) {
+      RevisionNoteBuilder b = builders.get(commitId);
       if (b == null) {
-        b = new RevisionNoteBuilder(revisionNoteMap.revisionNotes.get(revId));
-        builders.put(revId, b);
+        b = new RevisionNoteBuilder(revisionNoteMap.revisionNotes.get(commitId));
+        builders.put(commitId.copy(), b);
       }
       return b;
     }
 
-    Map<RevId, RevisionNoteBuilder> getBuilders() {
+    Map<ObjectId, RevisionNoteBuilder> getBuilders() {
       return Collections.unmodifiableMap(builders);
     }
   }
@@ -68,7 +70,7 @@ class RevisionNoteBuilder {
   RevisionNoteBuilder(RevisionNote<? extends Comment> base) {
     if (base != null) {
       baseRaw = base.getRaw();
-      baseComments = base.getComments();
+      baseComments = base.getEntities();
       put = Maps.newHashMapWithExpectedSize(baseComments.size());
       if (base instanceof ChangeRevisionNote) {
         pushCert = ((ChangeRevisionNote) base).getPushCert();

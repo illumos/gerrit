@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-change-actions</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <script src="../../../scripts/util.js"></script>
 
@@ -35,6 +37,7 @@ limitations under the License.
 </test-fixture>
 
 <script>
+  // TODO(dhruvsri): remove use of _populateRevertMessage as it's private
   suite('gr-change-actions tests', () => {
     let element;
     let sandbox;
@@ -64,7 +67,9 @@ limitations under the License.
           });
         },
         send(method, url, payload) {
-          if (method !== 'POST') { return Promise.reject('bad method'); }
+          if (method !== 'POST') {
+            return Promise.reject(new Error('bad method'));
+          }
 
           if (url === '/changes/test~42/revisions/2/submit') {
             return Promise.resolve({
@@ -78,7 +83,7 @@ limitations under the License.
             });
           }
 
-          return Promise.reject('bad url');
+          return Promise.reject(new Error('bad url'));
         },
         getProjectConfig() { return Promise.resolve({}); },
       });
@@ -216,9 +221,8 @@ limitations under the License.
 
     test('delete buttons have explicit labels', done => {
       flush(() => {
-        const deleteItems = element.$.moreActions.items.filter(item => {
-          return item.id.startsWith('delete');
-        });
+        const deleteItems = element.$.moreActions.items
+            .filter(item => item.id.startsWith('delete'));
         assert.equal(deleteItems.length, 1);
         assert.notEqual(deleteItems[0].name);
         assert.equal(deleteItems[0].name, 'Delete change');
@@ -257,7 +261,7 @@ limitations under the License.
       sandbox.stub(element.$.restAPI, 'getFromProjectLookup')
           .returns(Promise.resolve('test'));
       sandbox.stub(element, 'fetchChangeUpdates',
-          () => { return Promise.resolve({isLatest: true}); });
+          () => Promise.resolve({isLatest: true}));
       sandbox.stub(element.$.overlay, 'open').returns(Promise.resolve());
       element.change = {
         revisions: {
@@ -280,7 +284,7 @@ limitations under the License.
       sandbox.stub(element.$.restAPI, 'getFromProjectLookup')
           .returns(Promise.resolve('test'));
       sandbox.stub(element, 'fetchChangeUpdates',
-          () => { return Promise.resolve({isLatest: true}); });
+          () => Promise.resolve({isLatest: true}));
       sandbox.stub(element.$.overlay, 'open').returns(Promise.resolve());
       element.change = {
         revisions: {
@@ -314,7 +318,7 @@ limitations under the License.
 
     test('submit change with plugin hook', done => {
       sandbox.stub(element, '_canSubmitChange',
-          () => { return false; });
+          () => false);
       const fireActionStub = sandbox.stub(element, '_fireAction');
       flush(() => {
         const submitButton = element.$$('gr-button[data-action-key="submit"]');
@@ -372,6 +376,7 @@ limitations under the License.
         };
         assert.isTrue(fetchChangesStub.called);
         element._handleRebaseConfirm({detail: {base: '1234'}});
+        rebaseAction.rebaseOnCurrent = true;
         assert.deepEqual(fireActionStub.lastCall.args,
             ['/rebase', rebaseAction, true, {base: '1234'}]);
         done();
@@ -461,7 +466,9 @@ limitations under the License.
         element._handleDeleteEditTap();
         assert.isFalse(element.$.confirmDeleteEditDialog.hidden);
         MockInteractions.tap(
-            element.$$('#confirmDeleteEditDialog').$$('gr-button[primary]'));
+            element.shadowRoot
+                .querySelector('#confirmDeleteEditDialog')
+                .$$('gr-button[primary]'));
         flushAsynchronousOperations();
 
         assert.equal(fireActionStub.lastCall.args[0], '/edit');
@@ -789,12 +796,12 @@ limitations under the License.
     });
 
     suite('revert change', () => {
-      let alertStub;
       let fireActionStub;
 
       setup(() => {
         fireActionStub = sandbox.stub(element, '_fireAction');
-        alertStub = sandbox.stub(window, 'alert');
+        element.commitMessage = 'random commit message';
+        element.change.current_revision = 'abcdef';
         element.actions = {
           revert: {
             method: 'POST',
@@ -807,50 +814,149 @@ limitations under the License.
       });
 
       test('revert change with plugin hook', done => {
+        const newRevertMsg = 'Modified revert msg';
+        sandbox.stub(element.$.confirmRevertDialog, '_modifyRevertMsg',
+            () => newRevertMsg);
         element.change = {
           current_revision: 'abc1234',
         };
-        const newRevertMsg = 'Modified revert msg';
-        sandbox.stub(element, '_modifyRevertMsg',
-            () => { return newRevertMsg; });
-        sandbox.stub(element.$.confirmRevertDialog, 'populateRevertMessage',
-            () => { return 'original msg'; });
+        sandbox.stub(element.$.confirmRevertDialog,
+            '_populateRevertSubmissionMessage', () => 'original msg');
         flush(() => {
-          const revertButton =
-              element.$$('gr-button[data-action-key="revert"]');
+          const revertButton = element.shadowRoot
+              .querySelector('gr-button[data-action-key="revert"]');
           MockInteractions.tap(revertButton);
-
-          assert.equal(element.$.confirmRevertDialog.message, newRevertMsg);
-          done();
+          flush(() => {
+            assert.equal(element.$.confirmRevertDialog.message, newRevertMsg);
+            done();
+          });
         });
       });
 
-      test('works', () => {
-        element.change = {
-          current_revision: 'abc1234',
-        };
-        sandbox.stub(element.$.confirmRevertDialog, 'populateRevertMessage',
-            () => { return 'original msg'; });
-        const revertButton = element.$$('gr-button[data-action-key="revert"]');
-        MockInteractions.tap(revertButton);
+      suite('revert change submitted together', () => {
+        setup(() => {
+          element.change = {
+            submission_id: '199',
+            current_revision: '2000',
+          };
+          sandbox.stub(element.$.restAPI, 'getChanges')
+              .returns(Promise.resolve([
+                {change_id: '12345678901234', topic: 'T', subject: 'random'},
+                {change_id: '23456', topic: 'T', subject: 'a'.repeat(100)},
+              ]));
+        });
 
-        element.$.confirmRevertDialog.message = 'foo message';
-        element._handleRevertDialogConfirm();
-        assert.notOk(alertStub.called);
+        test('confirm revert dialog shows both options', done => {
+          const revertButton = element.shadowRoot
+              .querySelector('gr-button[data-action-key="revert"]');
+          MockInteractions.tap(revertButton);
+          flush(() => {
+            const confirmRevertDialog = element.$.confirmRevertDialog;
+            const revertSingleChangeLabel = confirmRevertDialog
+                .shadowRoot.querySelector('.revertSingleChange');
+            const revertSubmissionLabel = confirmRevertDialog.
+                shadowRoot.querySelector('.revertSubmission');
+            assert(revertSingleChangeLabel.innerText.trim() ===
+                'Revert single change');
+            assert(revertSubmissionLabel.innerText.trim() ===
+                'Revert entire submission (2 Changes)');
+            let expectedMsg = 'Revert submission 199' + '\n\n' +
+              'Reason for revert: <INSERT REASONING HERE>' + '\n' +
+              'Reverted Changes:' + '\n' +
+              '1234567890:random' + '\n' +
+              '23456:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...' +
+              '\n';
+            assert.equal(confirmRevertDialog.message, expectedMsg);
+            const radioInputs = confirmRevertDialog.shadowRoot
+                .querySelectorAll('input[name="revertOptions"]');
+            MockInteractions.tap(radioInputs[0]);
+            flush(() => {
+              expectedMsg = 'Revert "random commit message"\n\nThis reverts '
+               + 'commit 2000.\n\nReason'
+               + ' for revert: <INSERT REASONING HERE>\n';
+              assert.equal(confirmRevertDialog.message, expectedMsg);
+              done();
+            });
+          });
+        });
 
-        const action = {
-          __key: 'revert',
-          __type: 'change',
-          __primary: false,
-          enabled: true,
-          label: 'Revert',
-          method: 'POST',
-          title: 'Revert the change',
-        };
-        assert.deepEqual(fireActionStub.lastCall.args, [
-          '/revert', action, false, {
-            message: 'foo message',
-          }]);
+        test('message modification is retained on switching', done => {
+          const revertButton = element.shadowRoot
+              .querySelector('gr-button[data-action-key="revert"]');
+          const confirmRevertDialog = element.$.confirmRevertDialog;
+          MockInteractions.tap(revertButton);
+          flush(() => {
+            const radioInputs = confirmRevertDialog.shadowRoot
+                .querySelectorAll('input[name="revertOptions"]');
+            const revertSubmissionMsg = 'Revert submission 199' + '\n\n' +
+            'Reason for revert: <INSERT REASONING HERE>' + '\n' +
+            'Reverted Changes:' + '\n' +
+            '1234567890:random' + '\n' +
+            '23456:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...' +
+            '\n';
+            const singleChangeMsg =
+            'Revert "random commit message"\n\nThis reverts '
+              + 'commit 2000.\n\nReason'
+              + ' for revert: <INSERT REASONING HERE>\n';
+            assert.equal(confirmRevertDialog.message, revertSubmissionMsg);
+            const newRevertMsg = revertSubmissionMsg + 'random';
+            const newSingleChangeMsg = singleChangeMsg + 'random';
+            confirmRevertDialog.message = newRevertMsg;
+            MockInteractions.tap(radioInputs[0]);
+            flush(() => {
+              assert.equal(confirmRevertDialog.message, singleChangeMsg);
+              confirmRevertDialog.message = newSingleChangeMsg;
+              MockInteractions.tap(radioInputs[1]);
+              flush(() => {
+                assert.equal(confirmRevertDialog.message, newRevertMsg);
+                MockInteractions.tap(radioInputs[0]);
+                flush(() => {
+                  assert.equal(confirmRevertDialog.message, newSingleChangeMsg);
+                  done();
+                });
+              });
+            });
+          });
+        });
+      });
+
+      suite('revert single change', () => {
+        setup(() => {
+          element.change = {
+            submission_id: '199',
+            current_revision: '2000',
+          };
+          sandbox.stub(element.$.restAPI, 'getChanges')
+              .returns(Promise.resolve([
+                {change_id: '12345678901234', topic: 'T', subject: 'random'},
+              ]));
+        });
+
+        test('confirm revert dialog shows one radio button', done => {
+          const revertButton = element.shadowRoot
+              .querySelector('gr-button[data-action-key="revert"]');
+          MockInteractions.tap(revertButton);
+          flush(() => {
+            const confirmRevertDialog = element.$.confirmRevertDialog;
+            const radioInputs = confirmRevertDialog.shadowRoot
+                .querySelectorAll('input[name="revertOptions"]');
+            assert.equal(radioInputs.length, 1);
+            const msg = 'Revert "random commit message"\n\n'
+              + 'This reverts commit 2000.\n\nReason '
+              + 'for revert: <INSERT REASONING HERE>\n';
+            assert.equal(confirmRevertDialog.message, msg);
+            const confirmButton = element.$.confirmRevertDialog.shadowRoot
+                .querySelector('gr-dialog')
+                .shadowRoot.querySelector('#confirm');
+            MockInteractions.tap(confirmButton);
+            flush(() => {
+              assert.equal(fireActionStub.getCall(0).args[0], '/revert');
+              assert.equal(fireActionStub.getCall(0).args[1].__key, 'revert');
+              assert.equal(fireActionStub.getCall(0).args[3].message, msg);
+              done();
+            });
+          });
+        });
       });
     });
 
@@ -975,9 +1081,12 @@ limitations under the License.
 
       test('shows confirm dialog', () => {
         element._handleDeleteTap();
-        assert.isFalse(element.$$('#confirmDeleteDialog').hidden);
+        assert.isFalse(element.shadowRoot
+            .querySelector('#confirmDeleteDialog').hidden);
         MockInteractions.tap(
-            element.$$('#confirmDeleteDialog').$$('gr-button[primary]'));
+            element.shadowRoot
+                .querySelector('#confirmDeleteDialog')
+                .$$('gr-button[primary]'));
         flushAsynchronousOperations();
         assert.isTrue(fireActionStub.calledWith('/', deleteAction, false));
       });
@@ -985,9 +1094,12 @@ limitations under the License.
       test('hides delete confirm on cancel', () => {
         element._handleDeleteTap();
         MockInteractions.tap(
-            element.$$('#confirmDeleteDialog').$$('gr-button:not([primary])'));
+            element.shadowRoot
+                .querySelector('#confirmDeleteDialog')
+                .$$('gr-button:not([primary])'));
         flushAsynchronousOperations();
-        assert.isTrue(element.$$('#confirmDeleteDialog').hidden);
+        assert.isTrue(element.shadowRoot
+            .querySelector('#confirmDeleteDialog').hidden);
         assert.isFalse(fireActionStub.called);
       });
     });
@@ -1054,7 +1166,6 @@ limitations under the License.
 
         element.reload().then(() => { flush(done); });
       });
-
 
       test('unignore button is not outside of the overflow menu', () => {
         assert.isNotOk(element.$$('[data-action-key="unignore"]'));
@@ -1134,7 +1245,6 @@ limitations under the License.
 
         element.reload().then(() => { flush(done); });
       });
-
 
       test('unreviewed button not outside of the overflow menu', () => {
         assert.isNotOk(element.$$('[data-action-key="unreviewed"]'));
@@ -1387,15 +1497,13 @@ limitations under the License.
           sandbox.stub(element, 'async', fn => fn());
         });
 
-        const makeGetChange = numTries => {
-          return () => {
-            if (numTries === 1) {
-              return Promise.resolve({_number: 123});
-            } else {
-              numTries--;
-              return Promise.resolve(undefined);
-            }
-          };
+        const makeGetChange = numTries => () => {
+          if (numTries === 1) {
+            return Promise.resolve({_number: 123});
+          } else {
+            numTries--;
+            return Promise.resolve(undefined);
+          }
         };
 
         test('succeed', () => {
@@ -1419,6 +1527,7 @@ limitations under the License.
       let payload;
       let onShowError;
       let onShowAlert;
+      let getResponseObjectStub;
 
       setup(() => {
         cleanup = sinon.stub();
@@ -1434,31 +1543,120 @@ limitations under the License.
 
       suite('happy path', () => {
         let sendStub;
-
         setup(() => {
           sandbox.stub(element, 'fetchChangeUpdates')
               .returns(Promise.resolve({isLatest: true}));
           sendStub = sandbox.stub(element.$.restAPI, 'executeChangeAction')
               .returns(Promise.resolve({}));
+          getResponseObjectStub = sandbox.stub(element.$.restAPI,
+              'getResponseObject');
+          sandbox.stub(Gerrit.Nav,
+              'navigateToChange').returns(Promise.resolve(true));
         });
 
-        test('change action', () => {
-          return element._send('DELETE', payload, '/endpoint', false, cleanup)
+        test('change action', done => {
+          element
+              ._send('DELETE', payload, '/endpoint', false, cleanup)
               .then(() => {
                 assert.isFalse(onShowError.called);
                 assert.isTrue(cleanup.calledOnce);
                 assert.isTrue(sendStub.calledWith(42, 'DELETE', '/endpoint',
                     null, payload));
+                done();
               });
         });
 
-        test('revision action', () => {
-          return element._send('DELETE', payload, '/endpoint', true, cleanup)
+        suite('show revert submission dialog', () => {
+          setup(() => {
+            element.change.submission_id = '199';
+            element.change.current_revision = '2000';
+            sandbox.stub(element.$.restAPI, 'getChanges')
+                .returns(Promise.resolve([
+                  {change_id: '12345678901234', topic: 'T', subject: 'random'},
+                  {change_id: '23456', topic: 'T', subject: 'a'.repeat(100)},
+                ]));
+          });
+
+          test('revert submission shows submissionId', done => {
+            const expectedMsg = 'Revert submission 199' + '\n\n' +
+              'Reason for revert: <INSERT REASONING HERE>' + '\n' +
+              'Reverted Changes:' + '\n' +
+              '1234567890: random' + '\n' +
+              '23456: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...' +
+              '\n';
+            const modifiedMsg = expectedMsg + 'abcd';
+            sandbox.stub(element.$.confirmRevertSubmissionDialog,
+                '_modifyRevertSubmissionMsg').returns(modifiedMsg);
+            element.showRevertSubmissionDialog();
+            flush(() => {
+              const msg = element.$.confirmRevertSubmissionDialog.message;
+              assert.equal(msg, modifiedMsg);
+              done();
+            });
+          });
+        });
+
+        suite('single changes revert', () => {
+          let navigateToSearchQueryStub;
+          setup(() => {
+            getResponseObjectStub
+                .returns(Promise.resolve({revert_changes: [
+                  {change_id: 12345},
+                ]}));
+            showActionDialogStub = sandbox.stub(element, '_showActionDialog');
+            navigateToSearchQueryStub = sandbox.stub(Gerrit.Nav,
+                'navigateToSearchQuery');
+          });
+
+          test('revert submission single change', done => {
+            element._send('POST', {message: 'Revert submission'},
+                '/revert_submission', false, cleanup).then(res => {
+              element._handleResponse({__key: 'revert_submission'}, {}).
+                  then(() => {
+                    assert.isTrue(navigateToSearchQueryStub.called);
+                    done();
+                  });
+            });
+          });
+        });
+
+        suite('multiple changes revert', () => {
+          let showActionDialogStub;
+          let navigateToSearchQueryStub;
+          setup(() => {
+            getResponseObjectStub
+                .returns(Promise.resolve({revert_changes: [
+                  {change_id: 12345, topic: 'T'},
+                  {change_id: 23456, topic: 'T'},
+                ]}));
+            showActionDialogStub = sandbox.stub(element, '_showActionDialog');
+            navigateToSearchQueryStub = sandbox.stub(Gerrit.Nav,
+                'navigateToSearchQuery');
+          });
+
+          test('revert submission multiple change', done => {
+            element._send('POST', {message: 'Revert submission'},
+                '/revert_submission', false, cleanup).then(res => {
+              element._handleResponse({__key: 'revert_submission'}, {}).then(
+                  () => {
+                    assert.isFalse(showActionDialogStub.called);
+                    assert.isTrue(navigateToSearchQueryStub.calledWith(
+                        'topic: T'));
+                    done();
+                  });
+            });
+          });
+        });
+
+        test('revision action', done => {
+          element
+              ._send('DELETE', payload, '/endpoint', true, cleanup)
               .then(() => {
                 assert.isFalse(onShowError.called);
                 assert.isTrue(cleanup.calledOnce);
                 assert.isTrue(sendStub.calledWith(42, 'DELETE', '/endpoint',
                     12, payload));
+                done();
               });
         });
       });
@@ -1507,6 +1705,104 @@ limitations under the License.
       element._handleAction('type', 'key');
       assert.isTrue(reportStub.called);
       assert.equal(reportStub.lastCall.args[0], 'type-key');
+    });
+  });
+
+  suite('getChangeRevisionActions returns only some actions', () => {
+    let element;
+    let sandbox;
+    let changeRevisionActions;
+
+    setup(() => {
+      stub('gr-rest-api-interface', {
+        getChangeRevisionActions() {
+          return Promise.resolve(changeRevisionActions);
+        },
+        send(method, url, payload) {
+          return Promise.reject(new Error('error'));
+        },
+        getProjectConfig() { return Promise.resolve({}); },
+      });
+
+      sandbox = sinon.sandbox.create();
+      sandbox.stub(Gerrit, 'awaitPluginsLoaded').returns(Promise.resolve());
+
+      element = fixture('basic');
+      // getChangeRevisionActions is not called without
+      // set the following properies
+      element.change = {};
+      element.changeNum = '42';
+      element.latestPatchNum = '2';
+
+      sandbox.stub(element.$.confirmCherrypick.$.restAPI,
+          'getRepoBranches').returns(Promise.resolve([]));
+      sandbox.stub(element.$.confirmMove.$.restAPI,
+          'getRepoBranches').returns(Promise.resolve([]));
+      return element.reload();
+    });
+
+    teardown(() => {
+      sandbox.restore();
+    });
+
+    test('confirmSubmitDialog and confirmRebase properties are changed', () => {
+      changeRevisionActions = {};
+      element.reload();
+      assert.strictEqual(element.$.confirmSubmitDialog.action, null);
+      assert.strictEqual(element.$.confirmRebase.rebaseOnCurrent, null);
+    });
+
+    test('_updateRebaseAction sets _parentIsCurrent on no rebase', () => {
+      const currentRevisionActions = {
+        cherrypick: {
+          enabled: true,
+          label: 'Cherry Pick',
+          method: 'POST',
+          title: 'cherrypick',
+        },
+      };
+      element._parentIsCurrent = undefined;
+      element._updateRebaseAction(currentRevisionActions);
+      assert.isTrue(element._parentIsCurrent);
+    });
+
+    test('_updateRebaseAction', () => {
+      const currentRevisionActions = {
+        cherrypick: {
+          enabled: true,
+          label: 'Cherry Pick',
+          method: 'POST',
+          title: 'cherrypick',
+        },
+        rebase: {
+          enabled: true,
+          label: 'Rebase',
+          method: 'POST',
+          title: 'Rebase onto tip of branch or parent change',
+        },
+      };
+      element._parentIsCurrent = undefined;
+
+      // Rebase enabled should always end up true.
+      // When rebase is enabled initially, rebaseOnCurrent should be set to
+      // true.
+      assert.equal(element._updateRebaseAction(currentRevisionActions),
+          currentRevisionActions);
+
+      assert.isTrue(currentRevisionActions.rebase.enabled);
+      assert.isTrue(currentRevisionActions.rebase.rebaseOnCurrent);
+      assert.isFalse(element._parentIsCurrent);
+
+      delete currentRevisionActions.rebase.enabled;
+
+      // When rebase is not enabled initially, rebaseOnCurrent should be set to
+      // false.
+      assert.equal(element._updateRebaseAction(currentRevisionActions),
+          currentRevisionActions);
+
+      assert.isTrue(currentRevisionActions.rebase.enabled);
+      assert.isFalse(currentRevisionActions.rebase.rebaseOnCurrent);
+      assert.isTrue(element._parentIsCurrent);
     });
   });
 </script>

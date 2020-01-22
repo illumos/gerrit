@@ -16,15 +16,18 @@ package com.google.gerrit.server.change;
 
 import com.google.common.hash.Hasher;
 import com.google.common.hash.Hashing;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.restapi.RestResource;
 import com.google.gerrit.extensions.restapi.RestResource.HasETag;
 import com.google.gerrit.extensions.restapi.RestView;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.edit.ChangeEdit;
+import com.google.gerrit.server.logging.Metadata;
+import com.google.gerrit.server.logging.TraceContext;
+import com.google.gerrit.server.logging.TraceContext.TraceTimer;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.inject.TypeLiteral;
@@ -34,7 +37,7 @@ public class RevisionResource implements RestResource, HasETag {
   public static final TypeLiteral<RestView<RevisionResource>> REVISION_KIND =
       new TypeLiteral<RestView<RevisionResource>>() {};
 
-  public static RevisionResource createNonCachable(ChangeResource change, PatchSet ps) {
+  public static RevisionResource createNonCacheable(ChangeResource change, PatchSet ps) {
     return new RevisionResource(change, ps, Optional.empty(), false);
   }
 
@@ -52,11 +55,11 @@ public class RevisionResource implements RestResource, HasETag {
   }
 
   private RevisionResource(
-      ChangeResource change, PatchSet ps, Optional<ChangeEdit> edit, boolean cachable) {
+      ChangeResource change, PatchSet ps, Optional<ChangeEdit> edit, boolean cacheable) {
     this.change = change;
     this.ps = ps;
     this.edit = edit;
-    this.cacheable = cachable;
+    this.cacheable = cacheable;
   }
 
   public boolean isCacheable() {
@@ -89,9 +92,18 @@ public class RevisionResource implements RestResource, HasETag {
 
   @Override
   public String getETag() {
-    Hasher h = Hashing.murmur3_128().newHasher();
-    prepareETag(h, getUser());
-    return h.hash().toString();
+    try (TraceTimer ignored =
+        TraceContext.newTimer(
+            "Compute revision ETag",
+            Metadata.builder()
+                .changeId(change.getId().get())
+                .patchSetId(ps.number())
+                .projectName(change.getProject().get())
+                .build())) {
+      Hasher h = Hashing.murmur3_128().newHasher();
+      prepareETag(h, getUser());
+      return h.hash().toString();
+    }
   }
 
   public void prepareETag(Hasher h, CurrentUser user) {
@@ -114,7 +126,7 @@ public class RevisionResource implements RestResource, HasETag {
 
   @Override
   public String toString() {
-    String s = ps.getId().toString();
+    String s = ps.id().toString();
     if (edit.isPresent()) {
       s = "edit:" + s;
     }
@@ -122,6 +134,6 @@ public class RevisionResource implements RestResource, HasETag {
   }
 
   public boolean isCurrent() {
-    return ps.getId().equals(getChange().currentPatchSetId());
+    return ps.id().equals(getChange().currentPatchSetId());
   }
 }

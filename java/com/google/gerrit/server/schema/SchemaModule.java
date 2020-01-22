@@ -27,9 +27,10 @@ import com.google.gerrit.server.config.AnonymousCowardName;
 import com.google.gerrit.server.config.AnonymousCowardNameProvider;
 import com.google.gerrit.server.config.GerritServerId;
 import com.google.gerrit.server.config.GerritServerIdProvider;
+import com.google.gerrit.server.index.group.GroupIndexCollection;
 import org.eclipse.jgit.lib.PersonIdent;
 
-/** Validate the schema and connect to Git. */
+/** Bindings for low-level Gerrit schema data. */
 public class SchemaModule extends FactoryModule {
   @Override
   protected void configure() {
@@ -49,5 +50,11 @@ public class SchemaModule extends FactoryModule {
         .annotatedWith(GerritServerId.class)
         .toProvider(GerritServerIdProvider.class)
         .in(SINGLETON);
+
+    // It feels wrong to have this binding in a seemingly unrelated module, but it's a dependency of
+    // SchemaCreatorImpl, so it's needed.
+    // TODO(dborowitz): Is there any way to untangle this?
+    bind(GroupIndexCollection.class);
+    bind(SchemaCreator.class).to(SchemaCreatorImpl.class);
   }
 }

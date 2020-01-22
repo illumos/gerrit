@@ -14,38 +14,42 @@
 
 package com.google.gerrit.acceptance;
 
+import static com.google.gerrit.server.git.receive.LazyPostReceiveHookChain.affectsSize;
+import static com.google.gerrit.server.quota.QuotaGroupDefinitions.REPOSITORY_SIZE_GROUP;
+
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.gerrit.acceptance.InProcessProtocol.Context;
 import com.google.gerrit.common.data.Capable;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.registration.DynamicSet;
 import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.AccessPath;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.RemotePeer;
 import com.google.gerrit.server.RequestCleanup;
 import com.google.gerrit.server.config.GerritRequestModule;
-import com.google.gerrit.server.config.RequestScopedReviewDbProvider;
-import com.google.gerrit.server.git.DefaultAdvertiseRefsHook;
+import com.google.gerrit.server.git.PermissionAwareRepositoryManager;
 import com.google.gerrit.server.git.ReceivePackInitializer;
 import com.google.gerrit.server.git.TransferConfig;
 import com.google.gerrit.server.git.UploadPackInitializer;
 import com.google.gerrit.server.git.receive.AsyncReceiveCommits;
 import com.google.gerrit.server.git.validators.UploadValidators;
 import com.google.gerrit.server.permissions.PermissionBackend;
-import com.google.gerrit.server.permissions.PermissionBackend.RefFilterOptions;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.permissions.ProjectPermission;
+import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectState;
+import com.google.gerrit.server.quota.QuotaBackend;
+import com.google.gerrit.server.quota.QuotaException;
+import com.google.gerrit.server.quota.QuotaResponse;
 import com.google.gerrit.server.util.RequestContext;
 import com.google.gerrit.server.util.RequestScopePropagator;
 import com.google.gerrit.server.util.ThreadLocalRequestContext;
 import com.google.gerrit.server.util.ThreadLocalRequestScopePropagator;
-import com.google.gwtorm.server.SchemaFactory;
 import com.google.inject.AbstractModule;
 import com.google.inject.Inject;
 import com.google.inject.Key;
@@ -55,7 +59,6 @@ import com.google.inject.Provider;
 import com.google.inject.Provides;
 import com.google.inject.Scope;
 import com.google.inject.servlet.RequestScoped;
-import com.google.inject.util.Providers;
 import java.io.IOException;
 import java.net.SocketAddress;
 import java.util.HashMap;
@@ -86,8 +89,6 @@ class InProcessProtocol extends TestProtocol<Context> {
       @Provides
       @RemotePeer
       SocketAddress getSocketAddress() {
-        // TODO(dborowitz): Could potentially fake this with thread ID or
-        // something.
         throw new OutOfScopeException("No remote peer in acceptance tests");
       }
     };
@@ -122,10 +123,8 @@ class InProcessProtocol extends TestProtocol<Context> {
 
   private static class Propagator extends ThreadLocalRequestScopePropagator<Context> {
     @Inject
-    Propagator(
-        ThreadLocalRequestContext local,
-        Provider<RequestScopedReviewDbProvider> dbProviderProvider) {
-      super(REQUEST, current, local, dbProviderProvider);
+    Propagator(ThreadLocalRequestContext local) {
+      super(REQUEST, current, local);
     }
 
     @Override
@@ -150,12 +149,9 @@ class InProcessProtocol extends TestProtocol<Context> {
    * request.
    */
   static class Context implements RequestContext {
-    private static final Key<RequestScopedReviewDbProvider> DB_KEY =
-        Key.get(RequestScopedReviewDbProvider.class);
     private static final Key<RequestCleanup> RC_KEY = Key.get(RequestCleanup.class);
     private static final Key<CurrentUser> USER_KEY = Key.get(CurrentUser.class);
 
-    private final SchemaFactory<ReviewDb> schemaFactory;
     private final IdentifiedUser.GenericFactory userFactory;
     private final Account.Id accountId;
     private final Project.NameKey project;
@@ -163,17 +159,12 @@ class InProcessProtocol extends TestProtocol<Context> {
     private final Map<Key<?>, Object> map;
 
     Context(
-        SchemaFactory<ReviewDb> schemaFactory,
-        IdentifiedUser.GenericFactory userFactory,
-        Account.Id accountId,
-        Project.NameKey project) {
-      this.schemaFactory = schemaFactory;
+        IdentifiedUser.GenericFactory userFactory, Account.Id accountId, Project.NameKey project) {
       this.userFactory = userFactory;
       this.accountId = accountId;
       this.project = project;
       map = new HashMap<>();
       cleanup = new RequestCleanup();
-      map.put(DB_KEY, new RequestScopedReviewDbProvider(schemaFactory, Providers.of(cleanup)));
       map.put(RC_KEY, cleanup);
 
       IdentifiedUser user = userFactory.create(accountId);
@@ -182,17 +173,12 @@ class InProcessProtocol extends TestProtocol<Context> {
     }
 
     private Context newContinuingContext() {
-      return new Context(schemaFactory, userFactory, accountId, project);
+      return new Context(userFactory, accountId, project);
     }
 
     @Override
     public CurrentUser getUser() {
       return get(USER_KEY, null);
-    }
-
-    @Override
-    public Provider<ReviewDb> getReviewDbProvider() {
-      return get(DB_KEY, null);
     }
 
     private synchronized <T> T get(Key<T> key, Provider<T> creator) {
@@ -208,7 +194,7 @@ class InProcessProtocol extends TestProtocol<Context> {
 
   private static class Upload implements UploadPackFactory<Context> {
     private final TransferConfig transferConfig;
-    private final DynamicSet<UploadPackInitializer> uploadPackInitializers;
+    private final PluginSetContext<UploadPackInitializer> uploadPackInitializers;
     private final DynamicSet<PreUploadHook> preUploadHooks;
     private final UploadValidators.Factory uploadValidatorsFactory;
     private final ThreadLocalRequestContext threadContext;
@@ -218,7 +204,7 @@ class InProcessProtocol extends TestProtocol<Context> {
     @Inject
     Upload(
         TransferConfig transferConfig,
-        DynamicSet<UploadPackInitializer> uploadPackInitializers,
+        PluginSetContext<UploadPackInitializer> uploadPackInitializers,
         DynamicSet<PreUploadHook> preUploadHooks,
         UploadValidators.Factory uploadValidatorsFactory,
         ThreadLocalRequestContext threadContext,
@@ -260,16 +246,16 @@ class InProcessProtocol extends TestProtocol<Context> {
       if (projectState == null) {
         throw new RuntimeException("can't load project state for " + req.project.get());
       }
-      UploadPack up = new UploadPack(repo);
+      Repository permissionAwareRepository = PermissionAwareRepositoryManager.wrap(repo, perm);
+      UploadPack up = new UploadPack(permissionAwareRepository);
       up.setPackConfig(transferConfig.getPackConfig());
       up.setTimeout(transferConfig.getTimeout());
-      up.setAdvertiseRefsHook(new DefaultAdvertiseRefsHook(perm, RefFilterOptions.defaults()));
       List<PreUploadHook> hooks = Lists.newArrayList(preUploadHooks);
-      hooks.add(uploadValidatorsFactory.create(projectState.getProject(), repo, "localhost-test"));
+      hooks.add(
+          uploadValidatorsFactory.create(
+              projectState.getProject(), permissionAwareRepository, "localhost-test"));
       up.setPreUploadHook(PreUploadHookChain.newChain(hooks));
-      for (UploadPackInitializer initializer : uploadPackInitializers) {
-        initializer.init(req.project, up);
-      }
+      uploadPackInitializers.runEach(initializer -> initializer.init(req.project, up));
       return up;
     }
   }
@@ -279,10 +265,11 @@ class InProcessProtocol extends TestProtocol<Context> {
     private final ProjectCache projectCache;
     private final AsyncReceiveCommits.Factory factory;
     private final TransferConfig config;
-    private final DynamicSet<ReceivePackInitializer> receivePackInitializers;
+    private final PluginSetContext<ReceivePackInitializer> receivePackInitializers;
     private final DynamicSet<PostReceiveHook> postReceiveHooks;
     private final ThreadLocalRequestContext threadContext;
     private final PermissionBackend permissionBackend;
+    private final QuotaBackend quotaBackend;
 
     @Inject
     Receive(
@@ -290,10 +277,11 @@ class InProcessProtocol extends TestProtocol<Context> {
         ProjectCache projectCache,
         AsyncReceiveCommits.Factory factory,
         TransferConfig config,
-        DynamicSet<ReceivePackInitializer> receivePackInitializers,
+        PluginSetContext<ReceivePackInitializer> receivePackInitializers,
         DynamicSet<PostReceiveHook> postReceiveHooks,
         ThreadLocalRequestContext threadContext,
-        PermissionBackend permissionBackend) {
+        PermissionBackend permissionBackend,
+        QuotaBackend quotaBackend) {
       this.userProvider = userProvider;
       this.projectCache = projectCache;
       this.factory = factory;
@@ -302,6 +290,7 @@ class InProcessProtocol extends TestProtocol<Context> {
       this.postReceiveHooks = postReceiveHooks;
       this.threadContext = threadContext;
       this.permissionBackend = permissionBackend;
+      this.quotaBackend = quotaBackend;
     }
 
     @Override
@@ -339,13 +328,37 @@ class InProcessProtocol extends TestProtocol<Context> {
         rp.setTimeout(config.getTimeout());
         rp.setMaxObjectSizeLimit(config.getMaxObjectSizeLimit());
 
-        for (ReceivePackInitializer initializer : receivePackInitializers) {
-          initializer.init(projectState.getNameKey(), rp);
-        }
+        receivePackInitializers.runEach(
+            initializer -> initializer.init(projectState.getNameKey(), rp));
+        QuotaResponse.Aggregated availableTokens =
+            quotaBackend
+                .user(identifiedUser)
+                .project(req.project)
+                .availableTokens(REPOSITORY_SIZE_GROUP);
+        availableTokens.throwOnError();
+        availableTokens.availableTokens().ifPresent(v -> rp.setMaxObjectSizeLimit(v));
 
-        rp.setPostReceiveHook(PostReceiveHookChain.newChain(Lists.newArrayList(postReceiveHooks)));
+        ImmutableList<PostReceiveHook> hooks =
+            ImmutableList.<PostReceiveHook>builder()
+                .add(
+                    (pack, commands) -> {
+                      if (affectsSize(pack)) {
+                        try {
+                          quotaBackend
+                              .user(identifiedUser)
+                              .project(req.project)
+                              .requestTokens(REPOSITORY_SIZE_GROUP, pack.getPackSize())
+                              .throwOnError();
+                        } catch (QuotaException e) {
+                          throw new RuntimeException(e);
+                        }
+                      }
+                    })
+                .addAll(postReceiveHooks)
+                .build();
+        rp.setPostReceiveHook(PostReceiveHookChain.newChain(hooks));
         return rp;
-      } catch (IOException | PermissionBackendException e) {
+      } catch (IOException | PermissionBackendException | QuotaException e) {
         throw new RuntimeException(e);
       }
     }

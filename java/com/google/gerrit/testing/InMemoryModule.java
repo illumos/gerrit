@@ -20,15 +20,17 @@ import static com.google.inject.Scopes.SINGLETON;
 import com.google.common.base.Strings;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperationsImpl;
 import com.google.gerrit.extensions.client.AuthType;
 import com.google.gerrit.extensions.config.FactoryModule;
 import com.google.gerrit.extensions.systemstatus.ServerInformation;
 import com.google.gerrit.gpg.GpgModule;
+import com.google.gerrit.index.IndexType;
 import com.google.gerrit.index.SchemaDefinitions;
 import com.google.gerrit.index.project.ProjectSchemaDefinitions;
 import com.google.gerrit.metrics.DisabledMetricMaker;
 import com.google.gerrit.metrics.MetricMaker;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.FanOutExecutor;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.GerritPersonIdentProvider;
@@ -64,44 +66,35 @@ import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.PerThreadRequestScope;
 import com.google.gerrit.server.git.SearchingChangeCacheImpl;
 import com.google.gerrit.server.git.WorkQueue;
-import com.google.gerrit.server.index.IndexModule.IndexType;
 import com.google.gerrit.server.index.account.AccountSchemaDefinitions;
 import com.google.gerrit.server.index.account.AllAccountsIndexer;
 import com.google.gerrit.server.index.change.AllChangesIndexer;
 import com.google.gerrit.server.index.change.ChangeSchemaDefinitions;
 import com.google.gerrit.server.index.group.AllGroupsIndexer;
+import com.google.gerrit.server.index.group.GroupIndexCollection;
 import com.google.gerrit.server.index.group.GroupSchemaDefinitions;
 import com.google.gerrit.server.mail.SignedTokenEmailTokenVerifier;
-import com.google.gerrit.server.notedb.ChangeBundleReader;
-import com.google.gerrit.server.notedb.GwtormChangeBundleReader;
-import com.google.gerrit.server.notedb.MutableNotesMigration;
-import com.google.gerrit.server.notedb.NotesMigration;
 import com.google.gerrit.server.patch.DiffExecutor;
 import com.google.gerrit.server.permissions.DefaultPermissionBackendModule;
 import com.google.gerrit.server.plugins.ServerInformationImpl;
 import com.google.gerrit.server.project.DefaultProjectNameLockManager;
 import com.google.gerrit.server.restapi.RestApiModule;
-import com.google.gerrit.server.schema.DataSourceType;
-import com.google.gerrit.server.schema.InMemoryAccountPatchReviewStore;
-import com.google.gerrit.server.schema.NotesMigrationSchemaFactory;
-import com.google.gerrit.server.schema.ReviewDbFactory;
+import com.google.gerrit.server.schema.JdbcAccountPatchReviewStore;
 import com.google.gerrit.server.schema.SchemaCreator;
+import com.google.gerrit.server.schema.SchemaCreatorImpl;
 import com.google.gerrit.server.securestore.DefaultSecureStore;
 import com.google.gerrit.server.securestore.SecureStore;
 import com.google.gerrit.server.ssh.NoSshKeyCache;
 import com.google.gerrit.server.submit.LocalMergeSuperSetComputation;
-import com.google.gwtorm.server.OrmException;
-import com.google.gwtorm.server.SchemaFactory;
+import com.google.gerrit.server.util.ReplicaUtil;
 import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
-import com.google.inject.Key;
 import com.google.inject.Module;
 import com.google.inject.Provider;
 import com.google.inject.Provides;
 import com.google.inject.ProvisionException;
 import com.google.inject.Singleton;
-import com.google.inject.TypeLiteral;
 import com.google.inject.servlet.RequestScoped;
 import com.google.inject.util.Providers;
 import java.lang.reflect.InvocationTargetException;
@@ -122,6 +115,8 @@ public class InMemoryModule extends FactoryModule {
   }
 
   public static void setDefaults(Config cfg) {
+    cfg.setString(
+        "accountPatchReviewDb", null, "url", JdbcAccountPatchReviewStore.TEST_IN_MEMORY_URL);
     cfg.setEnum("auth", null, "type", AuthType.DEVELOPMENT_BECOME_ANY_ACCOUNT);
     cfg.setString("gerrit", null, "allProjects", "Test-Projects");
     cfg.setString("gerrit", null, "basePath", "git");
@@ -137,15 +132,13 @@ public class InMemoryModule extends FactoryModule {
   }
 
   private final Config cfg;
-  private final MutableNotesMigration notesMigration;
 
   public InMemoryModule() {
-    this(newDefaultConfig(), NoteDbMode.newNotesMigrationFromEnv());
+    this(newDefaultConfig());
   }
 
-  public InMemoryModule(Config cfg, MutableNotesMigration notesMigration) {
+  public InMemoryModule(Config cfg) {
     this.cfg = cfg;
-    this.notesMigration = notesMigration;
   }
 
   public void inject(Object instance) {
@@ -184,37 +177,21 @@ public class InMemoryModule extends FactoryModule {
 
     bindScope(RequestScoped.class, PerThreadRequestScope.REQUEST);
 
-    // TODO(dborowitz): Use Jimfs. The biggest blocker is that JGit does not support Path-based
-    // Configs, only FileBasedConfig.
+    // It would be nice to use Jimfs for the SitePath, but the biggest blocker is that JGit does not
+    // support Path-based Configs, only FileBasedConfig.
     bind(Path.class).annotatedWith(SitePath.class).toInstance(Paths.get("."));
     bind(Config.class).annotatedWith(GerritServerConfig.class).toInstance(cfg);
-    bind(GerritOptions.class).toInstance(new GerritOptions(cfg, false, false, false));
-    bind(PersonIdent.class)
-        .annotatedWith(GerritPersonIdent.class)
-        .toProvider(GerritPersonIdentProvider.class);
-    bind(String.class)
-        .annotatedWith(AnonymousCowardName.class)
-        .toProvider(AnonymousCowardNameProvider.class);
+    bind(GerritOptions.class).toInstance(new GerritOptions(false, false, false));
 
-    bind(AllProjectsName.class).toProvider(AllProjectsNameProvider.class);
-    bind(AllUsersName.class).toProvider(AllUsersNameProvider.class);
     bind(GitRepositoryManager.class).to(InMemoryRepositoryManager.class);
     bind(InMemoryRepositoryManager.class).in(SINGLETON);
     bind(TrackingFooters.class).toProvider(TrackingFootersProvider.class).in(SINGLETON);
-    bind(MutableNotesMigration.class).toInstance(notesMigration);
-    bind(NotesMigration.class).to(MutableNotesMigration.class);
     bind(ListeningExecutorService.class)
         .annotatedWith(ChangeUpdateExecutor.class)
         .toInstance(MoreExecutors.newDirectExecutorService());
-    bind(DataSourceType.class).to(InMemoryH2Type.class);
-    bind(ChangeBundleReader.class).to(GwtormChangeBundleReader.class);
     bind(SecureStore.class).to(DefaultSecureStore.class);
 
-    TypeLiteral<SchemaFactory<ReviewDb>> schemaFactory =
-        new TypeLiteral<SchemaFactory<ReviewDb>>() {};
-    bind(schemaFactory).to(NotesMigrationSchemaFactory.class);
-    bind(Key.get(schemaFactory, ReviewDbFactory.class)).to(InMemoryDatabase.class);
-
+    install(new InMemorySchemaModule());
     install(NoSshKeyCache.module());
     install(new GerritInstanceNameModule());
     install(
@@ -243,35 +220,60 @@ public class InMemoryModule extends FactoryModule {
     install(new FakeEmailSender.Module());
     install(new SignedTokenEmailTokenVerifier.Module());
     install(new GpgModule(cfg));
-    install(new InMemoryAccountPatchReviewStore.Module());
     install(new LocalMergeSuperSetComputation.Module());
 
     bind(AllAccountsIndexer.class).toProvider(Providers.of(null));
     bind(AllChangesIndexer.class).toProvider(Providers.of(null));
     bind(AllGroupsIndexer.class).toProvider(Providers.of(null));
 
-    IndexType indexType = null;
-    try {
-      indexType = cfg.getEnum("index", null, "type", IndexType.LUCENE);
-    } catch (IllegalArgumentException e) {
-      // Custom index type, caller must provide their own module.
-    }
-    if (indexType != null) {
-      switch (indexType) {
-        case LUCENE:
-          install(luceneIndexModule());
-          break;
-        case ELASTICSEARCH:
-          install(elasticIndexModule());
-          break;
-        default:
-          throw new ProvisionException("index type unsupported in tests: " + indexType);
-      }
+    IndexType indexType = new IndexType(cfg.getString("index", null, "type"));
+    // For custom index types, callers must provide their own module.
+    if (indexType.isLucene()) {
+      install(luceneIndexModule());
+    } else if (indexType.isElasticsearch()) {
+      install(elasticIndexModule());
     }
     bind(ServerInformationImpl.class);
     bind(ServerInformation.class).to(ServerInformationImpl.class);
     install(new RestApiModule());
     install(new DefaultProjectNameLockManager.Module());
+
+    bind(ProjectOperations.class).to(ProjectOperationsImpl.class);
+  }
+
+  /** Copy of SchemaModule with a slightly different server ID provider. */
+  // TODO(dborowitz): Better code sharing.
+  private class InMemorySchemaModule extends FactoryModule {
+    @Override
+    public void configure() {
+      bind(PersonIdent.class)
+          .annotatedWith(GerritPersonIdent.class)
+          .toProvider(GerritPersonIdentProvider.class);
+
+      bind(AllProjectsName.class).toProvider(AllProjectsNameProvider.class).in(SINGLETON);
+
+      bind(AllUsersName.class).toProvider(AllUsersNameProvider.class).in(SINGLETON);
+
+      bind(String.class)
+          .annotatedWith(AnonymousCowardName.class)
+          .toProvider(AnonymousCowardNameProvider.class);
+
+      bind(GroupIndexCollection.class);
+      bind(SchemaCreator.class).to(SchemaCreatorImpl.class);
+    }
+
+    @Provides
+    @Singleton
+    @GerritServerId
+    public String createServerId() {
+      String serverId =
+          cfg.getString(GerritServerIdProvider.SECTION, null, GerritServerIdProvider.KEY);
+      if (!Strings.isNullOrEmpty(serverId)) {
+        return serverId;
+      }
+
+      return "gerrit";
+    }
   }
 
   @Provides
@@ -288,25 +290,6 @@ public class InMemoryModule extends FactoryModule {
     return queues.createQueue(2, "FanOut");
   }
 
-  @Provides
-  @Singleton
-  @GerritServerId
-  public String createServerId() {
-    String serverId =
-        cfg.getString(GerritServerIdProvider.SECTION, null, GerritServerIdProvider.KEY);
-    if (!Strings.isNullOrEmpty(serverId)) {
-      return serverId;
-    }
-
-    return "gerrit";
-  }
-
-  @Provides
-  @Singleton
-  InMemoryDatabase getInMemoryDatabase(SchemaCreator schemaCreator) throws OrmException {
-    return new InMemoryDatabase(schemaCreator);
-  }
-
   private Module luceneIndexModule() {
     return indexModule("com.google.gerrit.lucene.LuceneIndexModule");
   }
@@ -317,11 +300,10 @@ public class InMemoryModule extends FactoryModule {
 
   private Module indexModule(String moduleClassName) {
     try {
-      boolean slave = cfg.getBoolean("container", "slave", false);
       Class<?> clazz = Class.forName(moduleClassName);
       Method m =
           clazz.getMethod("singleVersionWithExplicitVersions", Map.class, int.class, boolean.class);
-      return (Module) m.invoke(null, getSingleSchemaVersions(), 0, slave);
+      return (Module) m.invoke(null, getSingleSchemaVersions(), 0, ReplicaUtil.isReplica(cfg));
     } catch (ClassNotFoundException
         | SecurityException
         | NoSuchMethodException

@@ -24,20 +24,26 @@ import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.data.GroupReference;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.StorageException;
+import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.extensions.common.GroupBaseInfo;
 import com.google.gerrit.extensions.common.SuggestedReviewerInfo;
+import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.Url;
+import com.google.gerrit.index.FieldDef;
 import com.google.gerrit.index.IndexConfig;
 import com.google.gerrit.index.QueryOptions;
 import com.google.gerrit.index.query.FieldBundle;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryParseException;
+import com.google.gerrit.index.query.ResultSet;
+import com.google.gerrit.index.query.TooManyTermsInQueryException;
 import com.google.gerrit.metrics.Description;
 import com.google.gerrit.metrics.Description.Units;
 import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.metrics.Timer0;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.account.AccountControl;
 import com.google.gerrit.server.account.AccountDirectory.FillOptions;
@@ -48,14 +54,13 @@ import com.google.gerrit.server.account.GroupMembers;
 import com.google.gerrit.server.change.ReviewerAdder;
 import com.google.gerrit.server.index.account.AccountField;
 import com.google.gerrit.server.index.account.AccountIndexCollection;
+import com.google.gerrit.server.index.account.AccountIndexRewriter;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.NoSuchProjectException;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.query.account.AccountPredicates;
 import com.google.gerrit.server.query.account.AccountQueryBuilder;
-import com.google.gwtorm.server.OrmException;
-import com.google.gwtorm.server.ResultSet;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -114,12 +119,9 @@ public class ReviewersUtil {
     }
   }
 
-  // Generate a candidate list at 2x the size of what the user wants to see to
-  // give the ranking algorithm a good set of candidates it can work with
-  private static final int CANDIDATE_LIST_MULTIPLIER = 2;
-
   private final AccountLoader.Factory accountLoaderFactory;
   private final AccountQueryBuilder accountQueryBuilder;
+  private final AccountIndexRewriter accountIndexRewriter;
   private final GroupBackend groupBackend;
   private final GroupMembers groupMembers;
   private final ReviewerRecommender reviewerRecommender;
@@ -133,6 +135,7 @@ public class ReviewersUtil {
   ReviewersUtil(
       AccountLoader.Factory accountLoaderFactory,
       AccountQueryBuilder accountQueryBuilder,
+      AccountIndexRewriter accountIndexRewriter,
       GroupBackend groupBackend,
       GroupMembers groupMembers,
       ReviewerRecommender reviewerRecommender,
@@ -143,6 +146,7 @@ public class ReviewersUtil {
       Provider<CurrentUser> self) {
     this.accountLoaderFactory = accountLoaderFactory;
     this.accountQueryBuilder = accountQueryBuilder;
+    this.accountIndexRewriter = accountIndexRewriter;
     this.groupBackend = groupBackend;
     this.groupMembers = groupMembers;
     this.reviewerRecommender = reviewerRecommender;
@@ -154,16 +158,17 @@ public class ReviewersUtil {
   }
 
   public interface VisibilityControl {
-    boolean isVisibleTo(Account.Id account) throws OrmException;
+    boolean isVisibleTo(Account.Id account);
   }
 
   public List<SuggestedReviewerInfo> suggestReviewers(
+      ReviewerState reviewerState,
       @Nullable ChangeNotes changeNotes,
       SuggestReviewers suggestReviewers,
       ProjectState projectState,
       VisibilityControl visibilityControl,
       boolean excludeGroups)
-      throws IOException, OrmException, ConfigInvalidException, PermissionBackendException {
+      throws IOException, ConfigInvalidException, PermissionBackendException, BadRequestException {
     CurrentUser currentUser = self.get();
     if (changeNotes != null) {
       logger.atFine().log(
@@ -191,7 +196,8 @@ public class ReviewersUtil {
     }
 
     List<Account.Id> sortedRecommendations =
-        recommendAccounts(changeNotes, suggestReviewers, projectState, candidateList);
+        recommendAccounts(
+            reviewerState, changeNotes, suggestReviewers, projectState, candidateList);
     logger.atFine().log("Sorted recommendations: %s", sortedRecommendations);
 
     // Filter accounts by visibility and enforce limit
@@ -222,37 +228,59 @@ public class ReviewersUtil {
     return suggestedReviewers;
   }
 
-  private List<Account.Id> suggestAccounts(SuggestReviewers suggestReviewers) throws OrmException {
+  private static Account.Id fromIdField(FieldBundle f, boolean useLegacyNumericFields) {
+    if (useLegacyNumericFields) {
+      return Account.id(f.getValue(AccountField.ID).intValue());
+    }
+    return Account.id(Integer.valueOf(f.getValue(AccountField.ID_STR)));
+  }
+
+  private List<Account.Id> suggestAccounts(SuggestReviewers suggestReviewers)
+      throws BadRequestException {
     try (Timer0.Context ctx = metrics.queryAccountsLatency.start()) {
-      try {
-        // For performance reasons we don't use AccountQueryProvider as it would always load the
-        // complete account from the cache (or worse, from NoteDb) even though we only need the ID
-        // which we can directly get from the returned results.
-        Predicate<AccountState> pred =
-            Predicate.and(
-                AccountPredicates.isActive(),
-                accountQueryBuilder.defaultQuery(suggestReviewers.getQuery()));
-        logger.atFine().log("accounts index query: %s", pred);
-        ResultSet<FieldBundle> result =
-            accountIndexes
-                .getSearchIndex()
-                .getSource(
-                    pred,
-                    QueryOptions.create(
-                        indexConfig,
-                        0,
-                        suggestReviewers.getLimit() * CANDIDATE_LIST_MULTIPLIER,
-                        ImmutableSet.of(AccountField.ID.getName())))
-                .readRaw();
-        List<Account.Id> matches =
-            result.toList().stream()
-                .map(f -> new Account.Id(f.getValue(AccountField.ID).intValue()))
-                .collect(toList());
-        logger.atFine().log("Matches: %s", matches);
-        return matches;
-      } catch (QueryParseException e) {
+      // For performance reasons we don't use AccountQueryProvider as it would always load the
+      // complete account from the cache (or worse, from NoteDb) even though we only need the ID
+      // which we can directly get from the returned results.
+      Predicate<AccountState> pred =
+          Predicate.and(
+              AccountPredicates.isActive(),
+              accountQueryBuilder.defaultQuery(suggestReviewers.getQuery()));
+      logger.atFine().log("accounts index query: %s", pred);
+      accountIndexRewriter.validateMaxTermsInQuery(pred);
+      boolean useLegacyNumericFields =
+          accountIndexes.getSearchIndex().getSchema().useLegacyNumericFields();
+      FieldDef<AccountState, ?> idField =
+          useLegacyNumericFields ? AccountField.ID : AccountField.ID_STR;
+      ResultSet<FieldBundle> result =
+          accountIndexes
+              .getSearchIndex()
+              .getSource(
+                  pred,
+                  QueryOptions.create(
+                      indexConfig,
+                      0,
+                      suggestReviewers.getLimit(),
+                      ImmutableSet.of(idField.getName())))
+              .readRaw();
+      List<Account.Id> matches =
+          result.toList().stream()
+              .map(f -> fromIdField(f, useLegacyNumericFields))
+              .collect(toList());
+      logger.atFine().log("Matches: %s", matches);
+      return matches;
+    } catch (TooManyTermsInQueryException e) {
+      throw new BadRequestException(e.getMessage());
+    } catch (QueryParseException e) {
+      logger.atWarning().withCause(e).log("Suggesting accounts failed, return empty result.");
+      return ImmutableList.of();
+    } catch (StorageException e) {
+      if (e.getCause() instanceof TooManyTermsInQueryException) {
+        throw new BadRequestException(e.getMessage());
+      }
+      if (e.getCause() instanceof QueryParseException) {
         return ImmutableList.of();
       }
+      throw e;
     }
   }
 
@@ -262,7 +290,7 @@ public class ReviewersUtil {
       VisibilityControl visibilityControl,
       boolean excludeGroups,
       List<Account.Id> filteredRecommendations)
-      throws OrmException, PermissionBackendException, IOException {
+      throws PermissionBackendException, IOException {
     List<SuggestedReviewerInfo> suggestedReviewers = loadAccounts(filteredRecommendations);
 
     int limit = suggestReviewers.getLimit();
@@ -287,14 +315,15 @@ public class ReviewersUtil {
   }
 
   private List<Account.Id> recommendAccounts(
+      ReviewerState reviewerState,
       @Nullable ChangeNotes changeNotes,
       SuggestReviewers suggestReviewers,
       ProjectState projectState,
       List<Account.Id> candidateList)
-      throws OrmException, IOException, ConfigInvalidException {
+      throws IOException, ConfigInvalidException {
     try (Timer0.Context ctx = metrics.recommendAccountsLatency.start()) {
       return reviewerRecommender.suggestReviewers(
-          changeNotes, suggestReviewers, projectState, candidateList);
+          reviewerState, changeNotes, suggestReviewers, projectState, candidateList);
     }
   }
 
@@ -327,7 +356,7 @@ public class ReviewersUtil {
       ProjectState projectState,
       VisibilityControl visibilityControl,
       int limit)
-      throws OrmException, IOException {
+      throws IOException {
     try (Timer0.Context ctx = metrics.queryGroupsLatency.start()) {
       List<SuggestedReviewerInfo> groups = new ArrayList<>();
       for (GroupReference g : suggestAccountGroups(suggestReviewers, projectState)) {
@@ -372,7 +401,7 @@ public class ReviewersUtil {
       Project project,
       GroupReference group,
       VisibilityControl visibilityControl)
-      throws OrmException, IOException {
+      throws IOException {
     GroupAsReviewer result = new GroupAsReviewer();
     int maxAllowed = suggestReviewers.getMaxAllowed();
     int maxAllowedWithoutConfirmation = suggestReviewers.getMaxAllowedWithoutConfirmation();
@@ -396,7 +425,8 @@ public class ReviewersUtil {
         return result;
       }
 
-      boolean needsConfirmation = result.size > maxAllowedWithoutConfirmation;
+      boolean needsConfirmation =
+          maxAllowedWithoutConfirmation > 0 && result.size > maxAllowedWithoutConfirmation;
       if (needsConfirmation) {
         logger.atFine().log(
             "group %s needs confirmation to be added as reviewer, it has %d members",
@@ -405,7 +435,7 @@ public class ReviewersUtil {
 
       // require that at least one member in the group can see the change
       for (Account account : members) {
-        if (visibilityControl.isVisibleTo(account.getId())) {
+        if (visibilityControl.isVisibleTo(account.id())) {
           if (needsConfirmation) {
             result.allowedWithConfirmation = true;
           } else {

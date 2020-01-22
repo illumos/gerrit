@@ -15,10 +15,10 @@
 package com.google.gerrit.server.query.change;
 
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.index.query.IsVisibleToPredicate;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.AnonymousUser;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.index.IndexUtils;
@@ -28,7 +28,7 @@ import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectState;
-import com.google.gwtorm.server.OrmException;
+import com.google.inject.Inject;
 import com.google.inject.Provider;
 import java.io.IOException;
 import org.eclipse.jgit.errors.RepositoryNotFoundException;
@@ -36,22 +36,20 @@ import org.eclipse.jgit.errors.RepositoryNotFoundException;
 public class ChangeIsVisibleToPredicate extends IsVisibleToPredicate<ChangeData> {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
-  protected final Provider<ReviewDb> db;
   protected final ChangeNotes.Factory notesFactory;
   protected final CurrentUser user;
   protected final PermissionBackend permissionBackend;
   protected final ProjectCache projectCache;
   private final Provider<AnonymousUser> anonymousUserProvider;
 
+  @Inject
   public ChangeIsVisibleToPredicate(
-      Provider<ReviewDb> db,
       ChangeNotes.Factory notesFactory,
       CurrentUser user,
       PermissionBackend permissionBackend,
       ProjectCache projectCache,
       Provider<AnonymousUser> anonymousUserProvider) {
     super(ChangeQueryBuilder.FIELD_VISIBLETO, IndexUtils.describe(user));
-    this.db = db;
     this.notesFactory = notesFactory;
     this.user = user;
     this.permissionBackend = permissionBackend;
@@ -60,7 +58,7 @@ public class ChangeIsVisibleToPredicate extends IsVisibleToPredicate<ChangeData>
   }
 
   @Override
-  public boolean match(ChangeData cd) throws OrmException {
+  public boolean match(ChangeData cd) {
     if (cd.fastIsVisibleTo(user)) {
       return true;
     }
@@ -82,7 +80,7 @@ public class ChangeIsVisibleToPredicate extends IsVisibleToPredicate<ChangeData>
         return false;
       }
     } catch (IOException e) {
-      throw new OrmException("unable to read project state", e);
+      throw new StorageException("unable to read project state", e);
     }
 
     PermissionBackend.WithUser withUser =
@@ -90,7 +88,7 @@ public class ChangeIsVisibleToPredicate extends IsVisibleToPredicate<ChangeData>
             ? permissionBackend.absentUser(user.getAccountId())
             : permissionBackend.user(anonymousUserProvider.get());
     try {
-      withUser.indexedChange(cd, notes).database(db).check(ChangePermission.READ);
+      withUser.indexedChange(cd, notes).check(ChangePermission.READ);
     } catch (PermissionBackendException e) {
       Throwable cause = e.getCause();
       if (cause instanceof RepositoryNotFoundException) {
@@ -99,7 +97,7 @@ public class ChangeIsVisibleToPredicate extends IsVisibleToPredicate<ChangeData>
             cd, cd.project());
         return false;
       }
-      throw new OrmException("unable to check permissions on change " + cd.getId(), e);
+      throw new StorageException("unable to check permissions on change " + cd.getId(), e);
     } catch (AuthException e) {
       logger.atFine().log("Filter out non-visisble change: %s", cd);
       return false;

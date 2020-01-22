@@ -19,11 +19,11 @@ import static com.google.gerrit.server.notedb.ReviewerStateInternal.CC;
 import static com.google.gerrit.server.notedb.ReviewerStateInternal.REVIEWER;
 
 import com.google.common.collect.ImmutableList;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.SubmissionId;
 import com.google.gerrit.mail.Address;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
 import com.google.gerrit.server.CurrentUser;
-import com.google.gerrit.server.logging.RequestId;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.gerrit.testing.ConfigSuite;
 import com.google.gerrit.testing.TestChanges;
@@ -41,11 +41,11 @@ public class CommitMessageOutputTest extends AbstractChangeNotesTest {
   @Test
   public void approvalsCommitFormatSimple() throws Exception {
     Change c = TestChanges.newChange(project, changeOwner.getAccountId(), 1);
-    ChangeUpdate update = newUpdate(c, changeOwner);
+    ChangeUpdate update = newUpdateForNewChange(c, changeOwner);
     update.putApproval("Verified", (short) 1);
     update.putApproval("Code-Review", (short) -1);
-    update.putReviewer(changeOwner.getAccount().getId(), REVIEWER);
-    update.putReviewer(otherUser.getAccount().getId(), CC);
+    update.putReviewer(changeOwner.getAccount().id(), REVIEWER);
+    update.putReviewer(otherUser.getAccount().id(), CC);
     update.commit();
     assertThat(update.getRefName()).isEqualTo("refs/changes/01/1/meta");
 
@@ -84,7 +84,7 @@ public class CommitMessageOutputTest extends AbstractChangeNotesTest {
   @Test
   public void changeMessageCommitFormatSimple() throws Exception {
     Change c = TestChanges.newChange(project, changeOwner.getAccountId(), 1);
-    ChangeUpdate update = newUpdate(c, changeOwner);
+    ChangeUpdate update = newUpdateForNewChange(c, changeOwner);
     update.setChangeMessage("Just a little code change.\nHow about a new line");
     update.commit();
     assertThat(update.getRefName()).isEqualTo("refs/changes/01/1/meta");
@@ -110,7 +110,7 @@ public class CommitMessageOutputTest extends AbstractChangeNotesTest {
   @Test
   public void changeWithRevision() throws Exception {
     Change c = TestChanges.newChange(project, changeOwner.getAccountId(), 1);
-    ChangeUpdate update = newUpdate(c, changeOwner);
+    ChangeUpdate update = newUpdateForNewChange(c, changeOwner);
     update.setChangeMessage("Foo");
     RevCommit commit = tr.commit().message("Subject").create();
     update.setCommit(rw, commit);
@@ -151,7 +151,7 @@ public class CommitMessageOutputTest extends AbstractChangeNotesTest {
     ChangeUpdate update = newUpdate(c, changeOwner);
     update.setSubjectForCommit("Submit patch set 1");
 
-    RequestId submissionId = submissionId(c);
+    SubmissionId submissionId = new SubmissionId(c);
     update.merge(
         submissionId,
         ImmutableList.of(
@@ -174,7 +174,7 @@ public class CommitMessageOutputTest extends AbstractChangeNotesTest {
             + "Patch-set: 1\n"
             + "Status: merged\n"
             + "Submission-id: "
-            + submissionId.toStringForStorage()
+            + submissionId.toString()
             + "\n"
             + "Submitted-with: NOT_READY\n"
             + "Submitted-with: OK: Verified: Gerrit User 1 <1@gerrit>\n"
@@ -199,10 +199,13 @@ public class CommitMessageOutputTest extends AbstractChangeNotesTest {
 
   @Test
   public void anonymousUser() throws Exception {
-    Account anon = new Account(new Account.Id(3), TimeUtil.nowTs());
+    Account anon =
+        Account.builder(Account.id(3), TimeUtil.nowTs())
+            .setMetaId("1234567812345678123456781234567812345678")
+            .build();
     accountCache.put(anon);
     Change c = newChange();
-    ChangeUpdate update = newUpdate(c, userFactory.create(anon.getId()));
+    ChangeUpdate update = newUpdate(c, userFactory.create(anon.id()));
     update.setChangeMessage("Comment on the change.");
     update.commit();
 
@@ -220,7 +223,7 @@ public class CommitMessageOutputTest extends AbstractChangeNotesTest {
     ChangeUpdate update = newUpdate(c, changeOwner);
     update.setSubjectForCommit("Submit patch set 1");
 
-    RequestId submissionId = submissionId(c);
+    SubmissionId submissionId = new SubmissionId(c);
     update.merge(
         submissionId, ImmutableList.of(submitRecord("RULE_ERROR", "Problem with patch set:\n1")));
     update.commit();
@@ -231,7 +234,7 @@ public class CommitMessageOutputTest extends AbstractChangeNotesTest {
             + "Patch-set: 1\n"
             + "Status: merged\n"
             + "Submission-id: "
-            + submissionId.toStringForStorage()
+            + submissionId.toString()
             + "\n"
             + "Submitted-with: RULE_ERROR Problem with patch set: 1\n",
         update.getResult());
@@ -241,7 +244,7 @@ public class CommitMessageOutputTest extends AbstractChangeNotesTest {
   public void noChangeMessage() throws Exception {
     Change c = newChange();
     ChangeUpdate update = newUpdate(c, changeOwner);
-    update.putReviewer(changeOwner.getAccount().getId(), REVIEWER);
+    update.putReviewer(changeOwner.getAccount().id(), REVIEWER);
     update.commit();
 
     assertBodyEquals(
@@ -309,9 +312,9 @@ public class CommitMessageOutputTest extends AbstractChangeNotesTest {
   public void leadingWhitespace() throws Exception {
     Change c = TestChanges.newChange(project, changeOwner.getAccountId());
     c.setCurrentPatchSet(c.currentPatchSetId(), "  " + c.getSubject(), c.getOriginalSubject());
-    ChangeUpdate update = newUpdate(c, changeOwner);
+    ChangeUpdate update = newUpdateForNewChange(c, changeOwner);
     update.setChangeId(c.getKey().get());
-    update.setBranch(c.getDest().get());
+    update.setBranch(c.getDest().branch());
     update.commit();
 
     assertBodyEquals(
@@ -330,9 +333,9 @@ public class CommitMessageOutputTest extends AbstractChangeNotesTest {
 
     c = TestChanges.newChange(project, changeOwner.getAccountId());
     c.setCurrentPatchSet(c.currentPatchSetId(), "\t\t" + c.getSubject(), c.getOriginalSubject());
-    update = newUpdate(c, changeOwner);
+    update = newUpdateForNewChange(c, changeOwner);
     update.setChangeId(c.getKey().get());
-    update.setBranch(c.getDest().get());
+    update.setBranch(c.getDest().branch());
     update.commit();
 
     assertBodyEquals(
@@ -423,9 +426,5 @@ public class CommitMessageOutputTest extends AbstractChangeNotesTest {
   private void assertBodyEquals(String expected, ObjectId commitId) throws Exception {
     RevCommit commit = parseCommit(commitId);
     assertThat(commit.getFullMessage()).isEqualTo(expected);
-  }
-
-  private RequestId submissionId(Change c) {
-    return new RequestId(c.getId().toString());
   }
 }

@@ -61,10 +61,10 @@ message ChangeNotesKeyProto {
 // were chosen ease of coding the initial implementation. In particular, where
 // there already exists another serialization mechanism in Gerrit for
 // serializing a particular field, we use that rather than defining a new proto
-// type. This includes ReviewDb types that can be serialized to proto using
-// ProtobufCodec as well as NoteDb and indexed types that are serialized using
-// JSON. We can always revisit this decision later, particularly when we
-// eliminate the ReviewDb types; it just requires bumping the cache version.
+// type. This includes types that can be serialized to proto using
+// ProtoConverters as well as NoteDb and indexed types that are serialized using
+// JSON. We can always revisit this decision later; it just requires bumping the
+// cache version.
 //
 // Note on nullability: there are a lot of nullable fields in ChangeNotesState
 // and its dependencies. It's likely we could make some of them non-nullable,
@@ -75,7 +75,7 @@ message ChangeNotesKeyProto {
 // Instead, we just take the tedious yet simple approach of having a "has_foo"
 // field for each nullable field "foo", indicating whether or not foo is null.
 //
-// Next ID: 19
+// Next ID: 23
 message ChangeNotesStateProto {
   // Effectively required, even though the corresponding ChangeNotesState field
   // is optional, since the field is only absent when NoteDb is disabled, in
@@ -84,7 +84,7 @@ message ChangeNotesStateProto {
 
   int32 change_id = 2;
 
-  // Next ID: 24
+  // Next ID: 26
   message ChangeColumnsProto {
     string change_key = 1;
 
@@ -110,8 +110,8 @@ message ChangeNotesStateProto {
     string submission_id = 13;
     bool has_submission_id = 14;
 
-    int32 assignee = 15;
-    bool has_assignee = 16;
+    reserved 15;  // assignee
+    reserved 16;  // has_assignee
 
     string status = 17;
     bool has_status = 18;
@@ -124,20 +124,23 @@ message ChangeNotesStateProto {
 
     int32 revert_of = 22;
     bool has_revert_of = 23;
+
+    string cherry_pick_of = 24;
+    bool has_cherry_pick_of = 25;
   }
   // Effectively required, even though the corresponding ChangeNotesState field
   // is optional, since the field is only absent when NoteDb is disabled, in
   // which case attempting to use the ChangeNotesCache is programmer error.
   ChangeColumnsProto columns = 3;
 
-  repeated int32 past_assignee = 4;
+  reserved  4; // past_assignee
 
   repeated string hashtag = 5;
 
-  // Raw PatchSet proto as produced by ProtobufCodec.
+  // Raw PatchSet proto as produced by PatchSetProtoConverter.
   repeated bytes patch_set = 6;
 
-  // Raw PatchSetApproval proto as produced by ProtobufCodec.
+  // Raw PatchSetApproval proto as produced by PatchSetApprovalProtoConverter.
   repeated bytes approval = 7;
 
   // Next ID: 4
@@ -175,14 +178,28 @@ message ChangeNotesStateProto {
   // com.google.gerrit.server.index.change.ChangeField.StoredSubmitRecord.
   repeated string submit_record = 14;
 
-  // Raw ChangeMessage proto as produced by ProtobufCodec.
+  // Raw ChangeMessage proto as produced by ChangeMessageProtoConverter.
   repeated bytes change_message = 15;
 
-  // JSON produced from com.google.gerrit.reviewdb.client.Comment.
+  // JSON produced from com.google.gerrit.entities.Comment.
   repeated string published_comment = 16;
 
-  int64 read_only_until = 17;
-  bool has_read_only_until = 18;
+  reserved 17;  // read_only_until
+  reserved 18;  // has_read_only_until
+
+  // Number of updates to the change's meta ref.
+  int32 update_count = 19;
+
+  string server_id = 20;
+  bool has_server_id = 21;
+
+  message AssigneeStatusUpdateProto {
+    int64 date = 1;
+    int32 updated_by = 2;
+    int32 current_assignee = 3;
+    bool has_current_assignee = 4;
+  }
+  repeated AssigneeStatusUpdateProto assignee_update = 22;
 }
 
 
@@ -233,4 +250,12 @@ message AllExternalIdsProto {
     bytes blobId = 5;
   }
   repeated ExternalIdProto external_id = 1;
+}
+
+// Key for com.google.gerrit.server.git.PureRevertCache.
+// Next ID: 4
+message PureRevertKeyProto {
+  string project = 1;
+  bytes claimed_original = 2;
+  bytes claimed_revert = 3;
 }

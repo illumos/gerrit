@@ -15,6 +15,7 @@
 package com.google.gerrit.acceptance.rest.project;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
 import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static java.util.stream.Collectors.toList;
@@ -25,7 +26,10 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.NoHttpd;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.common.data.Permission;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.projects.BranchInput;
 import com.google.gerrit.extensions.api.projects.DeleteBranchesInput;
 import com.google.gerrit.extensions.api.projects.ProjectApi;
@@ -33,7 +37,7 @@ import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.inject.Inject;
 import java.util.HashMap;
 import java.util.List;
 import org.eclipse.jgit.lib.Repository;
@@ -46,10 +50,17 @@ public class DeleteBranchesIT extends AbstractDaemonTest {
   private static final ImmutableList<String> BRANCHES =
       ImmutableList.of("refs/heads/test-1", "refs/heads/test-2", "test-3", "refs/meta/foo");
 
+  @Inject private ProjectOperations projectOperations;
+  @Inject private RequestScopeOperations requestScopeOperations;
+
   @Before
   public void setUp() throws Exception {
-    allow("refs/*", Permission.CREATE, REGISTERED_USERS);
-    allow("refs/*", Permission.PUSH, REGISTERED_USERS);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.CREATE).ref("refs/*").group(REGISTERED_USERS))
+        .add(allow(Permission.PUSH).ref("refs/*").group(REGISTERED_USERS))
+        .update();
     for (String name : BRANCHES) {
       project().branch(name).create(new BranchInput());
     }
@@ -72,14 +83,10 @@ public class DeleteBranchesIT extends AbstractDaemonTest {
 
     DeleteBranchesInput input = new DeleteBranchesInput();
     input.branches = branchToDelete;
-    setApiUser(user);
-    try {
-      project().deleteBranches(input);
-      fail("Expected AuthException");
-    } catch (AuthException e) {
-      assertThat(e).hasMessageThat().isEqualTo("not permitted: delete on refs/heads/test-1");
-    }
-    setApiUser(admin);
+    requestScopeOperations.setApiUser(user.id());
+    AuthException thrown = assertThrows(AuthException.class, () -> project().deleteBranches(input));
+    assertThat(thrown).hasMessageThat().isEqualTo("not permitted: delete on refs/heads/test-1");
+    requestScopeOperations.setApiUser(admin.id());
     assertBranches(BRANCHES);
   }
 
@@ -87,14 +94,11 @@ public class DeleteBranchesIT extends AbstractDaemonTest {
   public void deleteMultiBranchesWithoutPermissionForbidden() throws Exception {
     DeleteBranchesInput input = new DeleteBranchesInput();
     input.branches = BRANCHES;
-    setApiUser(user);
-    try {
-      project().deleteBranches(input);
-      fail("Expected ResourceConflictException");
-    } catch (ResourceConflictException e) {
-      assertThat(e).hasMessageThat().isEqualTo(errorMessageForBranches(BRANCHES));
-    }
-    setApiUser(admin);
+    requestScopeOperations.setApiUser(user.id());
+    ResourceConflictException thrown =
+        assertThrows(ResourceConflictException.class, () -> project().deleteBranches(input));
+    assertThat(thrown).hasMessageThat().isEqualTo(errorMessageForBranches(BRANCHES));
+    requestScopeOperations.setApiUser(admin.id());
     assertBranches(BRANCHES);
   }
 
@@ -104,14 +108,11 @@ public class DeleteBranchesIT extends AbstractDaemonTest {
     List<String> branches = Lists.newArrayList(BRANCHES);
     branches.add("refs/heads/does-not-exist");
     input.branches = branches;
-    try {
-      project().deleteBranches(input);
-      fail("Expected ResourceConflictException");
-    } catch (ResourceConflictException e) {
-      assertThat(e)
-          .hasMessageThat()
-          .isEqualTo(errorMessageForBranches(ImmutableList.of("refs/heads/does-not-exist")));
-    }
+    ResourceConflictException thrown =
+        assertThrows(ResourceConflictException.class, () -> project().deleteBranches(input));
+    assertThat(thrown)
+        .hasMessageThat()
+        .isEqualTo(errorMessageForBranches(ImmutableList.of("refs/heads/does-not-exist")));
     assertBranchesDeleted(BRANCHES);
   }
 
@@ -123,40 +124,37 @@ public class DeleteBranchesIT extends AbstractDaemonTest {
     List<String> branches = Lists.newArrayList("refs/heads/does-not-exist");
     branches.addAll(BRANCHES);
     input.branches = branches;
-    try {
-      project().deleteBranches(input);
-      fail("Expected ResourceConflictException");
-    } catch (ResourceConflictException e) {
-      assertThat(e)
-          .hasMessageThat()
-          .isEqualTo(errorMessageForBranches(ImmutableList.of("refs/heads/does-not-exist")));
-    }
+    ResourceConflictException thrown =
+        assertThrows(ResourceConflictException.class, () -> project().deleteBranches(input));
+    assertThat(thrown)
+        .hasMessageThat()
+        .isEqualTo(errorMessageForBranches(ImmutableList.of("refs/heads/does-not-exist")));
     assertBranchesDeleted(BRANCHES);
   }
 
   @Test
   public void missingInput() throws Exception {
     DeleteBranchesInput input = null;
-    exception.expect(BadRequestException.class);
-    exception.expectMessage("branches must be specified");
-    project().deleteBranches(input);
+    BadRequestException thrown =
+        assertThrows(BadRequestException.class, () -> project().deleteBranches(input));
+    assertThat(thrown).hasMessageThat().contains("branches must be specified");
   }
 
   @Test
   public void missingBranchList() throws Exception {
     DeleteBranchesInput input = new DeleteBranchesInput();
-    exception.expect(BadRequestException.class);
-    exception.expectMessage("branches must be specified");
-    project().deleteBranches(input);
+    BadRequestException thrown =
+        assertThrows(BadRequestException.class, () -> project().deleteBranches(input));
+    assertThat(thrown).hasMessageThat().contains("branches must be specified");
   }
 
   @Test
   public void emptyBranchList() throws Exception {
     DeleteBranchesInput input = new DeleteBranchesInput();
     input.branches = Lists.newArrayList();
-    exception.expect(BadRequestException.class);
-    exception.expectMessage("branches must be specified");
-    project().deleteBranches(input);
+    BadRequestException thrown =
+        assertThrows(BadRequestException.class, () -> project().deleteBranches(input));
+    assertThat(thrown).hasMessageThat().contains("branches must be specified");
   }
 
   @Test
@@ -194,7 +192,7 @@ public class DeleteBranchesIT extends AbstractDaemonTest {
   private HashMap<String, RevCommit> initialRevisions(List<String> branches) throws Exception {
     HashMap<String, RevCommit> result = new HashMap<>();
     for (String branch : branches) {
-      result.put(branch, getRemoteHead(project, branch));
+      result.put(branch, projectOperations.project(project).getHead(branch));
     }
     return result;
   }

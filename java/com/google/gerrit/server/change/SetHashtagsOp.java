@@ -21,25 +21,23 @@ import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Ordering;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.ChangeMessage;
 import com.google.gerrit.extensions.api.changes.HashtagsInput;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.ChangeMessage;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.change.HashtagsUtil.InvalidHashtagException;
 import com.google.gerrit.server.extensions.events.HashtagsEdited;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ChangeUpdate;
-import com.google.gerrit.server.notedb.NotesMigration;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
 import com.google.gerrit.server.update.Context;
 import com.google.gerrit.server.validators.HashtagValidationListener;
 import com.google.gerrit.server.validators.ValidationException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 import java.io.IOException;
@@ -52,7 +50,6 @@ public class SetHashtagsOp implements BatchUpdateOp {
     SetHashtagsOp create(HashtagsInput input);
   }
 
-  private final NotesMigration notesMigration;
   private final ChangeMessagesUtil cmUtil;
   private final PluginSetContext<HashtagValidationListener> validationListeners;
   private final HashtagsEdited hashtagsEdited;
@@ -67,12 +64,10 @@ public class SetHashtagsOp implements BatchUpdateOp {
 
   @Inject
   SetHashtagsOp(
-      NotesMigration notesMigration,
       ChangeMessagesUtil cmUtil,
       PluginSetContext<HashtagValidationListener> validationListeners,
       HashtagsEdited hashtagsEdited,
       @Assisted @Nullable HashtagsInput input) {
-    this.notesMigration = notesMigration;
     this.cmUtil = cmUtil;
     this.validationListeners = validationListeners;
     this.hashtagsEdited = hashtagsEdited;
@@ -86,11 +81,7 @@ public class SetHashtagsOp implements BatchUpdateOp {
 
   @Override
   public boolean updateChange(ChangeContext ctx)
-      throws AuthException, BadRequestException, MethodNotAllowedException, OrmException,
-          IOException {
-    if (!notesMigration.readChanges()) {
-      throw new MethodNotAllowedException("Cannot add hashtags; NoteDb is disabled");
-    }
+      throws AuthException, BadRequestException, MethodNotAllowedException, IOException {
     if (input == null || (input.add == null && input.remove == null)) {
       updatedHashtags = ImmutableSortedSet.of();
       return false;
@@ -125,13 +116,13 @@ public class SetHashtagsOp implements BatchUpdateOp {
     }
   }
 
-  private void addMessage(ChangeContext ctx, ChangeUpdate update) throws OrmException {
+  private void addMessage(ChangeContext ctx, ChangeUpdate update) {
     StringBuilder msg = new StringBuilder();
     appendHashtagMessage(msg, "added", toAdd);
     appendHashtagMessage(msg, "removed", toRemove);
     ChangeMessage cmsg =
         ChangeMessagesUtil.newMessage(ctx, msg.toString(), ChangeMessagesUtil.TAG_SET_HASHTAGS);
-    cmUtil.addChangeMessage(ctx.getDb(), update, cmsg);
+    cmUtil.addChangeMessage(update, cmsg);
   }
 
   private void appendHashtagMessage(StringBuilder b, String action, Set<String> hashtags) {
@@ -153,7 +144,7 @@ public class SetHashtagsOp implements BatchUpdateOp {
   }
 
   @Override
-  public void postUpdate(Context ctx) throws OrmException {
+  public void postUpdate(Context ctx) {
     if (updated() && fireEvent) {
       hashtagsEdited.fire(
           change, ctx.getAccount(), updatedHashtags, toAdd, toRemove, ctx.getWhen());

@@ -14,40 +14,52 @@
 
 package com.google.gerrit.acceptance.rest.change;
 
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allowCapability;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.block;
+import static com.google.gerrit.common.data.Permission.READ;
 import static com.google.gerrit.server.group.SystemGroupBackend.ANONYMOUS_USERS;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static java.util.stream.Collectors.toList;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
-import com.google.gerrit.acceptance.GerritConfig;
 import com.google.gerrit.acceptance.TestAccount;
+import com.google.gerrit.acceptance.config.GerritConfig;
+import com.google.gerrit.acceptance.testsuite.account.AccountOperations;
+import com.google.gerrit.acceptance.testsuite.group.GroupOperations;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.common.data.GlobalCapability;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.api.accounts.EmailInput;
-import com.google.gerrit.extensions.api.changes.ReviewInput;
+import com.google.gerrit.extensions.api.changes.AddReviewerInput;
+import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.extensions.common.ChangeInput;
-import com.google.gerrit.extensions.common.GroupInfo;
 import com.google.gerrit.extensions.common.SuggestedReviewerInfo;
-import com.google.gerrit.extensions.restapi.IdString;
+import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.RestApiException;
-import com.google.gerrit.extensions.restapi.TopLevelResource;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.server.group.InternalGroup;
-import com.google.gerrit.server.restapi.group.CreateGroup;
 import com.google.inject.Inject;
-import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.IntStream;
 import org.junit.Before;
 import org.junit.Test;
 
 public class SuggestReviewersIT extends AbstractDaemonTest {
-  @Inject private CreateGroup createGroup;
+  @Inject private AccountOperations accountOperations;
+  @Inject private GroupOperations groupOperations;
+  @Inject private ProjectOperations projectOperations;
+  @Inject private RequestScopeOperations requestScopeOperations;
 
-  private InternalGroup group1;
-  private InternalGroup group2;
-  private InternalGroup group3;
+  private AccountGroup.UUID group1;
+  private AccountGroup.UUID group2;
+  private AccountGroup.UUID group3;
 
   private TestAccount user1;
   private TestAccount user2;
@@ -56,14 +68,16 @@ public class SuggestReviewersIT extends AbstractDaemonTest {
 
   @Before
   public void setUp() throws Exception {
-    group1 = newGroup("users1");
-    group2 = newGroup("users2");
-    group3 = newGroup("users3");
-
-    user1 = user("user1", "First1 Last1", group1);
-    user2 = user("user2", "First2 Last2", group2);
-    user3 = user("user3", "First3 Last3", group1, group2);
+    user1 = user("user1", "First1 Last1");
+    user2 = user("user2", "First2 Last2");
+    user3 = user("user3", "First3 Last3");
     user4 = user("jdoe", "John Doe", "JDOE");
+
+    group1 =
+        groupOperations.newGroup().name(name("users1")).members(user1.id(), user3.id()).create();
+    group2 =
+        groupOperations.newGroup().name(name("users2")).members(user2.id(), user3.id()).create();
+    group3 = groupOperations.newGroup().name(name("users3")).members(user1.id()).create();
   }
 
   @Test
@@ -105,7 +119,8 @@ public class SuggestReviewersIT extends AbstractDaemonTest {
     assertReviewers(
         reviewers, ImmutableList.of(user1, user2, user3), ImmutableList.of(group1, group2));
 
-    reviewers = suggestReviewers(changeId, group3.getName(), 10);
+    String group3Name = groupOperations.group(group3).get().name();
+    reviewers = suggestReviewers(changeId, group3Name, 10);
     assertReviewers(reviewers, ImmutableList.of(), ImmutableList.of(group3));
 
     // Suggested accounts are ordered by activity. All users have no activity,
@@ -116,7 +131,51 @@ public class SuggestReviewersIT extends AbstractDaemonTest {
     assertThat(reviewers.get(0).account).isNotNull();
     assertThat(ImmutableList.of(reviewers.get(0).account._accountId))
         .containsAnyIn(
-            ImmutableList.of(user1, user2, user3).stream().map(u -> u.id.get()).collect(toList()));
+            ImmutableList.of(user1, user2, user3).stream()
+                .map(u -> u.id().get())
+                .collect(toList()));
+  }
+
+  @Test
+  @GerritConfig(name = "index.maxTerms", value = "10")
+  public void suggestReviewersTooManyQueryTerms() throws Exception {
+    String changeId = createChange().getChangeId();
+
+    // Do a query which doesn't exceed index.maxTerms succeeds (add only 9 terms, since on
+    // 'inactive:1' term is implicitly added) and assert that a result is returned
+    StringBuilder query = new StringBuilder();
+    for (int i = 1; i <= 9; i++) {
+      query.append(name("u")).append(" ");
+    }
+    assertThat(suggestReviewers(changeId, query.toString())).isNotEmpty();
+
+    // Do a query which exceed index.maxTerms succeeds (10 terms plus 'inactive:1' term which is
+    // implicitly added).
+    query.append(name("u"));
+    BadRequestException exception =
+        assertThrows(BadRequestException.class, () -> suggestReviewers(changeId, query.toString()));
+    assertThat(exception).hasMessageThat().isEqualTo("too many terms in query");
+  }
+
+  @Test
+  public void suggestReviewersWithExcludeGroups() throws Exception {
+    String changeId = createChange().getChangeId();
+
+    // by default groups are included
+    List<SuggestedReviewerInfo> reviewers = suggestReviewers(changeId, name("user"));
+    assertReviewers(
+        reviewers, ImmutableList.of(user1, user2, user3), ImmutableList.of(group1, group2, group3));
+
+    // exclude groups
+    reviewers =
+        gApi.changes().id(changeId).suggestReviewers(name("user")).excludeGroups(true).get();
+    assertReviewers(reviewers, ImmutableList.of(user1, user2, user3), ImmutableList.of());
+
+    // explicitly include groups
+    reviewers =
+        gApi.changes().id(changeId).suggestReviewers(name("user")).excludeGroups(false).get();
+    assertReviewers(
+        reviewers, ImmutableList.of(user1, user2, user3), ImmutableList.of(group1, group2, group3));
   }
 
   @Test
@@ -125,23 +184,23 @@ public class SuggestReviewersIT extends AbstractDaemonTest {
     String changeId = createChange().getChangeId();
     List<SuggestedReviewerInfo> reviewers;
 
-    reviewers = suggestReviewers(changeId, user2.username, 2);
+    reviewers = suggestReviewers(changeId, user2.username(), 2);
     assertThat(reviewers).hasSize(1);
-    assertThat(Iterables.getOnlyElement(reviewers).account.name).isEqualTo(user2.fullName);
+    assertThat(Iterables.getOnlyElement(reviewers).account.name).isEqualTo(user2.fullName());
 
-    setApiUser(user1);
-    reviewers = suggestReviewers(changeId, user2.fullName, 2);
+    requestScopeOperations.setApiUser(user1.id());
+    reviewers = suggestReviewers(changeId, user2.fullName(), 2);
     assertThat(reviewers).isEmpty();
 
-    setApiUser(user2);
-    reviewers = suggestReviewers(changeId, user2.username, 2);
+    requestScopeOperations.setApiUser(user2.id());
+    reviewers = suggestReviewers(changeId, user2.username(), 2);
     assertThat(reviewers).hasSize(1);
-    assertThat(Iterables.getOnlyElement(reviewers).account.name).isEqualTo(user2.fullName);
+    assertThat(Iterables.getOnlyElement(reviewers).account.name).isEqualTo(user2.fullName());
 
-    setApiUser(user3);
-    reviewers = suggestReviewers(changeId, user2.username, 2);
+    requestScopeOperations.setApiUser(user3.id());
+    reviewers = suggestReviewers(changeId, user2.username(), 2);
     assertThat(reviewers).hasSize(1);
-    assertThat(Iterables.getOnlyElement(reviewers).account.name).isEqualTo(user2.fullName);
+    assertThat(Iterables.getOnlyElement(reviewers).account.name).isEqualTo(user2.fullName());
   }
 
   @Test
@@ -149,10 +208,14 @@ public class SuggestReviewersIT extends AbstractDaemonTest {
     String changeId = createChange().getChangeId();
     List<SuggestedReviewerInfo> reviewers;
 
-    setApiUser(user3);
-    block("refs/*", "read", ANONYMOUS_USERS);
-    allow("refs/*", "read", group1.getGroupUUID());
-    reviewers = suggestReviewers(changeId, user2.username, 2);
+    requestScopeOperations.setApiUser(user3.id());
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(READ).ref("refs/*").group(ANONYMOUS_USERS))
+        .add(allow(READ).ref("refs/*").group(group1))
+        .update();
+    reviewers = suggestReviewers(changeId, user2.username(), 2);
     assertThat(reviewers).isEmpty();
   }
 
@@ -162,15 +225,19 @@ public class SuggestReviewersIT extends AbstractDaemonTest {
     String changeId = createChange().getChangeId();
     List<SuggestedReviewerInfo> reviewers;
 
-    setApiUser(user1);
-    reviewers = suggestReviewers(changeId, user2.username, 2);
+    requestScopeOperations.setApiUser(user1.id());
+    reviewers = suggestReviewers(changeId, user2.username(), 2);
     assertThat(reviewers).isEmpty();
 
-    setApiUser(user1); // Clear cached group info.
-    allowGlobalCapabilities(group1.getGroupUUID(), GlobalCapability.VIEW_ALL_ACCOUNTS);
-    reviewers = suggestReviewers(changeId, user2.username, 2);
+    // Clear cached group info.
+    requestScopeOperations.setApiUser(user1.id());
+    projectOperations
+        .allProjectsForUpdate()
+        .add(allowCapability(GlobalCapability.VIEW_ALL_ACCOUNTS).group(group1))
+        .update();
+    reviewers = suggestReviewers(changeId, user2.username(), 2);
     assertThat(reviewers).hasSize(1);
-    assertThat(Iterables.getOnlyElement(reviewers).account.name).isEqualTo(user2.fullName);
+    assertThat(Iterables.getOnlyElement(reviewers).account.name).isEqualTo(user2.fullName());
   }
 
   @Test
@@ -216,44 +283,38 @@ public class SuggestReviewersIT extends AbstractDaemonTest {
     reviewers = suggestReviewers(changeId, name("user"));
     assertThat(reviewers).hasSize(6);
 
-    reviewers = suggestReviewers(changeId, user1.username);
+    reviewers = suggestReviewers(changeId, user1.username());
     assertThat(reviewers).hasSize(1);
 
     reviewers = suggestReviewers(changeId, "example.com");
     assertThat(reviewers).hasSize(5);
 
-    reviewers = suggestReviewers(changeId, user1.email);
+    reviewers = suggestReviewers(changeId, user1.email());
     assertThat(reviewers).hasSize(1);
 
-    reviewers = suggestReviewers(changeId, user1.username + " example");
+    reviewers = suggestReviewers(changeId, user1.username() + " example");
     assertThat(reviewers).hasSize(1);
 
-    reviewers = suggestReviewers(changeId, user4.email.toLowerCase());
+    reviewers = suggestReviewers(changeId, user4.email().toLowerCase());
     assertThat(reviewers).hasSize(1);
-    assertThat(reviewers.get(0).account.email).isEqualTo(user4.email);
+    assertThat(reviewers.get(0).account.email).isEqualTo(user4.email());
   }
 
   @Test
   public void suggestReviewersWithoutLimitOptionSpecified() throws Exception {
     String changeId = createChange().getChangeId();
-    String query = user3.username;
+    String query = user3.username();
     List<SuggestedReviewerInfo> suggestedReviewerInfos =
         gApi.changes().id(changeId).suggestReviewers(query).get();
     assertThat(suggestedReviewerInfos).hasSize(1);
   }
 
   @Test
-  @GerritConfig(name = "addreviewer.maxAllowed", value = "2")
+  @GerritConfig(name = "addreviewer.maxAllowed", value = "1")
   @GerritConfig(name = "addreviewer.maxWithoutConfirmation", value = "1")
-  public void suggestReviewersGroupSizeConsiderations() throws Exception {
-    InternalGroup largeGroup = newGroup("large");
-    InternalGroup mediumGroup = newGroup("medium");
-
-    // Both groups have Administrator as a member. Add two users to large
-    // group to push it past maxAllowed, and one to medium group to push it
-    // past maxWithoutConfirmation.
-    user("individual 0", "Test0 Last0", largeGroup, mediumGroup);
-    user("individual 1", "Test1 Last1", largeGroup);
+  public void confirmationIsNeverRequestedForAccounts() throws Exception {
+    user("individual 0", "Test0 Last0");
+    user("individual 1", "Test1 Last1");
 
     String changeId = createChange().getChangeId();
     List<SuggestedReviewerInfo> reviewers;
@@ -265,18 +326,65 @@ public class SuggestReviewersIT extends AbstractDaemonTest {
     reviewer = reviewers.get(0);
     assertThat(reviewer.count).isEqualTo(1);
     assertThat(reviewer.confirm).isNull();
+  }
+
+  @Test
+  @GerritConfig(name = "addreviewer.maxAllowed", value = "2")
+  @GerritConfig(name = "addreviewer.maxWithoutConfirmation", value = "1")
+  public void suggestReviewersGroupSizeConsiderations() throws Exception {
+    AccountGroup.UUID largeGroup = createGroupWithArbitraryMembers(3);
+    String largeGroupName = groupOperations.group(largeGroup).get().name();
+    AccountGroup.UUID mediumGroup = createGroupWithArbitraryMembers(2);
+    String mediumGroupName = groupOperations.group(mediumGroup).get().name();
+
+    String changeId = createChange().getChangeId();
+    List<SuggestedReviewerInfo> reviewers;
+    SuggestedReviewerInfo reviewer;
 
     // Large group should never be suggested.
-    reviewers = suggestReviewers(changeId, largeGroup.getName(), 10);
+    reviewers = suggestReviewers(changeId, largeGroupName, 10);
     assertThat(reviewers).isEmpty();
 
     // Medium group should be suggested with appropriate count and confirm.
-    reviewers = suggestReviewers(changeId, mediumGroup.getName(), 10);
+    reviewers = suggestReviewers(changeId, mediumGroupName, 10);
     assertThat(reviewers).hasSize(1);
     reviewer = reviewers.get(0);
-    assertThat(reviewer.group.name).isEqualTo(mediumGroup.getName());
+    assertThat(reviewer.group.id).isEqualTo(mediumGroup.get());
     assertThat(reviewer.count).isEqualTo(2);
     assertThat(reviewer.confirm).isTrue();
+  }
+
+  @Test
+  @GerritConfig(name = "addreviewer.maxAllowed", value = "20")
+  @GerritConfig(name = "addreviewer.maxWithoutConfirmation", value = "0")
+  public void confirmationIsNotNecessaryForLargeGroupWhenLimitIsRemoved() throws Exception {
+    String changeId = createChange().getChangeId();
+    int numMembers = 15;
+    AccountGroup.UUID largeGroup = createGroupWithArbitraryMembers(numMembers);
+    String groupName = groupOperations.group(largeGroup).get().name();
+
+    List<SuggestedReviewerInfo> reviewers = suggestReviewers(changeId, groupName, 10);
+
+    assertThat(reviewers).hasSize(1);
+    SuggestedReviewerInfo reviewer = Iterables.getOnlyElement(reviewers);
+    assertThat(reviewer.group.id).isEqualTo(largeGroup.get());
+    // Confirmation should not be necessary.
+    assertThat(reviewer.confirm).isNull();
+  }
+
+  @Test
+  @GerritConfig(name = "addreviewer.maxAllowed", value = "0")
+  public void largeGroupIsSuggestedWhenLimitIsRemoved() throws Exception {
+    String changeId = createChange().getChangeId();
+    int numMembers = 30;
+    AccountGroup.UUID largeGroup = createGroupWithArbitraryMembers(numMembers);
+    String groupName = groupOperations.group(largeGroup).get().name();
+
+    List<SuggestedReviewerInfo> reviewers = suggestReviewers(changeId, groupName, 10);
+
+    assertThat(reviewers).hasSize(1);
+    SuggestedReviewerInfo reviewer = Iterables.getOnlyElement(reviewers);
+    assertThat(reviewer.group.id).isEqualTo(largeGroup.get());
   }
 
   @Test
@@ -285,145 +393,126 @@ public class SuggestReviewersIT extends AbstractDaemonTest {
     TestAccount reviewer1 = user("customuser2", "User2");
     TestAccount reviewer2 = user("customuser3", "User3");
 
-    setApiUser(user1);
+    requestScopeOperations.setApiUser(user1.id());
     String changeId1 = createChangeFromApi();
 
-    setApiUser(reviewer1);
-    reviewChange(changeId1);
+    reviewChange(changeId1, reviewer1);
 
-    setApiUser(user1);
     String changeId2 = createChangeFromApi();
 
-    setApiUser(reviewer1);
-    reviewChange(changeId2);
+    reviewChange(changeId2, reviewer1);
+    reviewChange(changeId2, reviewer2);
 
-    setApiUser(reviewer2);
-    reviewChange(changeId2);
-
-    setApiUser(user1);
     String changeId3 = createChangeFromApi();
     List<SuggestedReviewerInfo> reviewers = suggestReviewers(changeId3, null, 4);
     assertThat(reviewers.stream().map(r -> r.account._accountId).collect(toList()))
-        .containsExactly(reviewer1.id.get(), reviewer2.id.get())
+        .containsExactly(reviewer1.id().get(), reviewer2.id().get())
         .inOrder();
 
     // check that existing reviewers are filtered out
-    gApi.changes().id(changeId3).addReviewer(reviewer1.email);
+    gApi.changes().id(changeId3).addReviewer(reviewer1.email());
     reviewers = suggestReviewers(changeId3, null, 4);
     assertThat(reviewers.stream().map(r -> r.account._accountId).collect(toList()))
-        .containsExactly(reviewer2.id.get())
+        .containsExactly(reviewer2.id().get())
         .inOrder();
   }
 
   @Test
   public void defaultReviewerSuggestionOnFirstChange() throws Exception {
     TestAccount user1 = user("customuser1", "User1");
-    setApiUser(user1);
+    requestScopeOperations.setApiUser(user1.id());
     List<SuggestedReviewerInfo> reviewers = suggestReviewers(createChange().getChangeId(), "", 4);
     assertThat(reviewers).isEmpty();
   }
 
   @Test
-  @GerritConfig(name = "suggest.maxSuggestedReviewers", value = "10")
-  public void reviewerRanking() throws Exception {
-    // Assert that user are ranked by the number of times they have applied a
-    // a label to a change (highest), added comments (medium) or owned a
-    // change (low).
-    String fullName = "Primum Finalis";
-    TestAccount userWhoOwns = user("customuser1", fullName);
-    TestAccount reviewer1 = user("customuser2", fullName);
-    TestAccount reviewer2 = user("customuser3", fullName);
-    TestAccount userWhoComments = user("customuser4", fullName);
-    TestAccount userWhoLooksForSuggestions = user("customuser5", fullName);
-
-    // Create a change as userWhoOwns and add some reviews
-    setApiUser(userWhoOwns);
-    String changeId1 = createChangeFromApi();
-
-    setApiUser(reviewer1);
-    reviewChange(changeId1);
-
-    setApiUser(user1);
-    String changeId2 = createChangeFromApi();
-
-    setApiUser(reviewer1);
-    reviewChange(changeId2);
-
-    setApiUser(reviewer2);
-    reviewChange(changeId2);
-
-    // Create a comment as a different user
-    setApiUser(userWhoComments);
-    ReviewInput ri = new ReviewInput();
-    ri.message = "Test";
-    gApi.changes().id(changeId1).revision(1).review(ri);
-
-    // Create a change as a new user to assert that we receive the correct
-    // ranking
-
-    setApiUser(userWhoLooksForSuggestions);
-    List<SuggestedReviewerInfo> reviewers = suggestReviewers(createChangeFromApi(), "Pri", 4);
-    assertThat(reviewers.stream().map(r -> r.account._accountId).collect(toList()))
-        .containsExactly(
-            reviewer1.id.get(), reviewer2.id.get(), userWhoOwns.id.get(), userWhoComments.id.get())
-        .inOrder();
-  }
-
-  @Test
-  public void reviewerRankingProjectIsolation() throws Exception {
-    // Create new project
-    Project.NameKey newProject = createProject("test");
-
-    // Create users who review changes in both the default and the new project
-    String fullName = "Primum Finalis";
-    TestAccount userWhoOwns = user("customuser1", fullName);
-    TestAccount reviewer1 = user("customuser2", fullName);
-    TestAccount reviewer2 = user("customuser3", fullName);
-
-    setApiUser(userWhoOwns);
-    String changeId1 = createChangeFromApi();
-
-    setApiUser(reviewer1);
-    reviewChange(changeId1);
-
-    setApiUser(userWhoOwns);
-    String changeId2 = createChangeFromApi(newProject);
-
-    setApiUser(reviewer2);
-    reviewChange(changeId2);
-
-    setApiUser(userWhoOwns);
-    String changeId3 = createChangeFromApi(newProject);
-
-    setApiUser(reviewer2);
-    reviewChange(changeId3);
-
-    setApiUser(userWhoOwns);
-    List<SuggestedReviewerInfo> reviewers = suggestReviewers(createChangeFromApi(), "Prim", 4);
-
-    // Assert that reviewer1 is on top, even though reviewer2 has more reviews
-    // in other projects
-    assertThat(reviewers.stream().map(r -> r.account._accountId).collect(toList()))
-        .containsExactly(reviewer1.id.get(), reviewer2.id.get())
-        .inOrder();
-  }
-
-  @Test
   public void suggestNoInactiveAccounts() throws Exception {
+    requestScopeOperations.setApiUser(user.id());
+    String changeIdReviewed = createChangeFromApi();
+    String changeId = createChangeFromApi();
+
     String name = name("foo");
     TestAccount foo1 = accountCreator.create(name + "-1");
-    assertThat(gApi.accounts().id(foo1.username).getActive()).isTrue();
+    reviewChange(changeIdReviewed, foo1);
+    assertThat(gApi.accounts().id(foo1.username()).getActive()).isTrue();
 
     TestAccount foo2 = accountCreator.create(name + "-2");
-    assertThat(gApi.accounts().id(foo2.username).getActive()).isTrue();
+    reviewChange(changeIdReviewed, foo2);
+    assertThat(gApi.accounts().id(foo2.username()).getActive()).isTrue();
 
-    String changeId = createChange().getChangeId();
     assertReviewers(
         suggestReviewers(changeId, name), ImmutableList.of(foo1, foo2), ImmutableList.of());
 
-    gApi.accounts().id(foo2.username).setActive(false);
-    assertThat(gApi.accounts().id(foo2.username).getActive()).isFalse();
+    requestScopeOperations.setApiUser(user.id());
+    gApi.accounts().id(foo2.username()).setActive(false);
+    assertThat(gApi.accounts().id(foo2.id().get()).getActive()).isFalse();
     assertReviewers(suggestReviewers(changeId, name), ImmutableList.of(foo1), ImmutableList.of());
+  }
+
+  @Test
+  public void suggestNoExistingReviewers() throws Exception {
+    requestScopeOperations.setApiUser(user.id());
+    String changeId = createChangeFromApi();
+    String changeIdReviewed = createChangeFromApi();
+
+    String name = name("foo");
+    TestAccount foo1 = accountCreator.create(name + "-1");
+    reviewChange(changeIdReviewed, foo1);
+
+    TestAccount foo2 = accountCreator.create(name + "-2");
+    reviewChange(changeIdReviewed, foo2);
+
+    assertReviewers(
+        suggestReviewers(changeId, name), ImmutableList.of(foo1, foo2), ImmutableList.of());
+
+    gApi.changes().id(changeId).addReviewer(foo2.id().toString());
+    assertReviewers(suggestReviewers(changeId, name), ImmutableList.of(foo1), ImmutableList.of());
+  }
+
+  @Test
+  public void suggestCcAsReviewer() throws Exception {
+    requestScopeOperations.setApiUser(user.id());
+    String changeId = createChangeFromApi();
+    String changeIdReviewed = createChangeFromApi();
+
+    String name = name("foo");
+    TestAccount foo1 = accountCreator.create(name + "-1");
+    reviewChange(changeIdReviewed, foo1);
+
+    TestAccount foo2 = accountCreator.create(name + "-2");
+    reviewChange(changeIdReviewed, foo2);
+
+    assertReviewers(
+        suggestReviewers(changeId, name), ImmutableList.of(foo1, foo2), ImmutableList.of());
+
+    AddReviewerInput reviewerInput = new AddReviewerInput();
+    reviewerInput.reviewer = foo2.id().toString();
+    reviewerInput.state = ReviewerState.CC;
+    gApi.changes().id(changeId).addReviewer(reviewerInput);
+    assertReviewers(
+        suggestReviewers(changeId, name), ImmutableList.of(foo1, foo2), ImmutableList.of());
+  }
+
+  @Test
+  public void suggestReviewerAsCc() throws Exception {
+    requestScopeOperations.setApiUser(user.id());
+    String changeId = createChangeFromApi();
+    String changeIdReviewed = createChangeFromApi();
+
+    String name = name("foo");
+    TestAccount foo1 = accountCreator.create(name + "-1");
+    reviewChange(changeIdReviewed, foo1);
+
+    TestAccount foo2 = accountCreator.create(name + "-2");
+    reviewChange(changeIdReviewed, foo2);
+
+    assertReviewers(suggestCcs(changeId, name), ImmutableList.of(foo1, foo2), ImmutableList.of());
+
+    AddReviewerInput reviewerInput = new AddReviewerInput();
+    reviewerInput.reviewer = foo2.id().toString();
+    reviewerInput.state = ReviewerState.REVIEWER;
+    gApi.changes().id(changeId).addReviewer(reviewerInput);
+    assertReviewers(suggestCcs(changeId, name), ImmutableList.of(foo1, foo2), ImmutableList.of());
   }
 
   @Test
@@ -431,25 +520,17 @@ public class SuggestReviewersIT extends AbstractDaemonTest {
     String secondaryEmail = "foo.secondary@example.com";
     TestAccount foo = createAccountWithSecondaryEmail("foo", secondaryEmail);
 
-    List<SuggestedReviewerInfo> reviewers =
-        suggestReviewers(createChange().getChangeId(), secondaryEmail, 4);
-    assertReviewers(reviewers, ImmutableList.of(foo), ImmutableList.of());
-
-    reviewers = suggestReviewers(createChange().getChangeId(), "secondary", 4);
+    List<SuggestedReviewerInfo> reviewers = suggestReviewers(createChangeFromApi(), "secondary", 4);
     assertReviewers(reviewers, ImmutableList.of(foo), ImmutableList.of());
   }
 
   @Test
   public void cannotSuggestBySecondaryEmailWithoutModifyAccount() throws Exception {
-    String secondaryEmail = "foo.secondary@example.com";
-    createAccountWithSecondaryEmail("foo", secondaryEmail);
-
-    setApiUser(user);
-    List<SuggestedReviewerInfo> reviewers =
-        suggestReviewers(createChange().getChangeId(), secondaryEmail, 4);
-    assertThat(reviewers).isEmpty();
-
-    reviewers = suggestReviewers(createChange().getChangeId(), "secondary2", 4);
+    // Test that even if the account exists, the result is still empty since
+    // it shouldn't match to that account based only on the secondary email.
+    createAccountWithSecondaryEmail("foo", "foo.secondary@example.com");
+    requestScopeOperations.setApiUser(user.id());
+    List<SuggestedReviewerInfo> reviewers = suggestReviewers(createChangeFromApi(), "secondary", 4);
     assertThat(reviewers).isEmpty();
   }
 
@@ -464,10 +545,27 @@ public class SuggestReviewersIT extends AbstractDaemonTest {
     assertThat(Iterables.getOnlyElement(reviewers).account.secondaryEmails)
         .containsExactly(secondaryEmail);
 
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     reviewers = suggestReviewers(createChange().getChangeId(), "foo", 4);
     assertReviewers(reviewers, ImmutableList.of(foo), ImmutableList.of());
     assertThat(Iterables.getOnlyElement(reviewers).account.secondaryEmails).isNull();
+  }
+
+  @Test
+  public void suggestsPeopleWithNoReviewsWhenExplicitlyQueried() throws Exception {
+    TestAccount newTeamMember = accountCreator.create("newTeamMember");
+
+    requestScopeOperations.setApiUser(user.id());
+    String changeId = createChangeFromApi();
+    String changeIdReviewed = createChangeFromApi();
+
+    TestAccount reviewer = accountCreator.create("newReviewer");
+    reviewChange(changeIdReviewed, reviewer);
+
+    List<SuggestedReviewerInfo> reviewers = suggestReviewers(changeId, "new", 4);
+    assertThat(reviewers.stream().map(r -> r.account._accountId).collect(toList()))
+        .containsExactly(reviewer.id().get(), newTeamMember.id().get())
+        .inOrder();
   }
 
   private TestAccount createAccountWithSecondaryEmail(String name, String secondaryEmail)
@@ -476,7 +574,7 @@ public class SuggestReviewersIT extends AbstractDaemonTest {
     EmailInput input = new EmailInput();
     input.email = secondaryEmail;
     input.noConfirmation = true;
-    gApi.accounts().id(foo.id.get()).addEmail(input);
+    gApi.accounts().id(foo.id().get()).addEmail(input);
     return foo;
   }
 
@@ -490,27 +588,28 @@ public class SuggestReviewersIT extends AbstractDaemonTest {
     return gApi.changes().id(changeId).suggestReviewers(query).withLimit(n).get();
   }
 
-  private InternalGroup newGroup(String name) throws Exception {
-    GroupInfo group =
-        createGroup.apply(TopLevelResource.INSTANCE, IdString.fromDecoded(name(name)), null);
-    return group(new AccountGroup.UUID(group.id));
+  private List<SuggestedReviewerInfo> suggestCcs(String changeId, String query) throws Exception {
+    return gApi.changes().id(changeId).suggestCcs(query).get();
   }
 
-  private TestAccount user(String name, String fullName, String emailName, InternalGroup... groups)
-      throws Exception {
-    String[] groupNames = Arrays.stream(groups).map(InternalGroup::getName).toArray(String[]::new);
-    return accountCreator.create(
-        name(name), name(emailName) + "@example.com", fullName, groupNames);
+  private AccountGroup.UUID createGroupWithArbitraryMembers(int numMembers) {
+    Set<Account.Id> members =
+        IntStream.rangeClosed(1, numMembers)
+            .mapToObj(i -> accountOperations.newAccount().create())
+            .collect(toImmutableSet());
+    return groupOperations.newGroup().members(members).create();
   }
 
-  private TestAccount user(String name, String fullName, InternalGroup... groups) throws Exception {
-    return user(name, fullName, name, groups);
+  private TestAccount user(String name, String fullName, String emailName) throws Exception {
+    return accountCreator.create(name(name), name(emailName) + "@example.com", fullName);
   }
 
-  private void reviewChange(String changeId) throws RestApiException {
-    ReviewInput ri = new ReviewInput();
-    ri.label("Code-Review", 1);
-    gApi.changes().id(changeId).current().review(ri);
+  private TestAccount user(String name, String fullName) throws Exception {
+    return user(name, fullName, name);
+  }
+
+  private void reviewChange(String changeId, TestAccount reviewer) throws RestApiException {
+    gApi.changes().id(changeId).addReviewer(reviewer.id().toString());
   }
 
   private String createChangeFromApi() throws RestApiException {
@@ -525,23 +624,23 @@ public class SuggestReviewersIT extends AbstractDaemonTest {
     return gApi.changes().create(ci).get().changeId;
   }
 
-  private void assertReviewers(
+  private static void assertReviewers(
       List<SuggestedReviewerInfo> actual,
       List<TestAccount> expectedUsers,
-      List<InternalGroup> expectedGroups) {
+      List<AccountGroup.UUID> expectedGroups) {
     List<Integer> actualAccountIds =
         actual.stream()
             .filter(i -> i.account != null)
             .map(i -> i.account._accountId)
             .collect(toList());
     assertThat(actualAccountIds)
-        .containsExactlyElementsIn(expectedUsers.stream().map(u -> u.id.get()).collect(toList()));
+        .containsExactlyElementsIn(expectedUsers.stream().map(u -> u.id().get()).collect(toList()));
 
     List<String> actualGroupIds =
         actual.stream().filter(i -> i.group != null).map(i -> i.group.id).collect(toList());
     assertThat(actualGroupIds)
         .containsExactlyElementsIn(
-            expectedGroups.stream().map(g -> g.getGroupUUID().get()).collect(toList()))
+            expectedGroups.stream().map(AccountGroup.UUID::get).collect(toList()))
         .inOrder();
   }
 }

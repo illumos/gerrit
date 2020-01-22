@@ -14,15 +14,16 @@
 
 package com.google.gerrit.server.restapi.project;
 
-import static com.google.gerrit.reviewdb.client.RefNames.REFS_DASHBOARDS;
+import static com.google.gerrit.entities.RefNames.REFS_DASHBOARDS;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.api.projects.DashboardInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
@@ -63,11 +64,11 @@ public class ListDashboards implements RestReadView<ProjectResource> {
   }
 
   @Override
-  public List<?> apply(ProjectResource rsrc)
+  public Response<List<?>> apply(ProjectResource rsrc)
       throws ResourceNotFoundException, IOException, PermissionBackendException {
     String project = rsrc.getName();
     if (!inherited) {
-      return scan(rsrc.getProjectState(), project, true);
+      return Response.ok(scan(rsrc.getProjectState(), project, true));
     }
 
     List<List<DashboardInfo>> all = new ArrayList<>();
@@ -83,7 +84,7 @@ public class ListDashboards implements RestReadView<ProjectResource> {
         all.add(list);
       }
     }
-    return all;
+    return Response.ok(all);
   }
 
   private Collection<ProjectState> tree(ProjectResource rsrc) throws PermissionBackendException {

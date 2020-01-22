@@ -26,6 +26,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.truth.FailureMetadata;
 import com.google.common.truth.Subject;
 import com.google.common.truth.Truth;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.extensions.api.changes.RecipientType;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
@@ -41,7 +42,7 @@ import com.google.gerrit.mail.EmailHeader.AddressList;
 import com.google.gerrit.server.account.ProjectWatches.NotifyType;
 import com.google.gerrit.testing.FakeEmailSender;
 import com.google.gerrit.testing.FakeEmailSender.Message;
-import java.io.IOException;
+import com.google.inject.Inject;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -54,9 +55,11 @@ import org.junit.After;
 import org.junit.Before;
 
 public abstract class AbstractNotificationTest extends AbstractDaemonTest {
+  @Inject private RequestScopeOperations requestScopeOperations;
+
   @Before
   public void enableReviewerByEmail() throws Exception {
-    setApiUser(admin);
+    requestScopeOperations.setApiUser(admin.id());
     ConfigInput conf = new ConfigInput();
     conf.enableReviewerByEmail = InheritableBoolean.TRUE;
     gApi.projects().name(project.get()).config(conf);
@@ -70,7 +73,11 @@ public abstract class AbstractNotificationTest extends AbstractDaemonTest {
   }
 
   protected static FakeEmailSenderSubject assertThat(FakeEmailSender sender) {
-    return assertAbout(FakeEmailSenderSubject::new).that(sender);
+    return assertAbout(fakeEmailSenders()).that(sender);
+  }
+
+  protected static Subject.Factory<FakeEmailSenderSubject, FakeEmailSender> fakeEmailSenders() {
+    return FakeEmailSenderSubject::new;
   }
 
   protected void setEmailStrategy(TestAccount account, EmailStrategy strategy) throws Exception {
@@ -82,14 +89,14 @@ public abstract class AbstractNotificationTest extends AbstractDaemonTest {
     if (record) {
       accountsModifyingEmailStrategy.add(account);
     }
-    setApiUser(account);
+    requestScopeOperations.setApiUser(account.id());
     GeneralPreferencesInfo prefs = gApi.accounts().self().getPreferences();
     prefs.emailStrategy = strategy;
     gApi.accounts().self().setPreferences(prefs);
   }
 
-  protected static class FakeEmailSenderSubject
-      extends Subject<FakeEmailSenderSubject, FakeEmailSender> {
+  protected static class FakeEmailSenderSubject extends Subject {
+    private final FakeEmailSender fakeEmailSender;
     private Message message;
     private StagedUsers users;
     private Map<RecipientType, List<String>> recipients = new HashMap<>();
@@ -97,17 +104,19 @@ public abstract class AbstractNotificationTest extends AbstractDaemonTest {
 
     FakeEmailSenderSubject(FailureMetadata failureMetadata, FakeEmailSender target) {
       super(failureMetadata, target);
+      fakeEmailSender = target;
     }
 
-    public FakeEmailSenderSubject notSent() {
-      if (actual().peekMessage() != null) {
-        failWithoutActual(fact("expected message", "sent"));
+    public FakeEmailSenderSubject didNotSend() {
+      Message message = fakeEmailSender.peekMessage();
+      if (message != null) {
+        failWithoutActual(fact("expected no message", message));
       }
       return this;
     }
 
     public FakeEmailSenderSubject sent(String messageType, StagedUsers users) {
-      message = actual().nextMessage();
+      message = fakeEmailSender.nextMessage();
       if (message == null) {
         failWithoutActual(fact("expected message", "not sent"));
       }
@@ -127,12 +136,16 @@ public abstract class AbstractNotificationTest extends AbstractDaemonTest {
       }
       EmailHeader header = message.headers().get("X-Gerrit-MessageType");
       if (!header.equals(new EmailHeader.String(messageType))) {
-        failWithoutActual(fact("expected message of type", messageType));
+        failWithoutActual(
+            fact("expected message of type", messageType),
+            fact(
+                "actual",
+                header instanceof EmailHeader.String
+                    ? ((EmailHeader.String) header).getString()
+                    : header));
       }
 
-      // Return a named subject that displays a human-readable table of
-      // recipients.
-      return named(recipientMapToString(recipients, users::emailToName));
+      return this;
     }
 
     private static String recipientMapToString(
@@ -193,8 +206,9 @@ public abstract class AbstractNotificationTest extends AbstractDaemonTest {
       if (recipients.get(type).contains(email) != expected) {
         failWithoutActual(
             fact(
-                expected ? "should notify" : "shouldn't notify",
-                type + ": " + users.emailToName(email)));
+                expected ? "expected to notify" : "expected not to notify",
+                type + ": " + users.emailToName(email)),
+            fact("but notified", recipientMapToString(recipients, users::emailToName)));
       }
       if (expected) {
         accountedFor.add(email);
@@ -203,7 +217,7 @@ public abstract class AbstractNotificationTest extends AbstractDaemonTest {
 
     public FakeEmailSenderSubject noOneElse() {
       for (Map.Entry<NotifyType, TestAccount> watchEntry : users.watchers.entrySet()) {
-        if (!accountedFor.contains(watchEntry.getValue().email)) {
+        if (!accountedFor.contains(watchEntry.getValue().email())) {
           notTo(watchEntry.getKey());
         }
       }
@@ -256,7 +270,7 @@ public abstract class AbstractNotificationTest extends AbstractDaemonTest {
     }
 
     private void rcpt(@Nullable RecipientType type, TestAccount account) {
-      rcpt(type, account.email);
+      rcpt(type, account.email());
     }
 
     public FakeEmailSenderSubject to(NotifyType... watches) {
@@ -324,8 +338,8 @@ public abstract class AbstractNotificationTest extends AbstractDaemonTest {
       return description.getClassName();
     }
 
-    private TestAccount evictAndCopy(TestAccount account) throws IOException {
-      evictAndReindexAccount(account.id);
+    private TestAccount evictAndCopy(TestAccount account) {
+      evictAndReindexAccount(account.id());
       return account;
     }
 
@@ -354,7 +368,7 @@ public abstract class AbstractNotificationTest extends AbstractDaemonTest {
         assignee = testAccount("assignee");
 
         watchingProjectOwner = testAccount("watchingProjectOwner", "Administrators");
-        setApiUser(watchingProjectOwner);
+        requestScopeOperations.setApiUser(watchingProjectOwner.id());
         watch(allProjects.get(), pwi -> pwi.notifyNewChanges = true);
 
         for (NotifyType watch : NotifyType.values()) {
@@ -362,7 +376,7 @@ public abstract class AbstractNotificationTest extends AbstractDaemonTest {
             continue;
           }
           TestAccount watcher = testAccount(watch.toString());
-          setApiUser(watcher);
+          requestScopeOperations.setApiUser(watcher.id());
           watch(
               allProjects.get(),
               pwi -> {
@@ -393,20 +407,20 @@ public abstract class AbstractNotificationTest extends AbstractDaemonTest {
     public TestAccount testAccount(String name) throws Exception {
       String username = name(name);
       TestAccount account = accountCreator.create(username, email(username), name);
-      accountsByEmail.put(account.email, account);
+      accountsByEmail.put(account.email(), account);
       return account;
     }
 
     public TestAccount testAccount(String name, String groupName) throws Exception {
       String username = name(name);
       TestAccount account = accountCreator.create(username, email(username), name, groupName);
-      accountsByEmail.put(account.email, account);
+      accountsByEmail.put(account.email(), account);
       return account;
     }
 
     String emailToName(String email) {
       if (accountsByEmail.containsKey(email)) {
-        return accountsByEmail.get(email).fullName;
+        return accountsByEmail.get(email).fullName();
       }
       return email;
     }
@@ -414,19 +428,19 @@ public abstract class AbstractNotificationTest extends AbstractDaemonTest {
     protected void addReviewers(PushOneCommit.Result r) throws Exception {
       ReviewInput in =
           ReviewInput.noScore()
-              .reviewer(reviewer.email)
+              .reviewer(reviewer.email())
               .reviewer(reviewerByEmail)
-              .reviewer(ccer.email, ReviewerState.CC, false)
+              .reviewer(ccer.email(), ReviewerState.CC, false)
               .reviewer(ccerByEmail, ReviewerState.CC, false);
-      ReviewResult result = gApi.changes().id(r.getChangeId()).revision("current").review(in);
+      ReviewResult result = gApi.changes().id(r.getChangeId()).current().review(in);
       supportReviewersByEmail = true;
       if (result.reviewers.values().stream().anyMatch(v -> v.error != null)) {
         supportReviewersByEmail = false;
         in =
             ReviewInput.noScore()
-                .reviewer(reviewer.email)
-                .reviewer(ccer.email, ReviewerState.CC, false);
-        result = gApi.changes().id(r.getChangeId()).revision("current").review(in);
+                .reviewer(reviewer.email())
+                .reviewer(ccer.email(), ReviewerState.CC, false);
+        result = gApi.changes().id(r.getChangeId()).current().review(in);
       }
       Truth.assertThat(result.reviewers.values().stream().allMatch(v -> v.error == null)).isTrue();
     }
@@ -455,9 +469,9 @@ public abstract class AbstractNotificationTest extends AbstractDaemonTest {
       if (pushOptions != null) {
         ref = ref + '%' + Joiner.on(',').join(pushOptions);
       }
-      setApiUser(owner);
+      requestScopeOperations.setApiUser(owner.id());
       repo = cloneProject(project, owner);
-      PushOneCommit push = pushFactory.create(db, owner.getIdent(), repo);
+      PushOneCommit push = pushFactory.create(owner.newIdent(), repo);
       result = push.to(ref);
       result.assertOkStatus();
       changeId = result.getChangeId();
@@ -477,33 +491,38 @@ public abstract class AbstractNotificationTest extends AbstractDaemonTest {
     StagedChange(String ref) throws Exception {
       super(ref);
 
-      setApiUser(starrer);
+      requestScopeOperations.setApiUser(starrer.id());
       gApi.accounts().self().starChange(result.getChangeId());
 
-      setApiUser(owner);
+      requestScopeOperations.setApiUser(owner.id());
       addReviewers(result);
       sender.clear();
     }
   }
 
   protected StagedChange stageReviewableChange() throws Exception {
-    return new StagedChange("refs/for/master");
+    StagedChange sc = new StagedChange("refs/for/master");
+    sender.clear();
+    return sc;
   }
 
   protected StagedChange stageWipChange() throws Exception {
-    return new StagedChange("refs/for/master%wip");
+    StagedChange sc = new StagedChange("refs/for/master%wip");
+    sender.clear();
+    return sc;
   }
 
   protected StagedChange stageReviewableWipChange() throws Exception {
     StagedChange sc = stageReviewableChange();
-    setApiUser(sc.owner);
+    requestScopeOperations.setApiUser(sc.owner.id());
     gApi.changes().id(sc.changeId).setWorkInProgress();
+    sender.clear();
     return sc;
   }
 
   protected StagedChange stageAbandonedReviewableChange() throws Exception {
     StagedChange sc = stageReviewableChange();
-    setApiUser(sc.owner);
+    requestScopeOperations.setApiUser(sc.owner.id());
     gApi.changes().id(sc.changeId).abandon();
     sender.clear();
     return sc;
@@ -511,7 +530,7 @@ public abstract class AbstractNotificationTest extends AbstractDaemonTest {
 
   protected StagedChange stageAbandonedReviewableWipChange() throws Exception {
     StagedChange sc = stageReviewableWipChange();
-    setApiUser(sc.owner);
+    requestScopeOperations.setApiUser(sc.owner.id());
     gApi.changes().id(sc.changeId).abandon();
     sender.clear();
     return sc;
@@ -519,7 +538,7 @@ public abstract class AbstractNotificationTest extends AbstractDaemonTest {
 
   protected StagedChange stageAbandonedWipChange() throws Exception {
     StagedChange sc = stageWipChange();
-    setApiUser(sc.owner);
+    requestScopeOperations.setApiUser(sc.owner.id());
     gApi.changes().id(sc.changeId).abandon();
     sender.clear();
     return sc;

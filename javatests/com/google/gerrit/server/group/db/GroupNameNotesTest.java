@@ -15,9 +15,11 @@
 package com.google.gerrit.server.group.db;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.Truth.assert_;
+import static com.google.gerrit.common.data.testing.GroupReferenceSubject.groupReferences;
+import static com.google.gerrit.entities.RefNames.REFS_GROUPNAMES;
 import static com.google.gerrit.extensions.common.testing.CommitInfoSubject.assertThat;
-import static com.google.gerrit.reviewdb.client.RefNames.REFS_GROUPNAMES;
+import static com.google.gerrit.extensions.common.testing.CommitInfoSubject.commits;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static com.google.gerrit.truth.OptionalSubject.assertThat;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.eclipse.jgit.lib.Constants.OBJ_BLOB;
@@ -25,24 +27,22 @@ import static org.eclipse.jgit.lib.Constants.OBJ_BLOB;
 import com.google.common.collect.ImmutableList;
 import com.google.gerrit.common.data.GroupReference;
 import com.google.gerrit.common.data.testing.GroupReferenceSubject;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.exceptions.DuplicateKeyException;
 import com.google.gerrit.extensions.common.CommitInfo;
 import com.google.gerrit.extensions.common.testing.CommitInfoSubject;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.gerrit.git.RefUpdateUtil;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.config.AllUsersNameProvider;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
-import com.google.gerrit.server.update.RefUpdateUtil;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.gerrit.testing.GitTestUtil;
 import com.google.gerrit.testing.TestTimeUtil;
 import com.google.gerrit.truth.ListSubject;
 import com.google.gerrit.truth.OptionalSubject;
-import com.google.gwtorm.client.KeyUtil;
-import com.google.gwtorm.server.OrmDuplicateKeyException;
-import com.google.gwtorm.server.StandardKeyEncoder;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
@@ -66,23 +66,15 @@ import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.junit.After;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.ExpectedException;
 
 public class GroupNameNotesTest {
-  static {
-    KeyUtil.setEncoderImpl(new StandardKeyEncoder());
-  }
-
   private static final String SERVER_NAME = "Gerrit Server";
   private static final String SERVER_EMAIL = "noreply@gerritcodereview.com";
   private static final TimeZone TZ = TimeZone.getTimeZone("America/Los_Angeles");
 
-  @Rule public ExpectedException expectedException = ExpectedException.none();
-
-  private final AccountGroup.UUID groupUuid = new AccountGroup.UUID("users-XYZ");
-  private final AccountGroup.NameKey groupName = new AccountGroup.NameKey("users");
+  private final AccountGroup.UUID groupUuid = AccountGroup.uuid("users-XYZ");
+  private final AccountGroup.NameKey groupName = AccountGroup.nameKey("users");
 
   private AtomicInteger idCounter;
   private AllUsersName allUsersName;
@@ -112,19 +104,21 @@ public class GroupNameNotesTest {
 
   @Test
   public void uuidOfNewGroupMustNotBeNull() throws Exception {
-    expectedException.expect(NullPointerException.class);
-    GroupNameNotes.forNewGroup(allUsersName, repo, null, groupName);
+    assertThrows(
+        NullPointerException.class,
+        () -> GroupNameNotes.forNewGroup(allUsersName, repo, null, groupName));
   }
 
   @Test
   public void nameOfNewGroupMustNotBeNull() throws Exception {
-    expectedException.expect(NullPointerException.class);
-    GroupNameNotes.forNewGroup(allUsersName, repo, groupUuid, null);
+    assertThrows(
+        NullPointerException.class,
+        () -> GroupNameNotes.forNewGroup(allUsersName, repo, groupUuid, null));
   }
 
   @Test
   public void nameOfNewGroupMayBeEmpty() throws Exception {
-    AccountGroup.NameKey emptyName = new AccountGroup.NameKey("");
+    AccountGroup.NameKey emptyName = AccountGroup.nameKey("");
     createGroup(groupUuid, emptyName);
 
     Optional<GroupReference> groupReference = loadGroup(emptyName);
@@ -135,17 +129,19 @@ public class GroupNameNotesTest {
   public void newGroupMustNotReuseNameOfAnotherGroup() throws Exception {
     createGroup(groupUuid, groupName);
 
-    AccountGroup.UUID anotherGroupUuid = new AccountGroup.UUID("AnotherGroup");
-    expectedException.expect(OrmDuplicateKeyException.class);
-    expectedException.expectMessage(groupName.get());
-    GroupNameNotes.forNewGroup(allUsersName, repo, anotherGroupUuid, groupName);
+    AccountGroup.UUID anotherGroupUuid = AccountGroup.uuid("AnotherGroup");
+    DuplicateKeyException thrown =
+        assertThrows(
+            DuplicateKeyException.class,
+            () -> GroupNameNotes.forNewGroup(allUsersName, repo, anotherGroupUuid, groupName));
+    assertThat(thrown).hasMessageThat().contains(groupName.get());
   }
 
   @Test
   public void newGroupMayReuseUuidOfAnotherGroup() throws Exception {
     createGroup(groupUuid, groupName);
 
-    AccountGroup.NameKey anotherName = new AccountGroup.NameKey("admins");
+    AccountGroup.NameKey anotherName = AccountGroup.nameKey("admins");
     createGroup(groupUuid, anotherName);
 
     Optional<GroupReference> group1 = loadGroup(groupName);
@@ -158,7 +154,7 @@ public class GroupNameNotesTest {
   public void groupCanBeRenamed() throws Exception {
     createGroup(groupUuid, groupName);
 
-    AccountGroup.NameKey anotherName = new AccountGroup.NameKey("admins");
+    AccountGroup.NameKey anotherName = AccountGroup.nameKey("admins");
     renameGroup(groupUuid, groupName, anotherName);
 
     Optional<GroupReference> groupReference = loadGroup(anotherName);
@@ -170,7 +166,7 @@ public class GroupNameNotesTest {
   public void previousNameOfGroupCannotBeUsedAfterRename() throws Exception {
     createGroup(groupUuid, groupName);
 
-    AccountGroup.NameKey anotherName = new AccountGroup.NameKey("admins");
+    AccountGroup.NameKey anotherName = AccountGroup.nameKey("admins");
     renameGroup(groupUuid, groupName, anotherName);
 
     Optional<GroupReference> group = loadGroup(groupName);
@@ -180,61 +176,75 @@ public class GroupNameNotesTest {
   @Test
   public void groupCannotBeRenamedToNull() throws Exception {
     createGroup(groupUuid, groupName);
-
-    expectedException.expect(NullPointerException.class);
-    GroupNameNotes.forRename(allUsersName, repo, groupUuid, groupName, null);
+    assertThrows(
+        NullPointerException.class,
+        () -> GroupNameNotes.forRename(allUsersName, repo, groupUuid, groupName, null));
   }
 
   @Test
   public void oldNameOfGroupMustBeSpecifiedForRename() throws Exception {
     createGroup(groupUuid, groupName);
 
-    AccountGroup.NameKey anotherName = new AccountGroup.NameKey("admins");
-    expectedException.expect(NullPointerException.class);
-    GroupNameNotes.forRename(allUsersName, repo, groupUuid, null, anotherName);
+    AccountGroup.NameKey anotherName = AccountGroup.nameKey("admins");
+    assertThrows(
+        NullPointerException.class,
+        () -> GroupNameNotes.forRename(allUsersName, repo, groupUuid, null, anotherName));
   }
 
   @Test
   public void groupCannotBeRenamedWhenOldNameIsWrong() throws Exception {
     createGroup(groupUuid, groupName);
 
-    AccountGroup.NameKey anotherOldName = new AccountGroup.NameKey("contributors");
-    AccountGroup.NameKey anotherName = new AccountGroup.NameKey("admins");
-    expectedException.expect(ConfigInvalidException.class);
-    expectedException.expectMessage(anotherOldName.get());
-    GroupNameNotes.forRename(allUsersName, repo, groupUuid, anotherOldName, anotherName);
+    AccountGroup.NameKey anotherOldName = AccountGroup.nameKey("contributors");
+    AccountGroup.NameKey anotherName = AccountGroup.nameKey("admins");
+    ConfigInvalidException thrown =
+        assertThrows(
+            ConfigInvalidException.class,
+            () ->
+                GroupNameNotes.forRename(
+                    allUsersName, repo, groupUuid, anotherOldName, anotherName));
+    assertThat(thrown).hasMessageThat().contains(anotherOldName.get());
   }
 
   @Test
   public void groupCannotBeRenamedToNameOfAnotherGroup() throws Exception {
     createGroup(groupUuid, groupName);
-    AccountGroup.UUID anotherGroupUuid = new AccountGroup.UUID("admins-ABC");
-    AccountGroup.NameKey anotherGroupName = new AccountGroup.NameKey("admins");
+    AccountGroup.UUID anotherGroupUuid = AccountGroup.uuid("admins-ABC");
+    AccountGroup.NameKey anotherGroupName = AccountGroup.nameKey("admins");
     createGroup(anotherGroupUuid, anotherGroupName);
 
-    expectedException.expect(OrmDuplicateKeyException.class);
-    expectedException.expectMessage(anotherGroupName.get());
-    GroupNameNotes.forRename(allUsersName, repo, groupUuid, groupName, anotherGroupName);
+    DuplicateKeyException thrown =
+        assertThrows(
+            DuplicateKeyException.class,
+            () ->
+                GroupNameNotes.forRename(
+                    allUsersName, repo, groupUuid, groupName, anotherGroupName));
+    assertThat(thrown).hasMessageThat().contains(anotherGroupName.get());
   }
 
   @Test
   public void groupCannotBeRenamedWithoutSpecifiedUuid() throws Exception {
     createGroup(groupUuid, groupName);
 
-    AccountGroup.NameKey anotherName = new AccountGroup.NameKey("admins");
-    expectedException.expect(NullPointerException.class);
-    GroupNameNotes.forRename(allUsersName, repo, null, groupName, anotherName);
+    AccountGroup.NameKey anotherName = AccountGroup.nameKey("admins");
+    assertThrows(
+        NullPointerException.class,
+        () -> GroupNameNotes.forRename(allUsersName, repo, null, groupName, anotherName));
   }
 
   @Test
   public void groupCannotBeRenamedWhenUuidIsWrong() throws Exception {
     createGroup(groupUuid, groupName);
 
-    AccountGroup.UUID anotherGroupUuid = new AccountGroup.UUID("admins-ABC");
-    AccountGroup.NameKey anotherName = new AccountGroup.NameKey("admins");
-    expectedException.expect(ConfigInvalidException.class);
-    expectedException.expectMessage(groupUuid.get());
-    GroupNameNotes.forRename(allUsersName, repo, anotherGroupUuid, groupName, anotherName);
+    AccountGroup.UUID anotherGroupUuid = AccountGroup.uuid("admins-ABC");
+    AccountGroup.NameKey anotherName = AccountGroup.nameKey("admins");
+    ConfigInvalidException thrown =
+        assertThrows(
+            ConfigInvalidException.class,
+            () ->
+                GroupNameNotes.forRename(
+                    allUsersName, repo, anotherGroupUuid, groupName, anotherName));
+    assertThat(thrown).hasMessageThat().contains(groupUuid.get());
   }
 
   @Test
@@ -255,12 +265,12 @@ public class GroupNameNotesTest {
     createGroup(groupUuid, groupName);
     ImmutableList<CommitInfo> commitsAfterCreation = log();
 
-    AccountGroup.UUID anotherGroupUuid = new AccountGroup.UUID("admins-ABC");
-    AccountGroup.NameKey anotherName = new AccountGroup.NameKey("admins");
+    AccountGroup.UUID anotherGroupUuid = AccountGroup.uuid("admins-ABC");
+    AccountGroup.NameKey anotherName = AccountGroup.nameKey("admins");
     createGroup(anotherGroupUuid, anotherName);
 
     ImmutableList<CommitInfo> commitsAfterFurtherGroup = log();
-    assertThatCommits(commitsAfterFurtherGroup).containsAllIn(commitsAfterCreation);
+    assertThatCommits(commitsAfterFurtherGroup).containsAtLeastElementsIn(commitsAfterCreation);
     assertThatCommits(commitsAfterFurtherGroup).lastElement().isNotIn(commitsAfterCreation);
   }
 
@@ -269,11 +279,11 @@ public class GroupNameNotesTest {
     createGroup(groupUuid, groupName);
     ImmutableList<CommitInfo> commitsAfterCreation = log();
 
-    AccountGroup.NameKey anotherName = new AccountGroup.NameKey("admins");
+    AccountGroup.NameKey anotherName = AccountGroup.nameKey("admins");
     renameGroup(groupUuid, groupName, anotherName);
 
     ImmutableList<CommitInfo> commitsAfterRename = log();
-    assertThatCommits(commitsAfterRename).containsAllIn(commitsAfterCreation);
+    assertThatCommits(commitsAfterRename).containsAtLeastElementsIn(commitsAfterCreation);
     assertThatCommits(commitsAfterRename).lastElement().isNotIn(commitsAfterCreation);
   }
 
@@ -305,7 +315,7 @@ public class GroupNameNotesTest {
   public void newCommitIsNotCreatedWhenCommittingGroupRenamingTwice() throws Exception {
     createGroup(groupUuid, groupName);
 
-    AccountGroup.NameKey anotherName = new AccountGroup.NameKey("admins");
+    AccountGroup.NameKey anotherName = AccountGroup.nameKey("admins");
     GroupNameNotes groupNameNotes =
         GroupNameNotes.forRename(allUsersName, repo, groupUuid, groupName, anotherName);
 
@@ -330,7 +340,7 @@ public class GroupNameNotesTest {
   public void commitMessageMentionsGroupRenaming() throws Exception {
     createGroup(groupUuid, groupName);
 
-    AccountGroup.NameKey anotherName = new AccountGroup.NameKey("admins");
+    AccountGroup.NameKey anotherName = AccountGroup.nameKey("admins");
     renameGroup(groupUuid, groupName, anotherName);
 
     ImmutableList<CommitInfo> commits = log();
@@ -348,18 +358,18 @@ public class GroupNameNotesTest {
 
   @Test
   public void nonExistentGroupCannotBeLoaded() throws Exception {
-    createGroup(new AccountGroup.UUID("contributors-MN"), new AccountGroup.NameKey("contributors"));
+    createGroup(AccountGroup.uuid("contributors-MN"), AccountGroup.nameKey("contributors"));
     createGroup(groupUuid, groupName);
 
-    Optional<GroupReference> group = loadGroup(new AccountGroup.NameKey("admins"));
+    Optional<GroupReference> group = loadGroup(AccountGroup.nameKey("admins"));
     assertThatGroup(group).isAbsent();
   }
 
   @Test
   public void specificGroupCanBeLoaded() throws Exception {
-    createGroup(new AccountGroup.UUID("contributors-MN"), new AccountGroup.NameKey("contributors"));
+    createGroup(AccountGroup.uuid("contributors-MN"), AccountGroup.nameKey("contributors"));
     createGroup(groupUuid, groupName);
-    createGroup(new AccountGroup.UUID("admins-ABC"), new AccountGroup.NameKey("admins"));
+    createGroup(AccountGroup.uuid("admins-ABC"), AccountGroup.nameKey("admins"));
 
     Optional<GroupReference> group = loadGroup(groupName);
     assertThatGroup(group).value().groupUuid().isEqualTo(groupUuid);
@@ -374,11 +384,11 @@ public class GroupNameNotesTest {
 
   @Test
   public void allGroupsCanBeLoaded() throws Exception {
-    AccountGroup.UUID groupUuid1 = new AccountGroup.UUID("contributors-MN");
-    AccountGroup.NameKey groupName1 = new AccountGroup.NameKey("contributors");
+    AccountGroup.UUID groupUuid1 = AccountGroup.uuid("contributors-MN");
+    AccountGroup.NameKey groupName1 = AccountGroup.nameKey("contributors");
     createGroup(groupUuid1, groupName1);
-    AccountGroup.UUID groupUuid2 = new AccountGroup.UUID("admins-ABC");
-    AccountGroup.NameKey groupName2 = new AccountGroup.NameKey("admins");
+    AccountGroup.UUID groupUuid2 = AccountGroup.uuid("admins-ABC");
+    AccountGroup.NameKey groupName2 = AccountGroup.nameKey("admins");
     createGroup(groupUuid2, groupName2);
 
     ImmutableList<GroupReference> allGroups = GroupNameNotes.loadAllGroups(repo);
@@ -391,7 +401,7 @@ public class GroupNameNotesTest {
   @Test
   public void loadedGroupsContainGroupsWithDuplicateGroupUuids() throws Exception {
     createGroup(groupUuid, groupName);
-    AccountGroup.NameKey anotherGroupName = new AccountGroup.NameKey("admins");
+    AccountGroup.NameKey anotherGroupName = AccountGroup.nameKey("admins");
     createGroup(groupUuid, anotherGroupName);
 
     ImmutableList<GroupReference> allGroups = GroupNameNotes.loadAllGroups(repo);
@@ -431,35 +441,36 @@ public class GroupNameNotesTest {
     GroupReference g1 = newGroup("a");
     GroupReference g2 = newGroup("b");
 
-    TestRepository<?> tr = new TestRepository<>(repo);
-    ObjectId k1 = getNoteKey(g1);
-    ObjectId k2 = getNoteKey(g2);
-    ObjectId k3 = GroupNameNotes.getNoteKey(new AccountGroup.NameKey("c"));
-    PersonIdent ident = newPersonIdent();
-    ObjectId origCommitId =
-        tr.branch(REFS_GROUPNAMES)
-            .commit()
-            .message("Prepopulate group name")
-            .author(ident)
-            .committer(ident)
-            .add(k1.name(), "[group]\n\tuuid = a-1\n\tname = a\nanotherKey = foo\n")
-            .add(k2.name(), "[group]\n\tuuid = a-1\n\tname = b\n")
-            .add(k3.name(), "[group]\n\tuuid = c-3\n\tname = c\n")
-            .create()
-            .copy();
+    try (TestRepository<Repository> tr = new TestRepository<>(repo)) {
+      ObjectId k1 = getNoteKey(g1);
+      ObjectId k2 = getNoteKey(g2);
+      ObjectId k3 = GroupNameNotes.getNoteKey(AccountGroup.nameKey("c"));
+      PersonIdent ident = newPersonIdent();
+      ObjectId origCommitId =
+          tr.branch(REFS_GROUPNAMES)
+              .commit()
+              .message("Prepopulate group name")
+              .author(ident)
+              .committer(ident)
+              .add(k1.name(), "[group]\n\tuuid = a-1\n\tname = a\nanotherKey = foo\n")
+              .add(k2.name(), "[group]\n\tuuid = a-1\n\tname = b\n")
+              .add(k3.name(), "[group]\n\tuuid = c-3\n\tname = c\n")
+              .create()
+              .copy();
 
-    ident = newPersonIdent();
-    updateAllGroups(ident, g1, g2);
+      ident = newPersonIdent();
+      updateAllGroups(ident, g1, g2);
 
-    assertThat(GroupNameNotes.loadAllGroups(repo)).containsExactly(g1, g2);
+      assertThat(GroupNameNotes.loadAllGroups(repo)).containsExactly(g1, g2);
 
-    ImmutableList<CommitInfo> log = log();
-    assertThat(log).hasSize(2);
-    assertThat(log.get(0)).commit().isEqualTo(origCommitId.name());
+      ImmutableList<CommitInfo> log = log();
+      assertThat(log).hasSize(2);
+      assertThat(log.get(0)).commit().isEqualTo(origCommitId.name());
 
-    assertThat(log.get(1)).message().isEqualTo("Store 2 group names");
-    assertThat(log.get(1)).author().matches(ident);
-    assertThat(log.get(1)).committer().matches(ident);
+      assertThat(log.get(1)).message().isEqualTo("Store 2 group names");
+      assertThat(log.get(1)).author().matches(ident);
+      assertThat(log.get(1)).committer().matches(ident);
+    }
 
     // Old note content was overwritten.
     assertThat(readNameNote(g1)).isEqualTo("[group]\n\tuuid = a-1\n\tname = a\n");
@@ -487,14 +498,14 @@ public class GroupNameNotesTest {
   @Test
   public void updateGroupNamesRejectsNonOneToOneGroupReferences() throws Exception {
     assertIllegalArgument(
-        new GroupReference(new AccountGroup.UUID("uuid1"), "name1"),
-        new GroupReference(new AccountGroup.UUID("uuid1"), "name2"));
+        new GroupReference(AccountGroup.uuid("uuid1"), "name1"),
+        new GroupReference(AccountGroup.uuid("uuid1"), "name2"));
     assertIllegalArgument(
-        new GroupReference(new AccountGroup.UUID("uuid1"), "name1"),
-        new GroupReference(new AccountGroup.UUID("uuid2"), "name1"));
+        new GroupReference(AccountGroup.uuid("uuid1"), "name1"),
+        new GroupReference(AccountGroup.uuid("uuid2"), "name1"));
     assertIllegalArgument(
-        new GroupReference(new AccountGroup.UUID("uuid1"), "name1"),
-        new GroupReference(new AccountGroup.UUID("uuid1"), "name1"));
+        new GroupReference(AccountGroup.uuid("uuid1"), "name1"),
+        new GroupReference(AccountGroup.uuid("uuid1"), "name1"));
   }
 
   @Test
@@ -535,8 +546,7 @@ public class GroupNameNotesTest {
     PersonIdent serverIdent = newPersonIdent();
 
     MetaDataUpdate metaDataUpdate =
-        new MetaDataUpdate(
-            GitReferenceUpdated.DISABLED, new Project.NameKey("Test Repository"), repo);
+        new MetaDataUpdate(GitReferenceUpdated.DISABLED, Project.nameKey("Test Repository"), repo);
     metaDataUpdate.getCommitBuilder().setCommitter(serverIdent);
     metaDataUpdate.getCommitBuilder().setAuthor(serverIdent);
     return metaDataUpdate;
@@ -544,7 +554,7 @@ public class GroupNameNotesTest {
 
   private GroupReference newGroup(String name) {
     int id = idCounter.incrementAndGet();
-    return new GroupReference(new AccountGroup.UUID(name + "-" + id), name);
+    return new GroupReference(AccountGroup.uuid(name + "-" + id), name);
   }
 
   private static PersonIdent newPersonIdent() {
@@ -552,7 +562,7 @@ public class GroupNameNotesTest {
   }
 
   private static ObjectId getNoteKey(GroupReference g) {
-    return GroupNameNotes.getNoteKey(new AccountGroup.NameKey(g.getName()));
+    return GroupNameNotes.getNoteKey(AccountGroup.nameKey(g.getName()));
   }
 
   private void updateAllGroups(PersonIdent ident, GroupReference... groupRefs) throws Exception {
@@ -568,12 +578,13 @@ public class GroupNameNotesTest {
     try (ObjectInserter inserter = repo.newObjectInserter()) {
       BatchRefUpdate bru = repo.getRefDatabase().newBatchUpdate();
       PersonIdent ident = newPersonIdent();
-      try {
-        GroupNameNotes.updateAllGroups(repo, inserter, bru, Arrays.asList(groupRefs), ident);
-        assert_().fail("Expected IllegalArgumentException");
-      } catch (IllegalArgumentException e) {
-        assertThat(e).hasMessageThat().isEqualTo(GroupNameNotes.UNIQUE_REF_ERROR);
-      }
+      IllegalArgumentException thrown =
+          assertThrows(
+              IllegalArgumentException.class,
+              () ->
+                  GroupNameNotes.updateAllGroups(
+                      repo, inserter, bru, Arrays.asList(groupRefs), ident));
+      assertThat(thrown).hasMessageThat().isEqualTo(GroupNameNotes.UNIQUE_REF_ERROR);
     }
   }
 
@@ -593,11 +604,11 @@ public class GroupNameNotesTest {
 
   private static OptionalSubject<GroupReferenceSubject, GroupReference> assertThatGroup(
       Optional<GroupReference> group) {
-    return assertThat(group, GroupReferenceSubject::assertThat);
+    return assertThat(group, groupReferences());
   }
 
   private static ListSubject<CommitInfoSubject, CommitInfo> assertThatCommits(
       List<CommitInfo> commits) {
-    return ListSubject.assertThat(commits, CommitInfoSubject::assertThat);
+    return ListSubject.assertThat(commits, commits());
   }
 }

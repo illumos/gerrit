@@ -18,28 +18,33 @@ import static com.google.gerrit.gpg.PublicKeyStore.keyIdToString;
 import static com.google.gerrit.gpg.PublicKeyStore.keyToString;
 import static com.google.gerrit.server.account.externalids.ExternalId.SCHEME_GPGKEY;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.stream.Collectors.joining;
 import static java.util.stream.Collectors.toList;
 
 import com.google.common.base.Joiner;
+import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.flogger.FluentLogger;
 import com.google.common.io.BaseEncoding;
-import com.google.gerrit.common.errors.EmailException;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.exceptions.EmailException;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.accounts.GpgKeysInput;
 import com.google.gerrit.extensions.common.GpgKeyInfo;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
+import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.gpg.CheckResult;
 import com.google.gerrit.gpg.Fingerprint;
 import com.google.gerrit.gpg.GerritPublicKeyChecker;
 import com.google.gerrit.gpg.PublicKeyChecker;
 import com.google.gerrit.gpg.PublicKeyStore;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.IdentifiedUser;
@@ -52,7 +57,7 @@ import com.google.gerrit.server.account.externalids.ExternalIds;
 import com.google.gerrit.server.mail.send.AddKeySender;
 import com.google.gerrit.server.mail.send.DeleteKeySender;
 import com.google.gerrit.server.query.account.InternalAccountQuery;
-import com.google.gwtorm.server.OrmException;
+import com.google.gerrit.server.update.RetryHelper;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -87,6 +92,7 @@ public class PostGpgKeys implements RestModifyView<AccountResource, GpgKeysInput
   private final Provider<InternalAccountQuery> accountQueryProvider;
   private final ExternalIds externalIds;
   private final Provider<AccountsUpdate> accountsUpdateProvider;
+  private final RetryHelper retryHelper;
 
   @Inject
   PostGpgKeys(
@@ -98,7 +104,8 @@ public class PostGpgKeys implements RestModifyView<AccountResource, GpgKeysInput
       DeleteKeySender.Factory deleteKeySenderFactory,
       Provider<InternalAccountQuery> accountQueryProvider,
       ExternalIds externalIds,
-      @UserInitiated Provider<AccountsUpdate> accountsUpdateProvider) {
+      @UserInitiated Provider<AccountsUpdate> accountsUpdateProvider,
+      RetryHelper retryHelper) {
     this.serverIdent = serverIdent;
     this.self = self;
     this.storeProvider = storeProvider;
@@ -108,12 +115,12 @@ public class PostGpgKeys implements RestModifyView<AccountResource, GpgKeysInput
     this.accountQueryProvider = accountQueryProvider;
     this.externalIds = externalIds;
     this.accountsUpdateProvider = accountsUpdateProvider;
+    this.retryHelper = retryHelper;
   }
 
   @Override
-  public Map<String, GpgKeyInfo> apply(AccountResource rsrc, GpgKeysInput input)
-      throws ResourceNotFoundException, BadRequestException, ResourceConflictException,
-          PGPException, OrmException, IOException, ConfigInvalidException {
+  public Response<Map<String, GpgKeyInfo>> apply(AccountResource rsrc, GpgKeysInput input)
+      throws RestApiException, PGPException, IOException, ConfigInvalidException {
     GpgKeys.checkVisible(self, rsrc);
 
     Collection<ExternalId> existingExtIds =
@@ -129,7 +136,7 @@ public class PostGpgKeys implements RestModifyView<AccountResource, GpgKeysInput
         ExternalId.Key extIdKey = toExtIdKey(key.getFingerprint());
         Account account = getAccountByExternalId(extIdKey);
         if (account != null) {
-          if (!account.getId().equals(rsrc.getUser().getAccountId())) {
+          if (!account.id().equals(rsrc.getUser().getAccountId())) {
             throw new ResourceConflictException("GPG key already associated with another account");
           }
         } else {
@@ -145,7 +152,7 @@ public class PostGpgKeys implements RestModifyView<AccountResource, GpgKeysInput
               "Update GPG Keys via API",
               rsrc.getUser().getAccountId(),
               u -> u.replaceExternalIds(toRemove.keySet(), newExtIds));
-      return toJson(newKeys, fingerprintsToRemove, store, rsrc.getUser());
+      return Response.ok(toJson(newKeys, fingerprintsToRemove, store, rsrc.getUser()));
     }
   }
 
@@ -196,7 +203,23 @@ public class PostGpgKeys implements RestModifyView<AccountResource, GpgKeysInput
 
   private void storeKeys(
       AccountResource rsrc, List<PGPPublicKeyRing> keyRings, Collection<Fingerprint> toRemove)
-      throws BadRequestException, ResourceConflictException, PGPException, IOException {
+      throws RestApiException, PGPException, IOException {
+    try {
+      retryHelper
+          .accountUpdate("storeGpgKeys", () -> tryStoreKeys(rsrc, keyRings, toRemove))
+          .call();
+    } catch (Exception e) {
+      Throwables.throwIfUnchecked(e);
+      Throwables.throwIfInstanceOf(e, RestApiException.class);
+      Throwables.throwIfInstanceOf(e, IOException.class);
+      Throwables.throwIfInstanceOf(e, PGPException.class);
+      throw new StorageException(e);
+    }
+  }
+
+  private Void tryStoreKeys(
+      AccountResource rsrc, List<PGPPublicKeyRing> keyRings, Collection<Fingerprint> toRemove)
+      throws RestApiException, PGPException, IOException {
     try (PublicKeyStore store = storeProvider.get()) {
       List<String> addedKeys = new ArrayList<>();
       IdentifiedUser user = rsrc.getUser();
@@ -232,7 +255,7 @@ public class PostGpgKeys implements RestModifyView<AccountResource, GpgKeysInput
             } catch (EmailException e) {
               logger.atSevere().withCause(e).log(
                   "Cannot send GPG key added message to %s",
-                  rsrc.getUser().getAccount().getPreferredEmail());
+                  rsrc.getUser().getAccount().preferredEmail());
             }
           }
           if (!toRemove.isEmpty()) {
@@ -242,15 +265,14 @@ public class PostGpgKeys implements RestModifyView<AccountResource, GpgKeysInput
                   .send();
             } catch (EmailException e) {
               logger.atSevere().withCause(e).log(
-                  "Cannot send GPG key deleted message to %s",
-                  user.getAccount().getPreferredEmail());
+                  "Cannot send GPG key deleted message to %s", user.getAccount().preferredEmail());
             }
           }
           break;
         case NO_CHANGE:
           break;
-        case IO_FAILURE:
         case LOCK_FAILURE:
+        case IO_FAILURE:
         case NOT_ATTEMPTED:
         case REJECTED:
         case REJECTED_CURRENT_BRANCH:
@@ -258,17 +280,17 @@ public class PostGpgKeys implements RestModifyView<AccountResource, GpgKeysInput
         case REJECTED_MISSING_OBJECT:
         case REJECTED_OTHER_REASON:
         default:
-          // TODO(dborowitz): Backoff and retry on LOCK_FAILURE.
-          throw new ResourceConflictException("Failed to save public keys: " + saveResult);
+          throw new StorageException(String.format("Failed to save public keys: %s", saveResult));
       }
     }
+    return null;
   }
 
   private ExternalId.Key toExtIdKey(byte[] fp) {
     return ExternalId.Key.create(SCHEME_GPGKEY, BaseEncoding.base16().encode(fp));
   }
 
-  private Account getAccountByExternalId(ExternalId.Key extIdKey) throws OrmException {
+  private Account getAccountByExternalId(ExternalId.Key extIdKey) {
     List<AccountState> accountStates = accountQueryProvider.get().byExternalId(extIdKey);
 
     if (accountStates.isEmpty()) {
@@ -276,15 +298,15 @@ public class PostGpgKeys implements RestModifyView<AccountResource, GpgKeysInput
     }
 
     if (accountStates.size() > 1) {
-      StringBuilder msg = new StringBuilder();
-      msg.append("GPG key ")
-          .append(extIdKey.get())
-          .append(" associated with multiple accounts: ")
-          .append(Lists.transform(accountStates, AccountState.ACCOUNT_ID_FUNCTION));
-      throw new IllegalStateException(msg.toString());
+      String msg = "GPG key " + extIdKey.get() + " associated with multiple accounts: [";
+      msg =
+          accountStates.stream()
+              .map(a -> a.account().id().toString())
+              .collect(joining(", ", msg, "]"));
+      throw new IllegalStateException(msg);
     }
 
-    return accountStates.get(0).getAccount();
+    return accountStates.get(0).account();
   }
 
   private Map<String, GpgKeyInfo> toJson(

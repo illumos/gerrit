@@ -17,39 +17,49 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-download-dialog',
-
+  /**
+   * @appliesMixin Gerrit.FireMixin
+   * @appliesMixin Gerrit.PatchSetMixin
+   * @appliesMixin Gerrit.RESTClientMixin
+   * @extends Polymer.Element
+   */
+  class GrDownloadDialog extends Polymer.mixinBehaviors( [
+    Gerrit.FireBehavior,
+    Gerrit.PatchSetBehavior,
+    Gerrit.RESTClientBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-download-dialog'; }
     /**
      * Fired when the user presses the close button.
      *
      * @event close
      */
 
-    properties: {
+    static get properties() {
+      return {
       /** @type {{ revisions: Array }} */
-      change: Object,
-      patchNum: String,
-      /** @type {?} */
-      config: Object,
+        change: Object,
+        patchNum: String,
+        /** @type {?} */
+        config: Object,
 
-      _schemes: {
-        type: Array,
-        value() { return []; },
-        computed: '_computeSchemes(change, patchNum)',
-        observer: '_schemesChanged',
-      },
-      _selectedScheme: String,
-    },
+        _schemes: {
+          type: Array,
+          value() { return []; },
+          computed: '_computeSchemes(change, patchNum)',
+          observer: '_schemesChanged',
+        },
+        _selectedScheme: String,
+      };
+    }
 
-    hostAttributes: {
-      role: 'dialog',
-    },
-
-    behaviors: [
-      Gerrit.PatchSetBehavior,
-      Gerrit.RESTClientBehavior,
-    ],
+    /** @override */
+    ready() {
+      super.ready();
+      this._ensureAttribute('role', 'dialog');
+    }
 
     focus() {
       if (this._schemes.length) {
@@ -57,35 +67,37 @@
       } else {
         this.$.download.focus();
       }
-    },
+    }
 
     getFocusStops() {
-      const links = this.$$('#archives').querySelectorAll('a');
+      const links = this.shadowRoot
+          .querySelector('#archives').querySelectorAll('a');
       return {
         start: this.$.closeButton,
         end: links[links.length - 1],
       };
-    },
+    }
 
     _computeDownloadCommands(change, patchNum, _selectedScheme) {
       let commandObj;
+      if (!change) return [];
       for (const rev of Object.values(change.revisions || {})) {
         if (this.patchNumEquals(rev._number, patchNum) &&
-            rev.fetch.hasOwnProperty(_selectedScheme)) {
+            rev && rev.fetch && rev.fetch.hasOwnProperty(_selectedScheme)) {
           commandObj = rev.fetch[_selectedScheme].commands;
           break;
         }
       }
       const commands = [];
       for (const title in commandObj) {
-        if (!commandObj.hasOwnProperty(title)) { continue; }
+        if (!commandObj || !commandObj.hasOwnProperty(title)) { continue; }
         commands.push({
           title,
           command: commandObj[title],
         });
       }
       return commands;
-    },
+    }
 
     /**
      * @param {!Object} change
@@ -95,7 +107,7 @@
      */
     _computeZipDownloadLink(change, patchNum) {
       return this._computeDownloadLink(change, patchNum, true);
-    },
+    }
 
     /**
      * @param {!Object} change
@@ -105,7 +117,7 @@
      */
     _computeZipDownloadFilename(change, patchNum) {
       return this._computeDownloadFilename(change, patchNum, true);
-    },
+    }
 
     /**
      * @param {!Object} change
@@ -115,10 +127,13 @@
      * @return {string} Not sure why there was a mismatch
      */
     _computeDownloadLink(change, patchNum, opt_zip) {
+      // Polymer 2: check for undefined
+      if ([change, patchNum].some(arg => arg === undefined)) {
+        return '';
+      }
       return this.changeBaseURL(change.project, change._number, patchNum) +
           '/patch?' + (opt_zip ? 'zip' : 'download');
-    },
-
+    }
 
     /**
      * @param {!Object} change
@@ -128,6 +143,11 @@
      * @return {string}
      */
     _computeDownloadFilename(change, patchNum, opt_zip) {
+      // Polymer 2: check for undefined
+      if ([change, patchNum].some(arg => arg === undefined)) {
+        return '';
+      }
+
       let shortRev = '';
       for (const rev in change.revisions) {
         if (this.patchNumEquals(change.revisions[rev]._number, patchNum)) {
@@ -136,9 +156,13 @@
         }
       }
       return shortRev + '.diff.' + (opt_zip ? 'zip' : 'base64');
-    },
+    }
 
     _computeHidePatchFile(change, patchNum) {
+      // Polymer 2: check for undefined
+      if ([change, patchNum].some(arg => arg === undefined)) {
+        return false;
+      }
       for (const rev of Object.values(change.revisions || {})) {
         if (this.patchNumEquals(rev._number, patchNum)) {
           const parentLength = rev.commit && rev.commit.parents ?
@@ -147,14 +171,23 @@
         }
       }
       return false;
-    },
+    }
 
     _computeArchiveDownloadLink(change, patchNum, format) {
+      // Polymer 2: check for undefined
+      if ([change, patchNum, format].some(arg => arg === undefined)) {
+        return '';
+      }
       return this.changeBaseURL(change.project, change._number, patchNum) +
           '/archive?format=' + format;
-    },
+    }
 
     _computeSchemes(change, patchNum) {
+      // Polymer 2: check for undefined
+      if ([change, patchNum].some(arg => arg === undefined)) {
+        return [];
+      }
+
       for (const rev of Object.values(change.revisions || {})) {
         if (this.patchNumEquals(rev._number, patchNum)) {
           const fetch = rev.fetch;
@@ -165,27 +198,30 @@
         }
       }
       return [];
-    },
+    }
 
     _computePatchSetQuantity(revisions) {
       if (!revisions) { return 0; }
       return Object.keys(revisions).length;
-    },
+    }
 
     _handleCloseTap(e) {
       e.preventDefault();
+      e.stopPropagation();
       this.fire('close', null, {bubbles: false});
-    },
+    }
 
     _schemesChanged(schemes) {
       if (schemes.length === 0) { return; }
       if (!schemes.includes(this._selectedScheme)) {
         this._selectedScheme = schemes.sort()[0];
       }
-    },
+    }
 
     _computeShowDownloadCommands(schemes) {
       return schemes.length ? '' : 'hidden';
-    },
-  });
+    }
+  }
+
+  customElements.define(GrDownloadDialog.is, GrDownloadDialog);
 })();

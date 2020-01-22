@@ -14,7 +14,7 @@
 
 package com.google.gerrit.common.data;
 
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Project;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -25,6 +25,8 @@ public class ContributorAgreement implements Comparable<ContributorAgreement> {
   protected List<PermissionRule> accepted;
   protected GroupReference autoVerify;
   protected String agreementUrl;
+  protected List<String> excludeProjectsRegexes;
+  protected List<String> matchProjectsRegexes;
 
   protected ContributorAgreement() {}
 
@@ -73,6 +75,28 @@ public class ContributorAgreement implements Comparable<ContributorAgreement> {
 
   public void setAgreementUrl(String agreementUrl) {
     this.agreementUrl = agreementUrl;
+  }
+
+  public List<String> getExcludeProjectsRegexes() {
+    if (excludeProjectsRegexes == null) {
+      excludeProjectsRegexes = new ArrayList<>();
+    }
+    return excludeProjectsRegexes;
+  }
+
+  public void setExcludeProjectsRegexes(List<String> excludeProjectsRegexes) {
+    this.excludeProjectsRegexes = excludeProjectsRegexes;
+  }
+
+  public List<String> getMatchProjectsRegexes() {
+    if (matchProjectsRegexes == null) {
+      matchProjectsRegexes = new ArrayList<>();
+    }
+    return matchProjectsRegexes;
+  }
+
+  public void setMatchProjectsRegexes(List<String> matchProjectsRegexes) {
+    this.matchProjectsRegexes = matchProjectsRegexes;
   }
 
   @Override

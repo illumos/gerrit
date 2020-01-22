@@ -19,17 +19,17 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.google.gerrit.common.data.GroupDescription;
-import com.google.gerrit.common.errors.NoSuchGroupException;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.exceptions.NoSuchGroupException;
 import com.google.gerrit.extensions.common.GroupInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.DefaultInput;
 import com.google.gerrit.extensions.restapi.IdString;
-import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestCollectionCreateView;
 import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
-import com.google.gerrit.reviewdb.client.AccountGroup;
 import com.google.gerrit.server.UserInitiated;
 import com.google.gerrit.server.account.GroupControl;
 import com.google.gerrit.server.group.GroupResolver;
@@ -39,7 +39,6 @@ import com.google.gerrit.server.group.db.GroupsUpdate;
 import com.google.gerrit.server.group.db.InternalGroupUpdate;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.restapi.group.AddSubgroups.Input;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -92,8 +91,8 @@ public class AddSubgroups implements RestModifyView<GroupResource, Input> {
   }
 
   @Override
-  public List<GroupInfo> apply(GroupResource resource, Input input)
-      throws NotInternalGroupException, AuthException, UnprocessableEntityException, OrmException,
+  public Response<List<GroupInfo>> apply(GroupResource resource, Input input)
+      throws NotInternalGroupException, AuthException, UnprocessableEntityException,
           ResourceNotFoundException, IOException, ConfigInvalidException,
           PermissionBackendException {
     GroupDescription.Internal group =
@@ -119,12 +118,12 @@ public class AddSubgroups implements RestModifyView<GroupResource, Input> {
     } catch (NoSuchGroupException e) {
       throw new ResourceNotFoundException(String.format("Group %s not found", groupUuid));
     }
-    return result;
+    return Response.ok(result);
   }
 
   private void addSubgroups(
       AccountGroup.UUID parentGroupUuid, Set<AccountGroup.UUID> newSubgroupUuids)
-      throws OrmException, NoSuchGroupException, IOException, ConfigInvalidException {
+      throws NoSuchGroupException, IOException, ConfigInvalidException {
     InternalGroupUpdate groupUpdate =
         InternalGroupUpdate.builder()
             .setSubgroupModification(subgroupUuids -> Sets.union(subgroupUuids, newSubgroupUuids))
@@ -143,15 +142,14 @@ public class AddSubgroups implements RestModifyView<GroupResource, Input> {
     }
 
     @Override
-    public GroupInfo apply(GroupResource resource, IdString id, Input input)
-        throws AuthException, MethodNotAllowedException, ResourceNotFoundException, OrmException,
-            IOException, ConfigInvalidException, PermissionBackendException {
+    public Response<GroupInfo> apply(GroupResource resource, IdString id, Input input)
+        throws Exception {
       AddSubgroups.Input in = new AddSubgroups.Input();
       in.groups = ImmutableList.of(id.get());
       try {
-        List<GroupInfo> list = addSubgroups.apply(resource, in);
+        List<GroupInfo> list = addSubgroups.apply(resource, in).value();
         if (list.size() == 1) {
-          return list.get(0);
+          return Response.created(list.get(0));
         }
         throw new IllegalStateException();
       } catch (UnprocessableEntityException e) {
@@ -170,8 +168,8 @@ public class AddSubgroups implements RestModifyView<GroupResource, Input> {
     }
 
     @Override
-    public GroupInfo apply(SubgroupResource resource, Input input)
-        throws OrmException, PermissionBackendException {
+    public Response<GroupInfo> apply(SubgroupResource resource, Input input)
+        throws PermissionBackendException {
       // Do nothing, the group is already included.
       return get.get().apply(resource);
     }

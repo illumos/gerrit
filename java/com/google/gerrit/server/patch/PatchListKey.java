@@ -23,6 +23,7 @@ import static org.eclipse.jgit.lib.ObjectIdSerializer.writeWithoutMarker;
 import com.google.common.collect.ImmutableBiMap;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.extensions.client.DiffPreferencesInfo.Whitespace;
+import com.google.gerrit.git.ObjectIds;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
@@ -58,6 +59,12 @@ public class PatchListKey implements Serializable {
     return new PatchListKey(otherCommitId, newId, whitespace);
   }
 
+  public static PatchListKey againstBase(ObjectId id, int parentCount) {
+    return parentCount > 1
+        ? PatchListKey.againstParentNum(1, id, Whitespace.IGNORE_NONE)
+        : PatchListKey.againstDefaultBase(id, Whitespace.IGNORE_NONE);
+  }
+
   /**
    * Old patch-set ID
    *
@@ -82,7 +89,7 @@ public class PatchListKey implements Serializable {
   private transient Whitespace whitespace;
 
   private PatchListKey(AnyObjectId a, AnyObjectId b, Whitespace ws) {
-    oldId = a != null ? a.copy() : null;
+    oldId = ObjectIds.copyOrNull(a);
     newId = b.copy();
     whitespace = ws;
   }

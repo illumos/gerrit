@@ -18,8 +18,8 @@ import com.google.auto.value.AutoValue;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 import com.google.gerrit.acceptance.testsuite.ThrowingFunction;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
 import java.util.Optional;
 import java.util.Set;
 
@@ -104,9 +104,9 @@ public abstract class TestGroupCreation {
      *
      * @return the UUID of the created group
      */
-    public AccountGroup.UUID create() throws Exception {
+    public AccountGroup.UUID create() {
       TestGroupCreation groupCreation = autoBuild();
-      return groupCreation.groupCreator().apply(groupCreation);
+      return groupCreation.groupCreator().applyAndThrowSilently(groupCreation);
     }
   }
 }

@@ -17,11 +17,13 @@
 (function(window) {
   'use strict';
 
+  /** @constructor */
   function GrSettingsApi(plugin) {
     this._title = '(no title)';
     // Generate default screen URL token, specific to plugin, and unique(ish).
     this._token =
-      plugin.getPluginName() + Math.random().toString(36).substr(5);
+      plugin.getPluginName() + Math.random().toString(36)
+          .substr(5);
     this.plugin = plugin;
   }
 

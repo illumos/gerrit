@@ -17,16 +17,18 @@ package com.google.gerrit.index.query;
 import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.stream.Collectors.toSet;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.index.FieldDef;
 import com.google.gerrit.index.Index;
 import com.google.gerrit.index.IndexCollection;
 import com.google.gerrit.index.IndexConfig;
 import com.google.gerrit.index.Schema;
-import com.google.gwtorm.server.OrmException;
 import java.util.Arrays;
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * Execute a single query over a secondary index, for use by Gerrit internals.
@@ -38,7 +40,7 @@ import java.util.List;
  * <p>Instances are one-time-use. Other singleton classes should inject a Provider rather than
  * holding on to a single instance.
  */
-public class InternalQuery<T> {
+public class InternalQuery<T, Q extends InternalQuery<T, Q>> {
   private final QueryProcessor<T> queryProcessor;
   private final IndexCollection<?, T, ? extends Index<?, T>> indexes;
 
@@ -53,34 +55,48 @@ public class InternalQuery<T> {
     this.indexConfig = indexConfig;
   }
 
-  public InternalQuery<T> setLimit(int n) {
+  @SuppressWarnings("unchecked")
+  protected final Q self() {
+    return (Q) this;
+  }
+
+  final Q setStart(int start) {
+    queryProcessor.setStart(start);
+    return self();
+  }
+
+  public final Q setLimit(int n) {
     queryProcessor.setUserProvidedLimit(n);
-    return this;
+    return self();
   }
 
-  public InternalQuery<T> enforceVisibility(boolean enforce) {
+  public final Q enforceVisibility(boolean enforce) {
     queryProcessor.enforceVisibility(enforce);
-    return this;
+    return self();
   }
 
-  @SuppressWarnings("unchecked") // Can't set @SafeVarargs on a non-final method.
-  public InternalQuery<T> setRequestedFields(FieldDef<T, ?>... fields) {
+  @SafeVarargs
+  public final Q setRequestedFields(FieldDef<T, ?>... fields) {
     checkArgument(fields.length > 0, "requested field list is empty");
     queryProcessor.setRequestedFields(
         Arrays.stream(fields).map(FieldDef::getName).collect(toSet()));
-    return this;
+    return self();
   }
 
-  public InternalQuery<T> noFields() {
+  public final Q noFields() {
     queryProcessor.setRequestedFields(ImmutableSet.of());
-    return this;
+    return self();
   }
 
-  public List<T> query(Predicate<T> p) throws OrmException {
+  public final List<T> query(Predicate<T> p) {
+    return queryResults(p).entities();
+  }
+
+  final QueryResult<T> queryResults(Predicate<T> p) {
     try {
-      return queryProcessor.query(p).entities();
+      return queryProcessor.query(p);
     } catch (QueryParseException e) {
-      throw new OrmException(e);
+      throw new StorageException(e);
     }
   }
 
@@ -94,16 +110,58 @@ public class InternalQuery<T> {
    * @return results of the queries, one list of results per input query, in the same order as the
    *     input.
    */
-  public List<List<T>> query(List<Predicate<T>> queries) throws OrmException {
+  public final List<List<T>> query(List<Predicate<T>> queries) {
     try {
       return Lists.transform(queryProcessor.query(queries), QueryResult::entities);
     } catch (QueryParseException e) {
-      throw new OrmException(e);
+      throw new StorageException(e);
     }
   }
 
-  protected Schema<T> schema() {
+  protected final Schema<T> schema() {
     Index<?, T> index = indexes != null ? indexes.getSearchIndex() : null;
     return index != null ? index.getSchema() : null;
+  }
+
+  /**
+   * Query a predicate repeatedly until all results are exhausted.
+   *
+   * <p>Capable of iterating through all results regardless of limits. The passed {@code
+   * querySupplier} may choose to pre-set limits or not; this only affects the number of queries
+   * that may be issued, not the size of the final results.
+   *
+   * <p>Since multiple queries may be issued, this method is subject to races when the result set
+   * changes mid-iteration. This may result in skipped results, if an entity gets modified to jump
+   * to the front of the list after this method has passed it. It may also result in duplicate
+   * results, if an entity at the end of one batch of results gets pushed back further, putting it
+   * at the beginning of the next batch. This race cannot be avoided unless we change the underlying
+   * index interface to support true continuation tokens.
+   *
+   * @param querySupplier supplier for queries. Callers will generally pass a lambda that invokes an
+   *     underlying {@code Provider<InternalFooQuery>}, since the instances are not reusable. The
+   *     lambda may also call additional methods on the newly-created query, such as {@link
+   *     #enforceVisibility(boolean)}.
+   * @param predicate predicate to search for.
+   * @param <T> result type.
+   * @return exhaustive list of results, subject to the race condition described above.
+   */
+  protected static <T> ImmutableList<T> queryExhaustively(
+      Supplier<? extends InternalQuery<T, ?>> querySupplier, Predicate<T> predicate) {
+    ImmutableList.Builder<T> b = null;
+    int start = 0;
+    while (true) {
+      QueryResult<T> qr = querySupplier.get().setStart(start).queryResults(predicate);
+      if (b == null) {
+        if (!qr.more()) {
+          return qr.entities();
+        }
+        b = ImmutableList.builder();
+      }
+      b.addAll(qr.entities());
+      if (!qr.more()) {
+        return b.build();
+      }
+      start += qr.entities().size();
+    }
   }
 }

@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-settings-view</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-change-table-editor.html">
 
@@ -117,41 +119,41 @@ limitations under the License.
           columns.filter(c => c !== 'Assignee'));
     });
 
-    test('_handleCheckboxContainerTap relayes taps to checkboxes', () => {
-      sandbox.stub(element, '_handleNumberCheckboxTap');
-      sandbox.stub(element, '_handleTargetTap');
+    test('_handleCheckboxContainerClick relayes taps to checkboxes', () => {
+      sandbox.stub(element, '_handleNumberCheckboxClick');
+      sandbox.stub(element, '_handleTargetClick');
 
       MockInteractions.tap(
           element.$$('table tr:first-of-type .checkboxContainer'));
-      assert.isTrue(element._handleNumberCheckboxTap.calledOnce);
-      assert.isFalse(element._handleTargetTap.called);
+      assert.isTrue(element._handleNumberCheckboxClick.calledOnce);
+      assert.isFalse(element._handleTargetClick.called);
 
       MockInteractions.tap(
           element.$$('table tr:last-of-type .checkboxContainer'));
-      assert.isTrue(element._handleNumberCheckboxTap.calledOnce);
-      assert.isTrue(element._handleTargetTap.calledOnce);
+      assert.isTrue(element._handleNumberCheckboxClick.calledOnce);
+      assert.isTrue(element._handleTargetClick.calledOnce);
     });
 
-    test('_handleNumberCheckboxTap', () => {
-      sandbox.spy(element, '_handleNumberCheckboxTap');
+    test('_handleNumberCheckboxClick', () => {
+      sandbox.spy(element, '_handleNumberCheckboxClick');
 
       MockInteractions
           .tap(element.$$('.checkboxContainer input[name=number]'));
-      assert.isTrue(element._handleNumberCheckboxTap.calledOnce);
+      assert.isTrue(element._handleNumberCheckboxClick.calledOnce);
       assert.isTrue(element.showNumber);
 
       MockInteractions
           .tap(element.$$('.checkboxContainer input[name=number]'));
-      assert.isTrue(element._handleNumberCheckboxTap.calledTwice);
+      assert.isTrue(element._handleNumberCheckboxClick.calledTwice);
       assert.isFalse(element.showNumber);
     });
 
-    test('_handleTargetTap', () => {
-      sandbox.spy(element, '_handleTargetTap');
+    test('_handleTargetClick', () => {
+      sandbox.spy(element, '_handleTargetClick');
       assert.include(element.displayedColumns, 'Assignee');
       MockInteractions
           .tap(element.$$('.checkboxContainer input[name=Assignee]'));
-      assert.isTrue(element._handleTargetTap.calledOnce);
+      assert.isTrue(element._handleTargetClick.calledOnce);
       assert.notInclude(element.displayedColumns, 'Assignee');
     });
   });

@@ -18,7 +18,7 @@ import static com.google.gerrit.util.cli.Localizable.localizable;
 
 import com.google.gerrit.common.data.GroupDescription;
 import com.google.gerrit.common.data.GroupReference;
-import com.google.gerrit.reviewdb.client.AccountGroup;
+import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.server.account.GroupBackend;
 import com.google.gerrit.server.account.GroupBackends;
 import com.google.gerrit.server.account.GroupCache;
@@ -53,7 +53,7 @@ public class AccountGroupUUIDHandler extends OptionHandler<AccountGroup.UUID> {
   @Override
   public final int parseArguments(Parameters params) throws CmdLineException {
     final String n = params.getParameter(0);
-    AccountGroup.UUID uuid = new AccountGroup.UUID(n);
+    AccountGroup.UUID uuid = AccountGroup.uuid(n);
     if (groupBackend.handles(uuid)) {
       GroupDescription.Basic d = groupBackend.get(uuid);
       if (d != null) {

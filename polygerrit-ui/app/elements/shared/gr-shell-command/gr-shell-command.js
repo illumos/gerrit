@@ -17,16 +17,23 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-shell-command',
+  /** @extends Polymer.Element */
+  class GrShellCommand extends Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element)) {
+    static get is() { return 'gr-shell-command'; }
 
-    properties: {
-      command: String,
-      label: String,
-    },
+    static get properties() {
+      return {
+        command: String,
+        label: String,
+      };
+    }
 
     focusOnCopy() {
       this.$$('gr-copy-clipboard').focusOnCopy();
-    },
-  });
+    }
+  }
+
+  customElements.define(GrShellCommand.is, GrShellCommand);
 })();

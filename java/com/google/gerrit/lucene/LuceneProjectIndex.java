@@ -17,6 +17,9 @@ package com.google.gerrit.lucene;
 import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.gerrit.index.project.ProjectField.NAME;
 
+import com.google.common.collect.ImmutableSet;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.index.FieldDef;
 import com.google.gerrit.index.QueryOptions;
 import com.google.gerrit.index.Schema;
@@ -26,7 +29,6 @@ import com.google.gerrit.index.project.ProjectIndex;
 import com.google.gerrit.index.query.DataSource;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryParseException;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.SitePaths;
 import com.google.gerrit.server.index.IndexUtils;
@@ -89,6 +91,7 @@ public class LuceneProjectIndex extends AbstractLuceneIndex<Project.NameKey, Pro
         sitePaths,
         dir(schema, cfg, sitePaths),
         PROJECTS,
+        ImmutableSet.of(),
         null,
         new GerritIndexWriterConfig(cfg, PROJECTS),
         new SearcherFactory());
@@ -110,20 +113,20 @@ public class LuceneProjectIndex extends AbstractLuceneIndex<Project.NameKey, Pro
   }
 
   @Override
-  public void replace(ProjectData projectState) throws IOException {
+  public void replace(ProjectData projectState) {
     try {
       replace(idTerm(projectState), toDocument(projectState)).get();
     } catch (ExecutionException | InterruptedException e) {
-      throw new IOException(e);
+      throw new StorageException(e);
     }
   }
 
   @Override
-  public void delete(Project.NameKey nameKey) throws IOException {
+  public void delete(Project.NameKey nameKey) {
     try {
       delete(idTerm(nameKey)).get();
     } catch (ExecutionException | InterruptedException e) {
-      throw new IOException(e);
+      throw new StorageException(e);
     }
   }
 
@@ -138,7 +141,7 @@ public class LuceneProjectIndex extends AbstractLuceneIndex<Project.NameKey, Pro
 
   @Override
   protected ProjectData fromDocument(Document doc) {
-    Project.NameKey nameKey = new Project.NameKey(doc.getField(NAME.getName()).stringValue());
+    Project.NameKey nameKey = Project.nameKey(doc.getField(NAME.getName()).stringValue());
     ProjectState projectState = projectCache.get().get(nameKey);
     return projectState == null ? null : projectState.toProjectData();
   }

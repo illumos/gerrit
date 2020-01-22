@@ -14,7 +14,6 @@
 
 package com.google.gerrit.common;
 
-import com.google.common.annotations.GwtIncompatible;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -25,7 +24,6 @@ import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.storage.file.FileBasedConfig;
 import org.eclipse.jgit.util.IO;
 
-@GwtIncompatible("Unemulated classes in java.io, java.nio and JGit")
 public class FileUtil {
   public static boolean modified(FileBasedConfig cfg) throws IOException {
     byte[] curVers;
@@ -46,7 +44,6 @@ public class FileUtil {
   }
 
   public static void chmod(int mode, Path path) {
-    // TODO(dborowitz): Is there a portable way to do this with NIO?
     chmod(mode, path.toFile());
   }
 

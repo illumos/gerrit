@@ -14,19 +14,15 @@
 
 package com.google.gerrit.server.submit;
 
-import com.google.common.collect.ListMultimap;
 import com.google.common.flogger.FluentLogger;
-import com.google.gerrit.extensions.api.changes.RecipientType;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.SubmissionId;
 import com.google.gerrit.extensions.api.changes.SubmitInput;
 import com.google.gerrit.extensions.client.SubmitType;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.git.CodeReviewCommit;
 import com.google.gerrit.server.git.CodeReviewCommit.CodeReviewRevWalk;
 import com.google.gerrit.server.git.MergeTip;
-import com.google.gerrit.server.logging.RequestId;
 import com.google.gerrit.server.submit.MergeOp.CommitStatus;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
@@ -48,18 +44,16 @@ public class SubmitStrategyFactory {
 
   public SubmitStrategy create(
       SubmitType submitType,
-      ReviewDb db,
       CodeReviewRevWalk rw,
       RevFlag canMergeFlag,
       Set<RevCommit> alreadyAccepted,
       Set<CodeReviewCommit> incoming,
-      Branch.NameKey destBranch,
+      BranchNameKey destBranch,
       IdentifiedUser caller,
       MergeTip mergeTip,
       CommitStatus commitStatus,
-      RequestId submissionId,
+      SubmissionId submissionId,
       SubmitInput submitInput,
-      ListMultimap<RecipientType, Account.Id> accountsToNotify,
       SubmoduleOp submoduleOp,
       boolean dryrun)
       throws IntegrationException {
@@ -72,12 +66,10 @@ public class SubmitStrategyFactory {
             caller,
             mergeTip,
             canMergeFlag,
-            db,
             alreadyAccepted,
             incoming,
             submissionId,
             submitInput,
-            accountsToNotify,
             submoduleOp,
             dryrun);
     switch (submitType) {

@@ -15,18 +15,19 @@
 package com.google.gerrit.acceptance.server.notedb;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.common.truth.Truth8.assertThat;
-import static com.google.common.truth.TruthJUnit.assume;
 import static com.google.gerrit.extensions.client.ListChangesOption.MESSAGES;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static java.util.stream.Collectors.toList;
 
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Streams;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.PushOneCommit;
+import com.google.gerrit.entities.Change;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
-import com.google.gerrit.reviewdb.client.Change;
 import com.google.gerrit.server.project.NoSuchChangeException;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateListener;
@@ -56,7 +57,6 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevSort;
 import org.eclipse.jgit.revwalk.RevWalk;
-import org.junit.Before;
 import org.junit.Test;
 
 public class NoteDbOnlyIT extends AbstractDaemonTest {
@@ -70,14 +70,8 @@ public class NoteDbOnlyIT extends AbstractDaemonTest {
 
   @Inject private RetryHelper retryHelper;
 
-  @Before
-  public void setUp() throws Exception {
-    assume().that(notesMigration.disableChangeReviewDb()).isTrue();
-  }
-
   @Test
   public void updateChangeFailureRollsBackRefUpdate() throws Exception {
-    assume().that(notesMigration.disableChangeReviewDb()).isTrue();
     PushOneCommit.Result r = createChange();
     Change.Id id = r.getChange().getId();
 
@@ -134,12 +128,9 @@ public class NoteDbOnlyIT extends AbstractDaemonTest {
               throw new ResourceConflictException(msg);
             }
           });
-      try {
-        bu.execute();
-        fail("expected ResourceConflictException");
-      } catch (ResourceConflictException e) {
-        assertThat(e).hasMessageThat().isEqualTo(msg);
-      }
+      ResourceConflictException thrown =
+          assertThrows(ResourceConflictException.class, () -> bu.execute());
+      assertThat(thrown).hasMessageThat().isEqualTo(msg);
     }
 
     // If updateChange hadn't failed, backup would have been updated to master2.
@@ -149,7 +140,6 @@ public class NoteDbOnlyIT extends AbstractDaemonTest {
 
   @Test
   public void retryOnLockFailureWithAtomicUpdates() throws Exception {
-    assume().that(notesMigration.disableChangeReviewDb()).isTrue();
     PushOneCommit.Result r = createChange();
     Change.Id id = r.getChange().getId();
     String master = "refs/heads/master";
@@ -164,16 +154,20 @@ public class NoteDbOnlyIT extends AbstractDaemonTest {
     AtomicInteger afterUpdateReposCalledCount = new AtomicInteger();
 
     String result =
-        retryHelper.execute(
-            batchUpdateFactory -> {
-              try (BatchUpdate bu = newBatchUpdate(batchUpdateFactory)) {
-                bu.addOp(
-                    id,
-                    new UpdateRefAndAddMessageOp(updateRepoCalledCount, updateChangeCalledCount));
-                bu.execute(new ConcurrentWritingListener(afterUpdateReposCalledCount));
-              }
-              return "Done";
-            });
+        retryHelper
+            .changeUpdate(
+                "testUpdateRefAndAddMessageOp",
+                batchUpdateFactory -> {
+                  try (BatchUpdate bu = newBatchUpdate(batchUpdateFactory)) {
+                    bu.addOp(
+                        id,
+                        new UpdateRefAndAddMessageOp(
+                            updateRepoCalledCount, updateChangeCalledCount));
+                    bu.execute(new ConcurrentWritingListener(afterUpdateReposCalledCount));
+                  }
+                  return "Done";
+                })
+            .call();
 
     assertThat(result).isEqualTo("Done");
     assertThat(updateRepoCalledCount.get()).isEqualTo(2);
@@ -197,18 +191,13 @@ public class NoteDbOnlyIT extends AbstractDaemonTest {
 
   @Test
   public void missingChange() throws Exception {
-    Change.Id changeId = new Change.Id(1234567);
-    assertNoSuchChangeException(() -> notesFactory.create(db, project, changeId));
-    assertNoSuchChangeException(() -> notesFactory.createChecked(db, project, changeId));
+    Change.Id changeId = Change.id(1234567);
+    assertNoSuchChangeException(() -> notesFactory.create(project, changeId));
+    assertNoSuchChangeException(() -> notesFactory.createChecked(project, changeId));
   }
 
   private void assertNoSuchChangeException(Callable<?> callable) throws Exception {
-    try {
-      callable.call();
-      fail("expected NoSuchChangeException");
-    } catch (NoSuchChangeException e) {
-      // Expected.
-    }
+    assertThrows(NoSuchChangeException.class, () -> callable.call());
   }
 
   private class ConcurrentWritingListener implements BatchUpdateListener {
@@ -285,7 +274,7 @@ public class NoteDbOnlyIT extends AbstractDaemonTest {
   }
 
   private BatchUpdate newBatchUpdate(BatchUpdate.Factory buf) {
-    return buf.create(db, project, identifiedUserFactory.create(user.getId()), TimeUtil.nowTs());
+    return buf.create(project, identifiedUserFactory.create(user.id()), TimeUtil.nowTs());
   }
 
   private Optional<ObjectId> getRef(String name) throws Exception {
@@ -315,8 +304,8 @@ public class NoteDbOnlyIT extends AbstractDaemonTest {
     if (repo instanceof InMemoryRepository) {
       ((InMemoryRepository) repo).setPerformsAtomicTransactions(true);
     } else {
-      assertThat(repo.getRefDatabase().performsAtomicTransactions())
-          .named("performsAtomicTransactions on %s", repo)
+      assertWithMessage("performsAtomicTransactions on %s", repo)
+          .that(repo.getRefDatabase().performsAtomicTransactions())
           .isTrue();
     }
   }

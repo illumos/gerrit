@@ -14,12 +14,11 @@
 
 package com.google.gerrit.server.mail.send;
 
-import com.google.gerrit.common.errors.EmailException;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.exceptions.EmailException;
 import com.google.gerrit.extensions.api.changes.RecipientType;
 import com.google.gerrit.mail.Address;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gwtorm.server.OrmException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
@@ -33,8 +32,8 @@ public abstract class NewChangeSender extends ChangeEmail {
   private final Set<Account.Id> extraCC = new HashSet<>();
   private final Set<Address> extraCCByEmail = new HashSet<>();
 
-  protected NewChangeSender(EmailArguments ea, ChangeData cd) throws OrmException {
-    super(ea, "newchange", cd);
+  protected NewChangeSender(EmailArguments args, ChangeData changeData) {
+    super(args, "newchange", changeData);
   }
 
   public void addReviewers(Collection<Account.Id> cc) {
@@ -61,7 +60,7 @@ public abstract class NewChangeSender extends ChangeEmail {
     setHeader("Message-ID", threadId);
     setHeader("References", threadId);
 
-    switch (notify) {
+    switch (notify.handling()) {
       case NONE:
       case OWNER:
         break;

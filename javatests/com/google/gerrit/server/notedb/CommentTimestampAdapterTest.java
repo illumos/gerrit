@@ -16,14 +16,15 @@ package com.google.gerrit.server.notedb;
 
 import static com.google.common.truth.Truth.assertThat;
 
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Comment;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Comment;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import java.sql.Timestamp;
 import java.time.ZonedDateTime;
 import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
+import org.eclipse.jgit.lib.ObjectId;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -152,14 +153,14 @@ public class CommentTimestampAdapterTest {
     Comment c =
         new Comment(
             new Comment.Key("uuid", "filename", 1),
-            new Account.Id(100),
+            Account.id(100),
             NON_DST_TS,
             (short) 0,
             "message",
             "serverId",
             false);
     c.lineNbr = 1;
-    c.revId = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+    c.setCommitId(ObjectId.fromString("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"));
 
     String json = gson.toJson(c);
     assertThat(json).contains("\"writtenOn\": \"" + NON_DST_STR_TRUNC + "\",");

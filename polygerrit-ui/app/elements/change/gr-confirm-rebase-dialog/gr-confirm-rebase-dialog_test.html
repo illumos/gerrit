@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-confirm-rebase-dialog</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-confirm-rebase-dialog.html">
 
@@ -151,15 +153,17 @@ limitations under the License.
 
       test('_getRecentChanges', () => {
         sandbox.spy(element, '_getRecentChanges');
-        return element._getRecentChanges().then(() => {
-          assert.deepEqual(element._recentChanges, recentChanges);
-          assert.equal(element.$.restAPI.getChanges.callCount, 1);
-          // When called a second time, should not re-request recent changes.
-          element._getRecentChanges();
-        }).then(() => {
-          assert.equal(element._getRecentChanges.callCount, 2);
-          assert.equal(element.$.restAPI.getChanges.callCount, 1);
-        });
+        return element._getRecentChanges()
+            .then(() => {
+              assert.deepEqual(element._recentChanges, recentChanges);
+              assert.equal(element.$.restAPI.getChanges.callCount, 1);
+              // When called a second time, should not re-request recent changes.
+              element._getRecentChanges();
+            })
+            .then(() => {
+              assert.equal(element._getRecentChanges.callCount, 2);
+              assert.equal(element.$.restAPI.getChanges.callCount, 1);
+            });
       });
 
       test('_filterChanges', () => {
@@ -180,6 +184,11 @@ limitations under the License.
       test('input text change triggers function', () => {
         sandbox.spy(element, '_getRecentChanges');
         element.$.parentInput.noDebounce = true;
+        MockInteractions.pressAndReleaseKeyOn(
+            element.$.parentInput.$.input,
+            13,
+            null,
+            'enter');
         element._text = '1';
         assert.isTrue(element._getRecentChanges.calledOnce);
         element._text = '12';

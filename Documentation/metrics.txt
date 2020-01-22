@@ -15,18 +15,22 @@ The following metrics are reported.
 
 === Actions
 
-* `action/retry_attempt_counts`: Distribution of number of attempts made
-by RetryHelper to execute an action (1 == single attempt, no retry)
+* `action/retry_attempt_count`: Number of retry attempts made
+by RetryHelper to execute an action (0 == single attempt, no retry)
 * `action/retry_timeout_count`: Number of action executions of RetryHelper
 that ultimately timed out
+* `action/auto_retry_count`: Number of automatic retries with tracing
+* `action/failures_on_auto_retry_count`: Number of failures on auto retry
 
 === Pushes
 
 * `receivecommits/changes`: histogram of number of changes processed
-in a single upload, split up by update type (new change created,
-existing changed updated, change autoclosed).
+in a single upload, split up by update type (change created/updated,
+change autoclosed).
 * `receivecommits/latency`: latency per change for processing a push,
 split up by update type (create+replace, and autoclose)
+* `receivecommits/push_latency`: total latency for processing a push,
+split up by update type (create+replace, autoclose, normal)
 * `receivecommits/timeout`: number of timeouts during push processing.
 
 === Process
@@ -53,6 +57,11 @@ objects needing finalization.
 * `caches/memory_eviction_count`: Memory eviction count.
 * `caches/disk_cached`: Disk entries used by persistent cache.
 * `caches/disk_hit_ratio`: Disk hit ratio for persistent cache.
+
+=== Change
+
+* `change/submit_rule_evaluation`: Latency for evaluating submit rules on a change.
+* `change/submit_type_evaluation`: Latency for evaluating the submit type on a change.
 
 === HTTP
 
@@ -106,10 +115,6 @@ Each queue provides the following metrics:
 * `sshd/sessions/created`: Rate of new SSH sessions.
 * `sshd/sessions/authentication_failures`: Rate of SSH authentication failures.
 
-=== SQL connections
-
-* `sql/connection_pool/connections`: SQL database connections.
-
 === Topics
 
 * `topic/cross_project_submit`: number of cross-project topic submissions.
@@ -136,13 +141,14 @@ excluding reindexing
 
 === NoteDb
 
-* `notedb/update_latency`: NoteDb update latency by table.
-* `notedb/stage_update_latency`: Latency for staging updates to NoteDb by table.
-* `notedb/read_latency`: NoteDb read latency by table.
-* `notedb/parse_latency`: NoteDb parse latency by table.
-* `notedb/auto_rebuild_latency`: NoteDb auto-rebuilding latency by table.
-* `notedb/auto_rebuild_failure_count`: NoteDb auto-rebuilding attempts that
-failed by table.
+* `notedb/update_latency`: NoteDb update latency for changes.
+* `notedb/stage_update_latency`: Latency for staging change updates to NoteDb.
+* `notedb/read_latency`: NoteDb read latency for changes.
+* `notedb/parse_latency`: NoteDb parse latency for changes.
+* `notedb/external_id_cache_load_count`: Total number of times the external ID
+  cache loader was called.
+* `notedb/external_id_partial_read_latency`: Latency for generating a new external ID
+  cache state from a prior state.
 * `notedb/external_id_update_count`: Total number of external ID updates.
 * `notedb/read_all_external_ids_latency`: Latency for reading all
 external ID's from NoteDb.
@@ -176,6 +182,10 @@ suggestion.
 
 * `plugin/latency`: Latency for plugin invocation.
 * `plugin/error_count`: Number of plugin errors.
+
+=== Group
+
+* `group/guess_relevant_groups_latency`: Latency for guessing relevant groups.
 
 === Replication Plugin
 

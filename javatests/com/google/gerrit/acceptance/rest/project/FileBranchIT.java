@@ -15,25 +15,26 @@
 package com.google.gerrit.acceptance.rest.project;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.PushOneCommit;
+import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.extensions.api.projects.BranchApi;
 import com.google.gerrit.extensions.restapi.BinaryResult;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
-import com.google.gerrit.reviewdb.client.Branch;
 import org.junit.Before;
 import org.junit.Test;
 
 @NoHttpd
 public class FileBranchIT extends AbstractDaemonTest {
 
-  private Branch.NameKey branch;
+  private BranchNameKey branch;
 
   @Before
   public void setUp() throws Exception {
-    branch = new Branch.NameKey(project, "master");
+    branch = BranchNameKey.create(project, "master");
     PushOneCommit.Result change = createChange();
     approve(change.getChangeId());
     revision(change).submit();
@@ -45,12 +46,12 @@ public class FileBranchIT extends AbstractDaemonTest {
     assertThat(content.asString()).isEqualTo(PushOneCommit.FILE_CONTENT);
   }
 
-  @Test(expected = ResourceNotFoundException.class)
+  @Test
   public void getNonExistingFile() throws Exception {
-    branch().file("does-not-exist");
+    assertThrows(ResourceNotFoundException.class, () -> branch().file("does-not-exist"));
   }
 
   private BranchApi branch() throws Exception {
-    return gApi.projects().name(branch.getParentKey().get()).branch(branch.get());
+    return gApi.projects().name(branch.project().get()).branch(branch.branch());
   }
 }

@@ -16,20 +16,20 @@ package com.google.gerrit.server.query.account;
 
 import com.google.common.collect.Lists;
 import com.google.common.primitives.Ints;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.index.FieldDef;
 import com.google.gerrit.index.Schema;
 import com.google.gerrit.index.query.IndexPredicate;
 import com.google.gerrit.index.query.Matchable;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryBuilder;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.index.account.AccountField;
 import com.google.gerrit.server.notedb.ChangeNotes;
-import com.google.gwtorm.server.OrmException;
 import java.util.List;
 
+/** Utility class to create predicates for account index queries. */
 public class AccountPredicates {
   public static boolean hasActive(Predicate<AccountState> p) {
     return QueryBuilder.find(p, AccountPredicate.class, AccountField.ACTIVE.getName()) != null;
@@ -45,7 +45,7 @@ public class AccountPredicates {
     List<Predicate<AccountState>> preds = Lists.newArrayListWithCapacity(3);
     Integer id = Ints.tryParse(query);
     if (id != null) {
-      preds.add(id(new Account.Id(id)));
+      preds.add(id(schema, Account.id(id)));
     }
     if (canSeeSecondaryEmails) {
       preds.add(equalsNameIncludingSecondaryEmails(query));
@@ -65,9 +65,11 @@ public class AccountPredicates {
     return Predicate.or(preds);
   }
 
-  public static Predicate<AccountState> id(Account.Id accountId) {
+  public static Predicate<AccountState> id(Schema<AccountState> schema, Account.Id accountId) {
     return new AccountPredicate(
-        AccountField.ID, AccountQueryBuilder.FIELD_ACCOUNT, accountId.toString());
+        schema.useLegacyNumericFields() ? AccountField.ID : AccountField.ID_STR,
+        AccountQueryBuilder.FIELD_ACCOUNT,
+        accountId.toString());
   }
 
   public static Predicate<AccountState> emailIncludingSecondaryEmails(String email) {
@@ -126,9 +128,10 @@ public class AccountPredicates {
 
   public static Predicate<AccountState> cansee(
       AccountQueryBuilder.Arguments args, ChangeNotes changeNotes) {
-    return new CanSeeChangePredicate(args.db, args.permissionBackend, changeNotes);
+    return new CanSeeChangePredicate(args.permissionBackend, changeNotes);
   }
 
+  /** Predicate that is mapped to a field in the account index. */
   static class AccountPredicate extends IndexPredicate<AccountState>
       implements Matchable<AccountState> {
     AccountPredicate(FieldDef<AccountState, ?> def, String value) {
@@ -140,7 +143,7 @@ public class AccountPredicates {
     }
 
     @Override
-    public boolean match(AccountState object) throws OrmException {
+    public boolean match(AccountState object) {
       return true;
     }
 

@@ -16,7 +16,7 @@ package com.google.gerrit.server.mail.send;
 
 import static java.util.Objects.requireNonNull;
 
-import com.google.gerrit.common.errors.EmailException;
+import com.google.gerrit.exceptions.EmailException;
 import com.google.gerrit.extensions.api.changes.RecipientType;
 import com.google.gerrit.mail.Address;
 import com.google.gerrit.server.IdentifiedUser;
@@ -24,6 +24,10 @@ import com.google.gerrit.server.mail.EmailTokenVerifier;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 
+/**
+ * Sender that informs a user by email about the registration of a new email address for their
+ * account.
+ */
 public class RegisterNewEmailSender extends OutgoingEmail {
   public interface Factory {
     RegisterNewEmailSender create(String address);
@@ -36,14 +40,14 @@ public class RegisterNewEmailSender extends OutgoingEmail {
 
   @Inject
   public RegisterNewEmailSender(
-      EmailArguments ea,
-      EmailTokenVerifier etv,
+      EmailArguments args,
+      EmailTokenVerifier tokenVerifier,
       IdentifiedUser callingUser,
       @Assisted final String address) {
-    super(ea, "registernewemail");
-    tokenVerifier = etv;
-    user = callingUser;
-    addr = address;
+    super(args, "registernewemail");
+    this.tokenVerifier = tokenVerifier;
+    this.user = callingUser;
+    this.addr = address;
   }
 
   @Override
@@ -58,17 +62,6 @@ public class RegisterNewEmailSender extends OutgoingEmail {
     appendText(textTemplate("RegisterNewEmail"));
   }
 
-  public String getUserNameEmail() {
-    return getUserNameEmailFor(user.getAccountId());
-  }
-
-  public String getEmailRegistrationToken() {
-    if (emailToken == null) {
-      emailToken = requireNonNull(tokenVerifier.encode(user.getAccountId(), addr), "token");
-    }
-    return emailToken;
-  }
-
   public boolean isAllowed() {
     return args.emailSender.canEmail(addr);
   }
@@ -77,6 +70,13 @@ public class RegisterNewEmailSender extends OutgoingEmail {
   protected void setupSoyContext() {
     super.setupSoyContext();
     soyContextEmailData.put("emailRegistrationToken", getEmailRegistrationToken());
-    soyContextEmailData.put("userNameEmail", getUserNameEmail());
+    soyContextEmailData.put("userNameEmail", getUserNameEmailFor(user.getAccountId()));
+  }
+
+  private String getEmailRegistrationToken() {
+    if (emailToken == null) {
+      emailToken = requireNonNull(tokenVerifier.encode(user.getAccountId(), addr), "token");
+    }
+    return emailToken;
   }
 }

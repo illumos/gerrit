@@ -19,12 +19,10 @@ import com.google.common.collect.ListMultimap;
 import com.google.common.collect.MultimapBuilder;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
-import com.google.gerrit.reviewdb.client.RevId;
-import com.google.gerrit.reviewdb.client.RobotComment;
-import com.google.gerrit.server.notedb.NoteDbChangeState.PrimaryStorage;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.entities.RobotComment;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 import java.io.IOException;
@@ -43,13 +41,13 @@ public class RobotCommentNotes extends AbstractChangeNotes<RobotCommentNotes> {
 
   private final Change change;
 
-  private ImmutableListMultimap<RevId, RobotComment> comments;
+  private ImmutableListMultimap<ObjectId, RobotComment> comments;
   private RevisionNoteMap<RobotCommentsRevisionNote> revisionNoteMap;
   private ObjectId metaId;
 
   @Inject
   RobotCommentNotes(Args args, @Assisted Change change) {
-    super(args, change.getId(), PrimaryStorage.of(change), false);
+    super(args, change.getId());
     this.change = change;
   }
 
@@ -57,7 +55,7 @@ public class RobotCommentNotes extends AbstractChangeNotes<RobotCommentNotes> {
     return revisionNoteMap;
   }
 
-  public ImmutableListMultimap<RevId, RobotComment> getComments() {
+  public ImmutableListMultimap<ObjectId, RobotComment> getComments() {
     return comments;
   }
 
@@ -96,10 +94,10 @@ public class RobotCommentNotes extends AbstractChangeNotes<RobotCommentNotes> {
     revisionNoteMap =
         RevisionNoteMap.parseRobotComments(
             args.changeNoteJson, reader, NoteMap.read(reader, tipCommit));
-    ListMultimap<RevId, RobotComment> cs = MultimapBuilder.hashKeys().arrayListValues().build();
+    ListMultimap<ObjectId, RobotComment> cs = MultimapBuilder.hashKeys().arrayListValues().build();
     for (RobotCommentsRevisionNote rn : revisionNoteMap.revisionNotes.values()) {
-      for (RobotComment c : rn.getComments()) {
-        cs.put(new RevId(c.revId), c);
+      for (RobotComment c : rn.getEntities()) {
+        cs.put(c.getCommitId(), c);
       }
     }
     comments = ImmutableListMultimap.copyOf(cs);

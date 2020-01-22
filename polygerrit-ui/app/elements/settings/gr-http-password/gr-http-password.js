@@ -17,18 +17,25 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-http-password',
+  /** @extends Polymer.Element */
+  class GrHttpPassword extends Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element)) {
+    static get is() { return 'gr-http-password'; }
 
-    properties: {
-      _username: String,
-      _generatedPassword: String,
-      _passwordUrl: String,
-    },
+    static get properties() {
+      return {
+        _username: String,
+        _generatedPassword: String,
+        _passwordUrl: String,
+      };
+    }
 
+    /** @override */
     attached() {
+      super.attached();
       this.loadData();
-    },
+    }
 
     loadData() {
       const promises = [];
@@ -42,7 +49,7 @@
       }));
 
       return Promise.all(promises);
-    },
+    }
 
     _handleGenerateTap() {
       this._generatedPassword = 'Generating...';
@@ -50,14 +57,16 @@
       this.$.restAPI.generateAccountHttpPassword().then(newPassword => {
         this._generatedPassword = newPassword;
       });
-    },
+    }
 
     _closeOverlay() {
       this.$.generatedPasswordOverlay.close();
-    },
+    }
 
     _generatedPasswordOverlayClosed() {
       this._generatedPassword = '';
-    },
-  });
+    }
+  }
+
+  customElements.define(GrHttpPassword.is, GrHttpPassword);
 })();

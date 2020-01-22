@@ -20,9 +20,9 @@ import com.google.common.collect.ImmutableList;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.TestAccount;
 import com.google.gerrit.common.data.SubmitRecord;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.server.project.SubmitRuleOptions;
+import com.google.gerrit.entities.Change;
 import com.google.gerrit.server.query.change.ChangeData;
+import com.google.gerrit.server.rules.PrologOptions;
 import com.google.gerrit.server.rules.PrologRuleEvaluator;
 import com.google.gerrit.testing.TestChanges;
 import com.google.inject.Inject;
@@ -30,8 +30,8 @@ import com.googlecode.prolog_cafe.lang.IntegerTerm;
 import com.googlecode.prolog_cafe.lang.StructureTerm;
 import com.googlecode.prolog_cafe.lang.Term;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
+import org.eclipse.jgit.lib.ObjectId;
 import org.junit.Test;
 
 public class PrologRuleEvaluatorIT extends AbstractDaemonTest {
@@ -45,9 +45,9 @@ public class PrologRuleEvaluatorIT extends AbstractDaemonTest {
     StructureTerm labels = new StructureTerm("label", verifiedLabel);
 
     List<Term> terms = ImmutableList.of(makeTerm("ok", labels));
-    Collection<SubmitRecord> records = evaluator.resultsToSubmitRecord(null, terms);
+    SubmitRecord record = evaluator.resultsToSubmitRecord(null, terms);
 
-    assertThat(records).hasSize(1);
+    assertThat(record.status).isEqualTo(SubmitRecord.Status.OK);
   }
 
   /**
@@ -87,17 +87,17 @@ public class PrologRuleEvaluatorIT extends AbstractDaemonTest {
     SubmitRecord.Label submitRecordLabel1 = new SubmitRecord.Label();
     submitRecordLabel1.label = "Verified";
     submitRecordLabel1.status = SubmitRecord.Label.Status.REJECT;
-    submitRecordLabel1.appliedBy = admin.id;
+    submitRecordLabel1.appliedBy = admin.id();
 
     SubmitRecord.Label submitRecordLabel2 = new SubmitRecord.Label();
     submitRecordLabel2.label = "Code-Review";
     submitRecordLabel2.status = SubmitRecord.Label.Status.OK;
-    submitRecordLabel2.appliedBy = admin.id;
+    submitRecordLabel2.appliedBy = admin.id();
 
     SubmitRecord.Label submitRecordLabel3 = new SubmitRecord.Label();
     submitRecordLabel3.label = "Any-Label-Name";
     submitRecordLabel3.status = SubmitRecord.Label.Status.REJECT;
-    submitRecordLabel3.appliedBy = user.id;
+    submitRecordLabel3.appliedBy = user.id();
 
     List<Term> terms = new ArrayList<>();
 
@@ -112,23 +112,16 @@ public class PrologRuleEvaluatorIT extends AbstractDaemonTest {
     terms.add(makeTerm("not_ready", makeLabels(label3)));
 
     // When
-    List<SubmitRecord> records = evaluator.resultsToSubmitRecord(null, terms);
+    SubmitRecord record = evaluator.resultsToSubmitRecord(null, terms);
 
     // assert that
-    SubmitRecord record1Expected = new SubmitRecord();
-    record1Expected.status = SubmitRecord.Status.OK;
-    record1Expected.labels = new ArrayList<>();
-    record1Expected.labels.add(submitRecordLabel2);
+    SubmitRecord expectedRecord = new SubmitRecord();
+    expectedRecord.status = SubmitRecord.Status.OK;
+    expectedRecord.labels = new ArrayList<>();
+    expectedRecord.labels.add(submitRecordLabel2);
+    expectedRecord.labels.add(submitRecordLabel3);
 
-    SubmitRecord record2Expected = new SubmitRecord();
-    record2Expected.status = SubmitRecord.Status.OK;
-    record2Expected.labels = new ArrayList<>();
-    record2Expected.labels.add(submitRecordLabel3);
-
-    assertThat(records).hasSize(2);
-
-    assertThat(records.get(0)).isEqualTo(record1Expected);
-    assertThat(records.get(1)).isEqualTo(record2Expected);
+    assertThat(record).isEqualTo(expectedRecord);
   }
 
   private static Term makeTerm(String status, StructureTerm labels) {
@@ -140,7 +133,7 @@ public class PrologRuleEvaluatorIT extends AbstractDaemonTest {
   }
 
   private static StructureTerm makeLabel(String name, String status, TestAccount account) {
-    StructureTerm user = new StructureTerm("user", new IntegerTerm(account.id.get()));
+    StructureTerm user = new StructureTerm("user", new IntegerTerm(account.id().get()));
     return new StructureTerm("label", new StructureTerm(name), new StructureTerm(status, user));
   }
 
@@ -149,12 +142,12 @@ public class PrologRuleEvaluatorIT extends AbstractDaemonTest {
   }
 
   private ChangeData makeChangeData() {
-    ChangeData cd = ChangeData.createForTest(project, new Change.Id(1), 1);
-    cd.setChange(TestChanges.newChange(project, admin.id));
+    ChangeData cd = ChangeData.createForTest(project, Change.id(1), 1, ObjectId.zeroId());
+    cd.setChange(TestChanges.newChange(project, admin.id()));
     return cd;
   }
 
   private PrologRuleEvaluator makeEvaluator() {
-    return evaluatorFactory.create(makeChangeData(), SubmitRuleOptions.defaults());
+    return evaluatorFactory.create(makeChangeData(), PrologOptions.defaultOptions());
   }
 }

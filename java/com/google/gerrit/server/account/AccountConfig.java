@@ -21,11 +21,12 @@ import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.exceptions.DuplicateKeyException;
 import com.google.gerrit.extensions.client.DiffPreferencesInfo;
 import com.google.gerrit.extensions.client.EditPreferencesInfo;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.RefNames;
 import com.google.gerrit.server.account.ProjectWatches.NotifyType;
 import com.google.gerrit.server.account.ProjectWatches.ProjectWatchKey;
 import com.google.gerrit.server.account.externalids.ExternalIds;
@@ -34,7 +35,6 @@ import com.google.gerrit.server.git.ValidationError;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.git.meta.VersionedMetaData;
 import com.google.gerrit.server.util.time.TimeUtil;
-import com.google.gwtorm.server.OrmDuplicateKeyException;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.ArrayList;
@@ -68,7 +68,7 @@ import org.eclipse.jgit.revwalk.RevSort;
  *   <li>'account.config': Contains the account properties. Parsing and writing it is delegated to
  *       {@link AccountProperties}.
  *   <li>'preferences.config': Contains the preferences. Parsing and writing it is delegated to
- *       {@link Preferences}.
+ *       {@link StoredPreferences}.
  *   <li>'account.config': Contains the project watches. Parsing and writing it is delegated to
  *       {@link ProjectWatches}.
  * </ul>
@@ -85,7 +85,7 @@ public class AccountConfig extends VersionedMetaData implements ValidationError.
   private Optional<AccountProperties> loadedAccountProperties;
   private Optional<ObjectId> externalIdsRev;
   private ProjectWatches projectWatches;
-  private Preferences preferences;
+  private StoredPreferences preferences;
   private Optional<InternalAccountUpdate> accountUpdate = Optional.empty();
   private List<ValidationError> validationErrors;
 
@@ -122,7 +122,7 @@ public class AccountConfig extends VersionedMetaData implements ValidationError.
    * Returns the revision of the {@code refs/meta/external-ids} branch.
    *
    * <p>This revision can be used to load the external IDs of the loaded account lazily via {@link
-   * ExternalIds#byAccount(com.google.gerrit.reviewdb.client.Account.Id, ObjectId)}.
+   * ExternalIds#byAccount(com.google.gerrit.entities.Account.Id, ObjectId)}.
    *
    * @return revision of the {@code refs/meta/external-ids} branch, {@link Optional#empty()} if no
    *     {@code refs/meta/external-ids} branch exists
@@ -184,14 +184,14 @@ public class AccountConfig extends VersionedMetaData implements ValidationError.
     checkLoaded();
     this.loadedAccountProperties =
         Optional.of(
-            new AccountProperties(account.getId(), account.getRegisteredOn(), new Config(), null));
+            new AccountProperties(account.id(), account.registeredOn(), new Config(), null));
     this.accountUpdate =
         Optional.of(
             InternalAccountUpdate.builder()
                 .setActive(account.isActive())
-                .setFullName(account.getFullName())
-                .setPreferredEmail(account.getPreferredEmail())
-                .setStatus(account.getStatus())
+                .setFullName(account.fullName())
+                .setPreferredEmail(account.preferredEmail())
+                .setStatus(account.status())
                 .build());
     return this;
   }
@@ -200,9 +200,9 @@ public class AccountConfig extends VersionedMetaData implements ValidationError.
    * Creates a new account.
    *
    * @return the new account
-   * @throws OrmDuplicateKeyException if the user branch already exists
+   * @throws DuplicateKeyException if the user branch already exists
    */
-  public Account getNewAccount() throws OrmDuplicateKeyException {
+  public Account getNewAccount() throws DuplicateKeyException {
     return getNewAccount(TimeUtil.nowTs());
   }
 
@@ -210,12 +210,12 @@ public class AccountConfig extends VersionedMetaData implements ValidationError.
    * Creates a new account.
    *
    * @return the new account
-   * @throws OrmDuplicateKeyException if the user branch already exists
+   * @throws DuplicateKeyException if the user branch already exists
    */
-  Account getNewAccount(Timestamp registeredOn) throws OrmDuplicateKeyException {
+  Account getNewAccount(Timestamp registeredOn) throws DuplicateKeyException {
     checkLoaded();
     if (revision != null) {
-      throw new OrmDuplicateKeyException(String.format("account %s already exists", accountId));
+      throw new DuplicateKeyException(String.format("account %s already exists", accountId));
     }
     this.loadedAccountProperties =
         Optional.of(new AccountProperties(accountId, registeredOn, new Config(), null));
@@ -242,10 +242,10 @@ public class AccountConfig extends VersionedMetaData implements ValidationError.
       projectWatches = new ProjectWatches(accountId, readConfig(ProjectWatches.WATCH_CONFIG), this);
 
       preferences =
-          new Preferences(
+          new StoredPreferences(
               accountId,
-              readConfig(Preferences.PREFERENCES_CONFIG),
-              Preferences.readDefaultConfig(allUsersName, repo),
+              readConfig(StoredPreferences.PREFERENCES_CONFIG),
+              StoredPreferences.readDefaultConfig(allUsersName, repo),
               this);
 
       projectWatches.parse();
@@ -256,8 +256,11 @@ public class AccountConfig extends VersionedMetaData implements ValidationError.
       projectWatches = new ProjectWatches(accountId, new Config(), this);
 
       preferences =
-          new Preferences(
-              accountId, new Config(), Preferences.readDefaultConfig(allUsersName, repo), this);
+          new StoredPreferences(
+              accountId,
+              new Config(),
+              StoredPreferences.readDefaultConfig(allUsersName, repo),
+              this);
     }
 
     Ref externalIdsRef = repo.exactRef(RefNames.REFS_EXTERNAL_IDS);
@@ -331,7 +334,7 @@ public class AccountConfig extends VersionedMetaData implements ValidationError.
     }
 
     saveConfig(
-        Preferences.PREFERENCES_CONFIG,
+        StoredPreferences.PREFERENCES_CONFIG,
         preferences.saveGeneralPreferences(
             accountUpdate.get().getGeneralPreferences(),
             accountUpdate.get().getDiffPreferences(),

@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-change-metadata</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="../../core/gr-router/gr-router.html">
 <link rel="import" href="gr-change-metadata.html">
@@ -115,18 +117,6 @@ limitations under the License.
       element.change = {status: 'MERGED', labels: {}};
       flushAsynchronousOperations();
       assert.isTrue(element.$$('.strategy').hasAttribute('hidden'));
-    });
-
-    test('show CC section when NoteDb enabled', () => {
-      function hasCc() {
-        return element._showReviewersByState;
-      }
-
-      element.serverConfig = {};
-      assert.isFalse(hasCc());
-
-      element.serverConfig = {note_db_enabled: true};
-      assert.isTrue(hasCc());
     });
 
     test('weblinks use Gerrit.Nav interface', () => {
@@ -474,6 +464,22 @@ limitations under the License.
       assert.isTrue(element._showTopicChip({base: {topic: 'foo'}}, false));
     });
 
+    test('_showCherryPickOf', () => {
+      assert.isFalse(element._showCherryPickOf(null));
+      assert.isFalse(element._showCherryPickOf({
+        base: {
+          cherry_pick_of_change: null,
+          cherry_pick_of_patch_set: null,
+        },
+      }));
+      assert.isTrue(element._showCherryPickOf({
+        base: {
+          cherry_pick_of_change: 123,
+          cherry_pick_of_patch_set: 1,
+        },
+      }));
+    });
+
     suite('Topic removal', () => {
       let change;
       setup(() => {
@@ -550,9 +556,6 @@ limitations under the License.
       });
 
       test('_computeHashtagReadOnly', () => {
-        element.serverConfig = {
-          note_db_enabled: true,
-        };
         flushAsynchronousOperations();
         let mutable = false;
         assert.isTrue(element._computeHashtagReadOnly(mutable, change));
@@ -565,9 +568,6 @@ limitations under the License.
       });
 
       test('hashtag read only hides delete button', () => {
-        element.serverConfig = {
-          note_db_enabled: true,
-        };
         flushAsynchronousOperations();
         element.account = {};
         element.change = change;
@@ -577,9 +577,6 @@ limitations under the License.
       });
 
       test('hashtag not read only does not hide delete button', () => {
-        element.serverConfig = {
-          note_db_enabled: true,
-        };
         flushAsynchronousOperations();
         element.account = {test: true};
         change.actions.hashtags.enabled = true;
@@ -701,9 +698,6 @@ limitations under the License.
       });
 
       test('changing hashtag', () => {
-        element.serverConfig = {
-          note_db_enabled: true,
-        };
         flushAsynchronousOperations();
         element._newHashtag = 'new hashtag';
         const newHashtag = ['new hashtag'];
@@ -742,12 +736,12 @@ limitations under the License.
         Gerrit.install(
             p => {
               plugin = p;
-              plugin.hook('change-metadata-item').getLastAttached().then(
-                  el => hookEl = el);
+              plugin.hook('change-metadata-item').getLastAttached()
+                  .then(el => hookEl = el);
             },
             '0.1',
             'http://some/plugins/url.html');
-        Gerrit._setPluginsCount(0);
+        Gerrit._loadPlugins([]);
         flush(() => {
           assert.strictEqual(hookEl.plugin, plugin);
           assert.strictEqual(hookEl.change, element.change);

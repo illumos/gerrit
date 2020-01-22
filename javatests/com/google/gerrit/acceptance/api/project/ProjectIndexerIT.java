@@ -15,10 +15,15 @@
 package com.google.gerrit.acceptance.api.project;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth8.assertThat;
 import static com.google.gerrit.acceptance.GitUtil.fetch;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.index.IndexConfig;
 import com.google.gerrit.index.QueryOptions;
 import com.google.gerrit.index.RefState;
@@ -27,7 +32,6 @@ import com.google.gerrit.index.project.ProjectIndex;
 import com.google.gerrit.index.project.ProjectIndexCollection;
 import com.google.gerrit.index.project.ProjectIndexer;
 import com.google.gerrit.index.query.FieldBundle;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.index.project.StalenessChecker;
 import com.google.gerrit.server.project.ProjectConfig;
 import com.google.inject.Inject;
@@ -45,6 +49,7 @@ public class ProjectIndexerIT extends AbstractDaemonTest {
   @Inject private ProjectIndexCollection indexes;
   @Inject private IndexConfig indexConfig;
   @Inject private StalenessChecker stalenessChecker;
+  @Inject private ProjectOperations projectOperations;
 
   private static final ImmutableSet<String> FIELDS =
       ImmutableSet.of(ProjectField.NAME.getName(), ProjectField.REF_STATE.getName());
@@ -58,7 +63,7 @@ public class ProjectIndexerIT extends AbstractDaemonTest {
     Optional<FieldBundle> result =
         i.getRaw(project, QueryOptions.create(indexConfig, 0, 1, FIELDS));
 
-    assertThat(result.isPresent()).isTrue();
+    assertThat(result).isPresent();
     Iterable<byte[]> refState = result.get().getValue(ProjectField.REF_STATE);
     assertThat(refState).isNotEmpty();
 
@@ -79,33 +84,33 @@ public class ProjectIndexerIT extends AbstractDaemonTest {
 
   @Test
   public void stalenessChecker_currentProject_notStale() throws Exception {
-    assertThat(stalenessChecker.isStale(project)).isFalse();
+    assertThat(stalenessChecker.check(project).isStale()).isFalse();
   }
 
   @Test
   public void stalenessChecker_currentProjectUpdates_isStale() throws Exception {
     updateProjectConfigWithoutIndexUpdate(project);
-    assertThat(stalenessChecker.isStale(project)).isTrue();
+    assertThat(stalenessChecker.check(project).isStale()).isTrue();
   }
 
   @Test
   public void stalenessChecker_parentProjectUpdates_isStale() throws Exception {
     updateProjectConfigWithoutIndexUpdate(allProjects);
-    assertThat(stalenessChecker.isStale(project)).isTrue();
+    assertThat(stalenessChecker.check(project).isStale()).isTrue();
   }
 
   @Test
   public void stalenessChecker_hierarchyChange_isStale() throws Exception {
-    Project.NameKey p1 = createProject("p1", allProjects);
-    Project.NameKey p2 = createProject("p2", allProjects);
+    Project.NameKey p1 = projectOperations.newProject().create();
+    Project.NameKey p2 = projectOperations.newProject().create();
     try (ProjectConfigUpdate u = updateProject(project)) {
       u.getConfig().getProject().setParentName(p1);
       u.save();
     }
-    assertThat(stalenessChecker.isStale(project)).isFalse();
+    assertThat(stalenessChecker.check(project).isStale()).isFalse();
 
     updateProjectConfigWithoutIndexUpdate(p1, c -> c.getProject().setParentName(p2));
-    assertThat(stalenessChecker.isStale(project)).isTrue();
+    assertThat(stalenessChecker.check(project).isStale()).isTrue();
   }
 
   private void updateProjectConfigWithoutIndexUpdate(Project.NameKey project) throws Exception {
@@ -115,15 +120,17 @@ public class ProjectIndexerIT extends AbstractDaemonTest {
 
   private void updateProjectConfigWithoutIndexUpdate(
       Project.NameKey project, Consumer<ProjectConfig> update) throws Exception {
-    try (AutoCloseable ignored = disableProjectIndex()) {
-      try (ProjectConfigUpdate u = updateProject(project)) {
-        update.accept(u.getConfig());
-        u.save();
-      }
-    } catch (UnsupportedOperationException e) {
-      // Drop, as we just wanted to drop the index update
-      return;
-    }
-    fail("should have a UnsupportedOperationException");
+    StorageException storageException =
+        assertThrows(
+            StorageException.class,
+            () -> {
+              try (AutoCloseable ignored = disableProjectIndex()) {
+                try (ProjectConfigUpdate u = updateProject(project)) {
+                  update.accept(u.getConfig());
+                  u.save();
+                }
+              }
+            });
+    assertThat(storageException.getCause()).isInstanceOf(UnsupportedOperationException.class);
   }
 }

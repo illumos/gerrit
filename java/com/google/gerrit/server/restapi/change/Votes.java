@@ -14,22 +14,20 @@
 
 package com.google.gerrit.server.restapi.change;
 
+import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.ChildCollection;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.extensions.restapi.RestView;
-import com.google.gerrit.reviewdb.client.PatchSetApproval;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.change.ReviewerResource;
 import com.google.gerrit.server.change.VoteResource;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.util.Map;
 import java.util.TreeMap;
@@ -57,7 +55,7 @@ public class Votes implements ChildCollection<ReviewerResource, VoteResource> {
 
   @Override
   public VoteResource parse(ReviewerResource reviewer, IdString id)
-      throws ResourceNotFoundException, OrmException, AuthException, MethodNotAllowedException {
+      throws ResourceNotFoundException, AuthException, MethodNotAllowedException {
     if (reviewer.getRevisionResource() != null && !reviewer.getRevisionResource().isCurrent()) {
       throw new MethodNotAllowedException("Cannot access on non-current patch set");
     }
@@ -66,18 +64,16 @@ public class Votes implements ChildCollection<ReviewerResource, VoteResource> {
 
   @Singleton
   public static class List implements RestReadView<ReviewerResource> {
-    private final Provider<ReviewDb> db;
     private final ApprovalsUtil approvalsUtil;
 
     @Inject
-    List(Provider<ReviewDb> db, ApprovalsUtil approvalsUtil) {
-      this.db = db;
+    List(ApprovalsUtil approvalsUtil) {
       this.approvalsUtil = approvalsUtil;
     }
 
     @Override
-    public Map<String, Short> apply(ReviewerResource rsrc)
-        throws OrmException, MethodNotAllowedException {
+    public Response<Map<String, Short>> apply(ReviewerResource rsrc)
+        throws MethodNotAllowedException {
       if (rsrc.getRevisionResource() != null && !rsrc.getRevisionResource().isCurrent()) {
         throw new MethodNotAllowedException("Cannot list votes on non-current patch set");
       }
@@ -85,16 +81,15 @@ public class Votes implements ChildCollection<ReviewerResource, VoteResource> {
       Map<String, Short> votes = new TreeMap<>();
       Iterable<PatchSetApproval> byPatchSetUser =
           approvalsUtil.byPatchSetUser(
-              db.get(),
               rsrc.getChangeResource().getNotes(),
               rsrc.getChange().currentPatchSetId(),
               rsrc.getReviewerUser().getAccountId(),
               null,
               null);
       for (PatchSetApproval psa : byPatchSetUser) {
-        votes.put(psa.getLabel(), psa.getValue());
+        votes.put(psa.label(), psa.value());
       }
-      return votes;
+      return Response.ok(votes);
     }
   }
 }

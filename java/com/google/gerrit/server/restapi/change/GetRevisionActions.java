@@ -16,10 +16,10 @@ package com.google.gerrit.server.restapi.change;
 
 import com.google.common.hash.Hasher;
 import com.google.common.hash.Hashing;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.common.ActionInfo;
 import com.google.gerrit.extensions.restapi.ETagView;
 import com.google.gerrit.extensions.restapi.Response;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.change.ActionJson;
 import com.google.gerrit.server.change.ChangeResource;
@@ -29,8 +29,6 @@ import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.submit.ChangeSet;
 import com.google.gerrit.server.submit.MergeSuperSet;
-import com.google.gwtorm.server.OrmException;
-import com.google.gwtorm.server.OrmRuntimeException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -42,26 +40,23 @@ import org.eclipse.jgit.lib.Config;
 public class GetRevisionActions implements ETagView<RevisionResource> {
   private final ActionJson delegate;
   private final Config config;
-  private final Provider<ReviewDb> dbProvider;
   private final Provider<MergeSuperSet> mergeSuperSet;
   private final ChangeResource.Factory changeResourceFactory;
 
   @Inject
   GetRevisionActions(
       ActionJson delegate,
-      Provider<ReviewDb> dbProvider,
       Provider<MergeSuperSet> mergeSuperSet,
       ChangeResource.Factory changeResourceFactory,
       @GerritServerConfig Config config) {
     this.delegate = delegate;
-    this.dbProvider = dbProvider;
     this.mergeSuperSet = mergeSuperSet;
     this.changeResourceFactory = changeResourceFactory;
     this.config = config;
   }
 
   @Override
-  public Response<Map<String, ActionInfo>> apply(RevisionResource rsrc) throws OrmException {
+  public Response<Map<String, ActionInfo>> apply(RevisionResource rsrc) {
     return Response.withMustRevalidate(delegate.format(rsrc));
   }
 
@@ -72,14 +67,13 @@ public class GetRevisionActions implements ETagView<RevisionResource> {
     try {
       rsrc.getChangeResource().prepareETag(h, user);
       h.putBoolean(MergeSuperSet.wholeTopicEnabled(config));
-      ReviewDb db = dbProvider.get();
-      ChangeSet cs = mergeSuperSet.get().completeChangeSet(db, rsrc.getChange(), user);
+      ChangeSet cs = mergeSuperSet.get().completeChangeSet(rsrc.getChange(), user);
       for (ChangeData cd : cs.changes()) {
         changeResourceFactory.create(cd.notes(), user).prepareETag(h, user);
       }
       h.putBoolean(cs.furtherHiddenChanges());
-    } catch (IOException | OrmException | PermissionBackendException e) {
-      throw new OrmRuntimeException(e);
+    } catch (IOException | PermissionBackendException e) {
+      throw new StorageException(e);
     }
     return h.hash().toString();
   }

@@ -20,10 +20,9 @@
   // Prevent redefinition.
   if (window.GrDiffBuilderSideBySide) { return; }
 
-  function GrDiffBuilderSideBySide(diff, comments, createThreadGroupFn, prefs,
-      outputEl, layers) {
-    GrDiffBuilder.call(this, diff, comments, createThreadGroupFn, prefs,
-        outputEl, layers);
+  /** @constructor */
+  function GrDiffBuilderSideBySide(diff, prefs, outputEl, layers) {
+    GrDiffBuilder.call(this, diff, prefs, outputEl, layers);
   }
   GrDiffBuilderSideBySide.prototype = Object.create(GrDiffBuilder.prototype);
   GrDiffBuilderSideBySide.prototype.constructor = GrDiffBuilderSideBySide;
@@ -36,6 +35,9 @@
     }
     if (group.dueToRebase) {
       sectionEl.classList.add('dueToRebase');
+    }
+    if (group.ignoredWhitespaceOnly) {
+      sectionEl.classList.add('ignoredWhitespaceOnly');
     }
     const pairs = group.getSideBySidePairs();
     for (let i = 0; i < pairs.length; i++) {
@@ -91,18 +93,14 @@
 
   GrDiffBuilderSideBySide.prototype._appendPair = function(section, row, line,
       lineNumber, side) {
-    const lineEl = this._createLineEl(line, lineNumber, line.type, side);
-    lineEl.classList.add(side);
-    row.appendChild(lineEl);
+    const lineNumberEl = this._createLineEl(line, lineNumber, line.type, side);
+    lineNumberEl.classList.add(side);
+    row.appendChild(lineNumberEl);
     const action = this._createContextControl(section, line);
     if (action) {
       row.appendChild(action);
     } else {
-      const textEl = this._createTextEl(line, side);
-      const threadGroupEl = this._commentThreadGroupForLine(line, side);
-      if (threadGroupEl) {
-        textEl.appendChild(threadGroupEl);
-      }
+      const textEl = this._createTextEl(lineNumberEl, line, side);
       row.appendChild(textEl);
     }
   };

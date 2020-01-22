@@ -16,11 +16,12 @@ package com.google.gerrit.server.change;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.extensions.proto.ProtoTruth.assertThat;
+import static com.google.gerrit.proto.testing.SerializedClassSubject.assertThatSerializedClass;
 import static com.google.gerrit.server.cache.testing.CacheSerializerTestUtil.byteString;
-import static com.google.gerrit.server.cache.testing.SerializedClassSubject.assertThatSerializedClass;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.gerrit.extensions.client.SubmitType;
+import com.google.gerrit.proto.testing.SerializedClassSubject;
 import com.google.gerrit.server.cache.proto.Cache.MergeabilityKeyProto;
 import org.eclipse.jgit.lib.ObjectId;
 import org.junit.Test;
@@ -53,10 +54,7 @@ public class MergeabilityCacheImplTest {
         .isEqualTo(key);
   }
 
-  /**
-   * See {@link com.google.gerrit.server.cache.testing.SerializedClassSubject} for background and
-   * what to do if this test fails.
-   */
+  /** See {@link SerializedClassSubject} for background and what to do if this test fails. */
   @Test
   public void keyFields() throws Exception {
     assertThatSerializedClass(MergeabilityCacheImpl.EntryKey.class)

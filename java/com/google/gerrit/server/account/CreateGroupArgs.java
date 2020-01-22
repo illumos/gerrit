@@ -14,8 +14,8 @@
 
 package com.google.gerrit.server.account;
 
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
 import java.util.Collection;
 
 public class CreateGroupArgs {
@@ -34,7 +34,7 @@ public class CreateGroupArgs {
   }
 
   public void setGroupName(String n) {
-    groupName = n != null ? new AccountGroup.NameKey(n) : null;
+    groupName = n != null ? AccountGroup.nameKey(n) : null;
   }
 
   public void setGroupName(AccountGroup.NameKey n) {

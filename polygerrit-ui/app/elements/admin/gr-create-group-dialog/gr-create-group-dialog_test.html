@@ -19,9 +19,11 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-create-group-dialog</title>
 
-<script src="../../../bower_components/page/page.js"></script>
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/page/page.js"></script>
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-create-group-dialog.html">
 
@@ -51,13 +53,17 @@ limitations under the License.
       sandbox.restore();
     });
 
-    test('name is updated correctly', () => {
+    test('name is updated correctly', done => {
       assert.isFalse(element.hasNewGroupName);
 
-      element.$.groupNameInput.bindValue = GROUP_NAME;
+      const inputEl = element.root.querySelector('iron-input');
+      inputEl.bindValue = GROUP_NAME;
 
-      assert.isTrue(element.hasNewGroupName);
-      assert.deepEqual(element._name, GROUP_NAME);
+      setTimeout(() => {
+        assert.isTrue(element.hasNewGroupName);
+        assert.deepEqual(element._name, GROUP_NAME);
+        done();
+      });
     });
 
     test('test for redirecting to group on successful creation', done => {

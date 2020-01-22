@@ -111,7 +111,7 @@ def getChangeMetaData(){
 }
 
 def collectBuildModes() {
-    Builds.modes = ["reviewdb", "notedb"]
+    Builds.modes = ["notedb"]
     def changedFiles = queryChangedFiles(Globals.gerritUrl, Change.number, Change.sha1)
     def polygerritFiles = changedFiles.findAll { it.startsWith("polygerrit-ui") ||
         it.startsWith("lib/js") }
@@ -130,7 +130,7 @@ def collectBuildModes() {
     }
 }
 
-def prepareBuildsForMode(buildName, mode="reviewdb", retryTimes = 1) {
+def prepareBuildsForMode(buildName, mode="notedb", retryTimes = 1) {
     return {
         stage("${buildName}/${mode}") {
             def slaveBuild = null

@@ -16,9 +16,10 @@ package com.google.gerrit.server.mail.send;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
+import com.google.common.io.BaseEncoding;
 import com.google.gerrit.common.data.ParameterizedString;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.mail.Address;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountState;
@@ -32,7 +33,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Optional;
 import java.util.regex.Pattern;
-import org.apache.commons.codec.binary.Base64;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.PersonIdent;
 
@@ -123,9 +123,9 @@ public class FromAddressGeneratorProvider implements Provider<FromAddressGenerat
     public Address from(Account.Id fromId) {
       String senderName;
       if (fromId != null) {
-        Optional<Account> a = accountCache.get(fromId).map(AccountState::getAccount);
-        String fullName = a.map(Account::getFullName).orElse(null);
-        String userEmail = a.map(Account::getPreferredEmail).orElse(null);
+        Optional<Account> a = accountCache.get(fromId).map(AccountState::account);
+        String fullName = a.map(Account::fullName).orElse(null);
+        String userEmail = a.map(Account::preferredEmail).orElse(null);
         if (canRelay(userEmail)) {
           return new Address(fullName, userEmail);
         }
@@ -208,8 +208,7 @@ public class FromAddressGeneratorProvider implements Provider<FromAddressGenerat
       final String senderName;
 
       if (fromId != null) {
-        String fullName =
-            accountCache.get(fromId).map(a -> a.getAccount().getFullName()).orElse(null);
+        String fullName = accountCache.get(fromId).map(a -> a.account().fullName()).orElse(null);
         if (fullName == null || "".equals(fullName)) {
           fullName = anonymousCowardName;
         }
@@ -233,7 +232,7 @@ public class FromAddressGeneratorProvider implements Provider<FromAddressGenerat
     try {
       MessageDigest hash = MessageDigest.getInstance("MD5");
       byte[] bytes = hash.digest(data.getBytes(UTF_8));
-      return Base64.encodeBase64URLSafeString(bytes);
+      return BaseEncoding.base64Url().encode(bytes);
     } catch (NoSuchAlgorithmException e) {
       throw new RuntimeException("No MD5 available", e);
     }

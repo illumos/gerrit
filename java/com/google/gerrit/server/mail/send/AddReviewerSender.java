@@ -14,24 +14,22 @@
 
 package com.google.gerrit.server.mail.send;
 
-import com.google.gerrit.common.errors.EmailException;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gwtorm.server.OrmException;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.EmailException;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 
 /** Asks a user to review a change. */
 public class AddReviewerSender extends NewChangeSender {
   public interface Factory {
-    AddReviewerSender create(Project.NameKey project, Change.Id id);
+    AddReviewerSender create(Project.NameKey project, Change.Id changeId);
   }
 
   @Inject
   public AddReviewerSender(
-      EmailArguments ea, @Assisted Project.NameKey project, @Assisted Change.Id id)
-      throws OrmException {
-    super(ea, newChangeData(ea, project, id));
+      EmailArguments args, @Assisted Project.NameKey project, @Assisted Change.Id changeId) {
+    super(args, newChangeData(args, project, changeId));
   }
 
   @Override

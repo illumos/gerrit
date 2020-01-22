@@ -19,7 +19,6 @@ import static com.google.gerrit.extensions.conditions.BooleanCondition.or;
 import static java.util.stream.Collectors.toList;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Predicate;
 import com.google.common.collect.Streams;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
@@ -38,6 +37,7 @@ import com.google.gerrit.metrics.Description.Units;
 import com.google.gerrit.metrics.Field;
 import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.metrics.Timer1;
+import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendCondition;
@@ -50,6 +50,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Predicate;
 
 @Singleton
 public class UiActions {
@@ -71,7 +72,7 @@ public class UiActions {
             new com.google.gerrit.metrics.Description("Latency for RestView#getDescription calls")
                 .setCumulative()
                 .setUnit(Units.MILLISECONDS),
-            Field.ofString("view"));
+            Field.ofString("view", Metadata.Builder::restViewName).build());
   }
 
   public <R extends RestResource> Iterable<UiAction.Description> from(
@@ -143,7 +144,7 @@ public class UiActions {
 
     String name = e.getExportName().substring(d + 1);
     UiAction.Description dsc;
-    try (Timer1.Context ignored = uiActionLatency.start(name)) {
+    try (Timer1.Context<String> ignored = uiActionLatency.start(name)) {
       dsc = ((UiAction<R>) view).getDescription(resource);
     }
 

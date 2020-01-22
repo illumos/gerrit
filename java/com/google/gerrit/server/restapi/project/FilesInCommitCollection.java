@@ -14,14 +14,17 @@
 
 package com.google.gerrit.server.restapi.project;
 
+import com.google.gerrit.entities.Patch;
 import com.google.gerrit.extensions.client.DiffPreferencesInfo;
+import com.google.gerrit.extensions.common.FileInfo;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.restapi.ChildCollection;
 import com.google.gerrit.extensions.restapi.IdString;
+import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.extensions.restapi.RestView;
-import com.google.gerrit.reviewdb.client.Patch;
 import com.google.gerrit.server.change.FileInfoJson;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.patch.PatchListKey;
@@ -32,6 +35,7 @@ import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
+import java.util.Map;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.kohsuke.args4j.Option;
 
@@ -82,7 +86,8 @@ public class FilesInCommitCollection implements ChildCollection<CommitResource, 
     }
 
     @Override
-    public Object apply(CommitResource resource) throws PatchListNotAvailableException {
+    public Response<Map<String, FileInfo>> apply(CommitResource resource)
+        throws ResourceConflictException, PatchListNotAvailableException {
       RevCommit commit = resource.getCommit();
       PatchListKey key;
 
@@ -94,7 +99,7 @@ public class FilesInCommitCollection implements ChildCollection<CommitResource, 
         key = PatchListKey.againstCommit(null, commit, DiffPreferencesInfo.Whitespace.IGNORE_NONE);
       }
 
-      return fileInfoJson.toFileInfoMap(resource.getProjectState().getNameKey(), key);
+      return Response.ok(fileInfoJson.toFileInfoMap(resource.getProjectState().getNameKey(), key));
     }
   }
 }

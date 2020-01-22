@@ -15,10 +15,10 @@
 package com.google.gerrit.server.change;
 
 import com.google.auto.value.AutoValue;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.restapi.Url;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
 import java.util.Optional;
 
 @AutoValue
@@ -27,8 +27,8 @@ public abstract class ChangeTriplet {
     return format(change.getDest(), change.getKey());
   }
 
-  private static String format(Branch.NameKey branch, Change.Key change) {
-    return branch.getParentKey().get() + "~" + branch.getShortName() + "~" + change.get();
+  private static String format(BranchNameKey branch, Change.Key change) {
+    return branch.project().get() + "~" + branch.shortName() + "~" + change.get();
   }
 
   /**
@@ -53,19 +53,19 @@ public abstract class ChangeTriplet {
     String changeId = Url.decode(triplet.substring(z + 1));
     return Optional.of(
         new AutoValue_ChangeTriplet(
-            new Branch.NameKey(new Project.NameKey(project), branch), new Change.Key(changeId)));
+            BranchNameKey.create(Project.nameKey(project), branch), Change.key(changeId)));
   }
 
   public final Project.NameKey project() {
-    return branch().getParentKey();
+    return branch().project();
   }
 
-  public abstract Branch.NameKey branch();
+  public abstract BranchNameKey branch();
 
   public abstract Change.Key id();
 
   @Override
-  public String toString() {
+  public final String toString() {
     return format(branch(), id());
   }
 }

@@ -85,6 +85,7 @@
     'text/x-swift': 'swift',
     'text/x-systemverilog': 'sv',
     'text/x-tcl': 'tcl',
+    'text/x-torque': 'torque',
     'text/x-twig': 'twig',
     'text/x-vb': 'vb',
     'text/x-verilog': 'v',
@@ -130,49 +131,70 @@
   const GO_BACKSLASH_LITERAL = '\'\\\\\'';
   const GLOBAL_LT_PATTERN = /</g;
 
-  Polymer({
-    is: 'gr-syntax-layer',
+  /** @extends Polymer.Element */
+  class GrSyntaxLayer extends Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element)) {
+    static get is() { return 'gr-syntax-layer'; }
 
-    properties: {
-      diff: {
-        type: Object,
-        observer: '_diffChanged',
-      },
-      enabled: {
-        type: Boolean,
-        value: true,
-      },
-      _baseRanges: {
-        type: Array,
-        value() { return []; },
-      },
-      _revisionRanges: {
-        type: Array,
-        value() { return []; },
-      },
-      _baseLanguage: String,
-      _revisionLanguage: String,
-      _listeners: {
-        type: Array,
-        value() { return []; },
-      },
-      /** @type {?number} */
-      _processHandle: Number,
-      _hljs: Object,
-    },
+    static get properties() {
+      return {
+        diff: {
+          type: Object,
+          observer: '_diffChanged',
+        },
+        enabled: {
+          type: Boolean,
+          value: true,
+        },
+        _baseRanges: {
+          type: Array,
+          value() { return []; },
+        },
+        _revisionRanges: {
+          type: Array,
+          value() { return []; },
+        },
+        _baseLanguage: String,
+        _revisionLanguage: String,
+        _listeners: {
+          type: Array,
+          value() { return []; },
+        },
+        /** @type {?number} */
+        _processHandle: Number,
+        /**
+         * The promise last returned from `process()` while the asynchronous
+         * processing is running - `null` otherwise. Provides a `cancel()`
+         * method that rejects it with `{isCancelled: true}`.
+         *
+         * @type {?Object}
+         */
+        _processPromise: {
+          type: Object,
+          value: null,
+        },
+        _hljs: Object,
+      };
+    }
 
     addListener(fn) {
       this.push('_listeners', fn);
-    },
+    }
+
+    removeListener(fn) {
+      this._listeners = this._listeners.filter(f => f != fn);
+    }
 
     /**
      * Annotation layer method to add syntax annotations to the given element
      * for the given line.
      *
      * @param {!HTMLElement} el
+     * @param {!HTMLElement} lineNumberEl
      * @param {!Object} line (GrDiffLine)
      */
-    annotate(el, line) {
+    annotate(el, lineNumberEl, line) {
       if (!this.enabled) { return; }
 
       // Determine the side.
@@ -200,15 +222,26 @@
         GrAnnotation.annotateElement(
             el, range.start, range.length, range.className);
       }
-    },
+    }
+
+    _getLanguage(diffFileMetaInfo) {
+      // The Gerrit API provides only content-type, but for other users of
+      // gr-diff it may be more convenient to specify the language directly.
+      return diffFileMetaInfo.language ||
+          LANGUAGE_MAP[diffFileMetaInfo.content_type];
+    }
 
     /**
-     * Start processing symtax for the loaded diff and notify layer listeners
+     * Start processing syntax for the loaded diff and notify layer listeners
      * as syntax info comes online.
      *
      * @return {Promise}
      */
     process() {
+      // Cancel any still running process() calls, because they append to the
+      // same _baseRanges and _revisionRanges fields.
+      this._cancel();
+
       // Discard existing ranges.
       this._baseRanges = [];
       this._revisionRanges = [];
@@ -217,13 +250,11 @@
         return Promise.resolve();
       }
 
-      this.cancel();
-
       if (this.diff.meta_a) {
-        this._baseLanguage = LANGUAGE_MAP[this.diff.meta_a.content_type];
+        this._baseLanguage = this._getLanguage(this.diff.meta_a);
       }
       if (this.diff.meta_b) {
-        this._revisionLanguage = LANGUAGE_MAP[this.diff.meta_b.content_type];
+        this._revisionLanguage = this._getLanguage(this.diff.meta_b);
       }
       if (!this._baseLanguage && !this._revisionLanguage) {
         return Promise.resolve();
@@ -238,56 +269,62 @@
         lastNotify: {left: 1, right: 1},
       };
 
-      return this._loadHLJS().then(() => {
-        return new Promise(resolve => {
-          const nextStep = () => {
-            this._processHandle = null;
-            this._processNextLine(state);
+      const rangesCache = new Map();
 
-            // Move to the next line in the section.
-            state.lineIndex++;
+      this._processPromise = util.makeCancelable(this._loadHLJS()
+          .then(() => new Promise(resolve => {
+            const nextStep = () => {
+              this._processHandle = null;
+              this._processNextLine(state, rangesCache);
 
-            // If the section has been exhausted, move to the next one.
-            if (this._isSectionDone(state)) {
-              state.lineIndex = 0;
-              state.sectionIndex++;
-            }
+              // Move to the next line in the section.
+              state.lineIndex++;
 
-            // If all sections have been exhausted, finish.
-            if (state.sectionIndex >= this.diff.content.length) {
-              resolve();
-              this._notify(state);
-              return;
-            }
+              // If the section has been exhausted, move to the next one.
+              if (this._isSectionDone(state)) {
+                state.lineIndex = 0;
+                state.sectionIndex++;
+              }
 
-            if (state.lineIndex % 100 === 0) {
-              this._notify(state);
-              this._processHandle = this.async(nextStep, ASYNC_DELAY);
-            } else {
-              nextStep.call(this);
-            }
-          };
+              // If all sections have been exhausted, finish.
+              if (state.sectionIndex >= this.diff.content.length) {
+                resolve();
+                this._notify(state);
+                return;
+              }
 
-          this._processHandle = this.async(nextStep, 1);
-        });
-      });
-    },
+              if (state.lineIndex % 100 === 0) {
+                this._notify(state);
+                this._processHandle = this.async(nextStep, ASYNC_DELAY);
+              } else {
+                nextStep.call(this);
+              }
+            };
+
+            this._processHandle = this.async(nextStep, 1);
+          })));
+      return this._processPromise
+          .finally(() => { this._processPromise = null; });
+    }
 
     /**
      * Cancel any asynchronous syntax processing jobs.
      */
-    cancel() {
-      if (this._processHandle) {
+    _cancel() {
+      if (this._processHandle != null) {
         this.cancelAsync(this._processHandle);
         this._processHandle = null;
       }
-    },
+      if (this._processPromise) {
+        this._processPromise.cancel();
+      }
+    }
 
     _diffChanged() {
-      this.cancel();
+      this._cancel();
       this._baseRanges = [];
       this._revisionRanges = [];
-    },
+    }
 
     /**
      * Take a string of HTML with the (potentially nested) syntax markers
@@ -295,13 +332,22 @@
      * markers.
      *
      * @param {string} str The string of HTML.
+     * @param {Map<string, !Array<!Object>>} rangesCache A map for caching
+     * ranges for each string. A cache is read and written by this method.
+     * Since diff is mostly comparing same file on two sides, there is good rate
+     * of duplication at least for parts that are on left and right parts.
      * @return {!Array<!Object>} The list of ranges.
      */
-    _rangesFromString(str) {
+    _rangesFromString(str, rangesCache) {
+      const cached = rangesCache.get(str);
+      if (cached) return cached;
+
       const div = document.createElement('div');
       div.innerHTML = str;
-      return this._rangesFromElement(div, 0);
-    },
+      const ranges = this._rangesFromElement(div, 0);
+      rangesCache.set(str, ranges);
+      return ranges;
+    }
 
     _rangesFromElement(elem, offset) {
       let result = [];
@@ -324,7 +370,7 @@
         offset += nodeLength;
       }
       return result;
-    },
+    }
 
     /**
      * For a given state, process the syntax for the next line (or pair of
@@ -332,7 +378,7 @@
      *
      * @param {!Object} state The processing state for the layer.
      */
-    _processNextLine(state) {
+    _processNextLine(state, rangesCache) {
       let baseLine;
       let revisionLine;
 
@@ -356,22 +402,26 @@
       // To store the result of the syntax highlighter.
       let result;
 
-      if (this._baseLanguage && baseLine !== undefined) {
+      if (this._baseLanguage && baseLine !== undefined &&
+          this._hljs.getLanguage(this._baseLanguage)) {
         baseLine = this._workaround(this._baseLanguage, baseLine);
         result = this._hljs.highlight(this._baseLanguage, baseLine, true,
             state.baseContext);
-        this.push('_baseRanges', this._rangesFromString(result.value));
+        this.push('_baseRanges',
+            this._rangesFromString(result.value, rangesCache));
         state.baseContext = result.top;
       }
 
-      if (this._revisionLanguage && revisionLine !== undefined) {
+      if (this._revisionLanguage && revisionLine !== undefined &&
+          this._hljs.getLanguage(this._revisionLanguage)) {
         revisionLine = this._workaround(this._revisionLanguage, revisionLine);
         result = this._hljs.highlight(this._revisionLanguage, revisionLine,
             true, state.revisionContext);
-        this.push('_revisionRanges', this._rangesFromString(result.value));
+        this.push('_revisionRanges',
+            this._rangesFromString(result.value, rangesCache));
         state.revisionContext = result.top;
       }
-    },
+    }
 
     /**
      * Ad hoc fixes for HLJS parsing bugs. Rewrite lines of code in constrained
@@ -438,7 +488,7 @@
       }
 
       return line;
-    },
+    }
 
     /**
      * Tells whether the state has exhausted its current section.
@@ -454,7 +504,7 @@
         return (!section.a || state.lineIndex >= section.a.length) &&
             (!section.b || state.lineIndex >= section.b.length);
       }
-    },
+    }
 
     /**
      * For a given state, notify layer listeners of any processed line ranges
@@ -477,18 +527,20 @@
             'right');
         state.lastNotify.right = state.lineNums.right;
       }
-    },
+    }
 
     _notifyRange(start, end, side) {
       for (const fn of this._listeners) {
         fn(start, end, side);
       }
-    },
+    }
 
     _loadHLJS() {
       return this.$.libLoader.getHLJS().then(hljs => {
         this._hljs = hljs;
       });
-    },
-  });
+    }
+  }
+
+  customElements.define(GrSyntaxLayer.is, GrSyntaxLayer);
 })();

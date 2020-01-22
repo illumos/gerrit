@@ -22,15 +22,15 @@ import com.google.common.cache.LoadingCache;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.flogger.FluentLogger;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.server.cache.CacheModule;
 import com.google.gerrit.server.group.InternalGroup;
 import com.google.gerrit.server.group.db.Groups;
+import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.logging.TraceContext.TraceTimer;
 import com.google.gerrit.server.query.group.InternalGroupQuery;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Module;
 import com.google.inject.Provider;
@@ -152,8 +152,10 @@ public class GroupIncludeCacheImpl implements GroupIncludeCache {
     }
 
     @Override
-    public ImmutableSet<AccountGroup.UUID> load(Account.Id memberId) throws OrmException {
-      try (TraceTimer timer = TraceContext.newTimer("Loading groups with member %s", memberId)) {
+    public ImmutableSet<AccountGroup.UUID> load(Account.Id memberId) {
+      try (TraceTimer timer =
+          TraceContext.newTimer(
+              "Loading groups with member", Metadata.builder().accountId(memberId.get()).build())) {
         return groupQueryProvider.get().byMember(memberId).stream()
             .map(InternalGroup::getGroupUUID)
             .collect(toImmutableSet());
@@ -171,8 +173,10 @@ public class GroupIncludeCacheImpl implements GroupIncludeCache {
     }
 
     @Override
-    public ImmutableList<AccountGroup.UUID> load(AccountGroup.UUID key) throws OrmException {
-      try (TraceTimer timer = TraceContext.newTimer("Loading parent groups of %s", key)) {
+    public ImmutableList<AccountGroup.UUID> load(AccountGroup.UUID key) {
+      try (TraceTimer timer =
+          TraceContext.newTimer(
+              "Loading parent groups", Metadata.builder().groupUuid(key.get()).build())) {
         return groupQueryProvider.get().bySubgroup(key).stream()
             .map(InternalGroup::getGroupUUID)
             .collect(toImmutableList());

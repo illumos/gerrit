@@ -15,14 +15,23 @@
 package com.google.gerrit.server.restapi.account;
 
 import com.google.gerrit.extensions.common.AccountInfo;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.server.account.AccountLoader;
 import com.google.gerrit.server.account.AccountResource;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 
+/**
+ * REST endpoint to get an account.
+ *
+ * <p>This REST endpoint handles {@code GET /accounts/<account-identifier>} requests.
+ *
+ * <p>In the response only a subset of fields is populated (see {@link
+ * AccountLoader#DETAILED_OPTIONS}). In contrast to this {@link GetDetail} populates all fields in
+ * the response.
+ */
 @Singleton
 public class GetAccount implements RestReadView<AccountResource> {
   private final AccountLoader.Factory infoFactory;
@@ -33,10 +42,10 @@ public class GetAccount implements RestReadView<AccountResource> {
   }
 
   @Override
-  public AccountInfo apply(AccountResource rsrc) throws OrmException, PermissionBackendException {
+  public Response<AccountInfo> apply(AccountResource rsrc) throws PermissionBackendException {
     AccountLoader loader = infoFactory.create(true);
     AccountInfo info = loader.get(rsrc.getUser().getAccountId());
     loader.fill();
-    return info;
+    return Response.ok(info);
   }
 }

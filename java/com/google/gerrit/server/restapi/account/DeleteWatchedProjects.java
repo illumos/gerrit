@@ -16,13 +16,13 @@ package com.google.gerrit.server.restapi.account;
 
 import static java.util.stream.Collectors.toList;
 
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.client.ProjectWatchInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.UserInitiated;
 import com.google.gerrit.server.account.AccountResource;
@@ -31,7 +31,6 @@ import com.google.gerrit.server.account.ProjectWatches.ProjectWatchKey;
 import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -40,6 +39,12 @@ import java.util.List;
 import java.util.Objects;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 
+/**
+ * REST endpoint to delete project watches from an account.
+ *
+ * <p>This REST endpoint handles {@code POST /accounts/<account-identifier>/watched.projects:delete}
+ * requests.
+ */
 @Singleton
 public class DeleteWatchedProjects
     implements RestModifyView<AccountResource, List<ProjectWatchInfo>> {
@@ -59,8 +64,8 @@ public class DeleteWatchedProjects
 
   @Override
   public Response<?> apply(AccountResource rsrc, List<ProjectWatchInfo> input)
-      throws AuthException, UnprocessableEntityException, OrmException, IOException,
-          ConfigInvalidException, PermissionBackendException {
+      throws AuthException, UnprocessableEntityException, IOException, ConfigInvalidException,
+          PermissionBackendException {
     if (!self.get().hasSameAccountId(rsrc.getUser())) {
       permissionBackend.currentUser().check(GlobalPermission.ADMINISTRATE_SERVER);
     }
@@ -78,7 +83,7 @@ public class DeleteWatchedProjects
                 u.deleteProjectWatches(
                     input.stream()
                         .filter(Objects::nonNull)
-                        .map(w -> ProjectWatchKey.create(new Project.NameKey(w.project), w.filter))
+                        .map(w -> ProjectWatchKey.create(Project.nameKey(w.project), w.filter))
                         .collect(toList())));
     return Response.none();
   }

@@ -16,26 +16,32 @@ package com.google.gerrit.acceptance.rest.change;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.gerrit.acceptance.GitUtil.pushHead;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allowLabel;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.block;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.GitUtil;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.PushOneCommit;
+import com.google.gerrit.acceptance.config.GerritConfig;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.common.data.LabelFunction;
 import com.google.gerrit.common.data.LabelType;
 import com.google.gerrit.common.data.Permission;
+import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.extensions.api.changes.MoveInput;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.api.projects.BranchInput;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
+import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.RestApiException;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.server.group.SystemGroupBackend;
-import com.google.gerrit.server.project.testing.Util;
+import com.google.gerrit.server.project.testing.TestLabels;
+import com.google.inject.Inject;
 import java.util.Arrays;
 import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.lib.PersonIdent;
@@ -44,13 +50,16 @@ import org.junit.Test;
 
 @NoHttpd
 public class MoveChangeIT extends AbstractDaemonTest {
+  @Inject private ProjectOperations projectOperations;
+  @Inject private RequestScopeOperations requestScopeOperations;
+
   @Test
   public void moveChangeWithShortRef() throws Exception {
     // Move change to a different branch using short ref name
     PushOneCommit.Result r = createChange();
-    Branch.NameKey newBranch = new Branch.NameKey(r.getChange().change().getProject(), "moveTest");
+    BranchNameKey newBranch = BranchNameKey.create(r.getChange().change().getProject(), "moveTest");
     createBranch(newBranch);
-    move(r.getChangeId(), newBranch.getShortName());
+    move(r.getChangeId(), newBranch.shortName());
     assertThat(r.getChange().change().getDest()).isEqualTo(newBranch);
   }
 
@@ -58,9 +67,9 @@ public class MoveChangeIT extends AbstractDaemonTest {
   public void moveChangeWithFullRef() throws Exception {
     // Move change to a different branch using full ref name
     PushOneCommit.Result r = createChange();
-    Branch.NameKey newBranch = new Branch.NameKey(r.getChange().change().getProject(), "moveTest");
+    BranchNameKey newBranch = BranchNameKey.create(r.getChange().change().getProject(), "moveTest");
     createBranch(newBranch);
-    move(r.getChangeId(), newBranch.get());
+    move(r.getChangeId(), newBranch.branch());
     assertThat(r.getChange().change().getDest()).isEqualTo(newBranch);
   }
 
@@ -68,10 +77,10 @@ public class MoveChangeIT extends AbstractDaemonTest {
   public void moveChangeWithMessage() throws Exception {
     // Provide a message using --message flag
     PushOneCommit.Result r = createChange();
-    Branch.NameKey newBranch = new Branch.NameKey(r.getChange().change().getProject(), "moveTest");
+    BranchNameKey newBranch = BranchNameKey.create(r.getChange().change().getProject(), "moveTest");
     createBranch(newBranch);
     String moveMessage = "Moving for the move test";
-    move(r.getChangeId(), newBranch.get(), moveMessage);
+    move(r.getChangeId(), newBranch.branch(), moveMessage);
     assertThat(r.getChange().change().getDest()).isEqualTo(newBranch);
     StringBuilder expectedMessage = new StringBuilder();
     expectedMessage.append("Change destination moved from master to moveTest");
@@ -84,49 +93,59 @@ public class MoveChangeIT extends AbstractDaemonTest {
   public void moveChangeToSameRefAsCurrent() throws Exception {
     // Move change to the branch same as change's destination
     PushOneCommit.Result r = createChange();
-    exception.expect(ResourceConflictException.class);
-    exception.expectMessage("Change is already destined for the specified branch");
-    move(r.getChangeId(), r.getChange().change().getDest().get());
+    ResourceConflictException thrown =
+        assertThrows(
+            ResourceConflictException.class,
+            () -> move(r.getChangeId(), r.getChange().change().getDest().branch()));
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains("Change is already destined for the specified branch");
   }
 
   @Test
   public void moveChangeToSameChangeId() throws Exception {
     // Move change to a branch with existing change with same change ID
     PushOneCommit.Result r = createChange();
-    Branch.NameKey newBranch = new Branch.NameKey(r.getChange().change().getProject(), "moveTest");
+    BranchNameKey newBranch = BranchNameKey.create(r.getChange().change().getProject(), "moveTest");
     createBranch(newBranch);
     int changeNum = r.getChange().change().getChangeId();
-    createChange(newBranch.get(), r.getChangeId());
-    exception.expect(ResourceConflictException.class);
-    exception.expectMessage(
-        "Destination "
-            + newBranch.getShortName()
-            + " has a different change with same change key "
-            + r.getChangeId());
-    move(changeNum, newBranch.get());
+    createChange(newBranch.branch(), r.getChangeId());
+    ResourceConflictException thrown =
+        assertThrows(ResourceConflictException.class, () -> move(changeNum, newBranch.branch()));
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains(
+            "Destination "
+                + newBranch.shortName()
+                + " has a different change with same change key "
+                + r.getChangeId());
   }
 
   @Test
   public void moveChangeToNonExistentRef() throws Exception {
     // Move change to a non-existing branch
     PushOneCommit.Result r = createChange();
-    Branch.NameKey newBranch =
-        new Branch.NameKey(r.getChange().change().getProject(), "does_not_exist");
-    exception.expect(ResourceConflictException.class);
-    exception.expectMessage("Destination " + newBranch.get() + " not found in the project");
-    move(r.getChangeId(), newBranch.get());
+    BranchNameKey newBranch =
+        BranchNameKey.create(r.getChange().change().getProject(), "does_not_exist");
+    ResourceConflictException thrown =
+        assertThrows(
+            ResourceConflictException.class, () -> move(r.getChangeId(), newBranch.branch()));
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains("Destination " + newBranch.branch() + " not found in the project");
   }
 
   @Test
   public void moveClosedChange() throws Exception {
     // Move a change which is not open
     PushOneCommit.Result r = createChange();
-    Branch.NameKey newBranch = new Branch.NameKey(r.getChange().change().getProject(), "moveTest");
+    BranchNameKey newBranch = BranchNameKey.create(r.getChange().change().getProject(), "moveTest");
     createBranch(newBranch);
     merge(r);
-    exception.expect(ResourceConflictException.class);
-    exception.expectMessage("Change is merged");
-    move(r.getChangeId(), newBranch.get());
+    ResourceConflictException thrown =
+        assertThrows(
+            ResourceConflictException.class, () -> move(r.getChangeId(), newBranch.branch()));
+    assertThat(thrown).hasMessageThat().contains("Change is merged");
   }
 
   @Test
@@ -141,49 +160,57 @@ public class MoveChangeIT extends AbstractDaemonTest {
         .parent(r1.getCommit())
         .parent(r2.getCommit())
         .message("Move change Merge Commit")
-        .author(admin.getIdent())
-        .committer(new PersonIdent(admin.getIdent(), testRepo.getDate()));
+        .author(admin.newIdent())
+        .committer(new PersonIdent(admin.newIdent(), testRepo.getDate()));
     RevCommit c = commitBuilder.create();
     pushHead(testRepo, "refs/for/master", false, false);
 
     // Try to move the merge commit to another branch
-    Branch.NameKey newBranch = new Branch.NameKey(r1.getChange().change().getProject(), "moveTest");
+    BranchNameKey newBranch =
+        BranchNameKey.create(r1.getChange().change().getProject(), "moveTest");
     createBranch(newBranch);
-    exception.expect(ResourceConflictException.class);
-    exception.expectMessage("Merge commit cannot be moved");
-    move(GitUtil.getChangeId(testRepo, c).get(), newBranch.get());
+    ResourceConflictException thrown =
+        assertThrows(
+            ResourceConflictException.class,
+            () -> move(GitUtil.getChangeId(testRepo, c).get(), newBranch.branch()));
+    assertThat(thrown).hasMessageThat().contains("Merge commit cannot be moved");
   }
 
   @Test
   public void moveChangeToBranchWithoutUploadPerms() throws Exception {
     // Move change to a destination where user doesn't have upload permissions
     PushOneCommit.Result r = createChange();
-    Branch.NameKey newBranch =
-        new Branch.NameKey(r.getChange().change().getProject(), "blocked_branch");
+    BranchNameKey newBranch =
+        BranchNameKey.create(r.getChange().change().getProject(), "blocked_branch");
     createBranch(newBranch);
-    block(
-        "refs/for/" + newBranch.get(),
-        Permission.PUSH,
-        systemGroupBackend.getGroup(REGISTERED_USERS).getUUID());
-    exception.expect(AuthException.class);
-    exception.expectMessage("move not permitted");
-    move(r.getChangeId(), newBranch.get());
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(Permission.PUSH).ref("refs/for/" + newBranch.branch()).group(REGISTERED_USERS))
+        .update();
+    AuthException thrown =
+        assertThrows(AuthException.class, () -> move(r.getChangeId(), newBranch.branch()));
+    assertThat(thrown).hasMessageThat().contains("move not permitted");
   }
 
   @Test
   public void moveChangeFromBranchWithoutAbandonPerms() throws Exception {
     // Move change for which user does not have abandon permissions
     PushOneCommit.Result r = createChange();
-    Branch.NameKey newBranch = new Branch.NameKey(r.getChange().change().getProject(), "moveTest");
+    BranchNameKey newBranch = BranchNameKey.create(r.getChange().change().getProject(), "moveTest");
     createBranch(newBranch);
-    block(
-        r.getChange().change().getDest().get(),
-        Permission.ABANDON,
-        systemGroupBackend.getGroup(REGISTERED_USERS).getUUID());
-    setApiUser(user);
-    exception.expect(AuthException.class);
-    exception.expectMessage("move not permitted");
-    move(r.getChangeId(), newBranch.get());
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(
+            block(Permission.ABANDON)
+                .ref(r.getChange().change().getDest().branch())
+                .group(REGISTERED_USERS))
+        .update();
+    requestScopeOperations.setApiUser(user.id());
+    AuthException thrown =
+        assertThrows(AuthException.class, () -> move(r.getChangeId(), newBranch.branch()));
+    assertThat(thrown).hasMessageThat().contains("move not permitted");
   }
 
   @Test
@@ -196,52 +223,56 @@ public class MoveChangeIT extends AbstractDaemonTest {
     int changeNum = r.getChange().change().getChangeId();
 
     // Create a branch with that same commit
-    Branch.NameKey newBranch = new Branch.NameKey(r.getChange().change().getProject(), "moveTest");
+    BranchNameKey newBranch = BranchNameKey.create(r.getChange().change().getProject(), "moveTest");
     BranchInput bi = new BranchInput();
     bi.revision = r.getCommit().name();
-    gApi.projects().name(newBranch.getParentKey().get()).branch(newBranch.get()).create(bi);
+    gApi.projects().name(newBranch.project().get()).branch(newBranch.branch()).create(bi);
 
     // Try to move the change to the branch with the same commit
-    exception.expect(ResourceConflictException.class);
-    exception.expectMessage(
-        "Current patchset revision is reachable from tip of " + newBranch.get());
-    move(changeNum, newBranch.get());
+    ResourceConflictException thrown =
+        assertThrows(ResourceConflictException.class, () -> move(changeNum, newBranch.branch()));
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains("Current patchset revision is reachable from tip of " + newBranch.branch());
   }
 
   @Test
   public void moveChangeWithCurrentPatchSetLocked() throws Exception {
     // Move change that is locked
     PushOneCommit.Result r = createChange();
-    Branch.NameKey newBranch = new Branch.NameKey(r.getChange().change().getProject(), "moveTest");
+    BranchNameKey newBranch = BranchNameKey.create(r.getChange().change().getProject(), "moveTest");
     createBranch(newBranch);
 
+    LabelType patchSetLock = TestLabels.patchSetLock();
     try (ProjectConfigUpdate u = updateProject(project)) {
-      LabelType patchSetLock = Util.patchSetLock();
       u.getConfig().getLabelSections().put(patchSetLock.getName(), patchSetLock);
-      AccountGroup.UUID registeredUsers = systemGroupBackend.getGroup(REGISTERED_USERS).getUUID();
-      Util.allow(
-          u.getConfig(),
-          Permission.forLabel(patchSetLock.getName()),
-          0,
-          1,
-          registeredUsers,
-          "refs/heads/*");
       u.save();
     }
-    grant(project, "refs/heads/*", Permission.LABEL + "Patch-Set-Lock");
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(
+            allowLabel(patchSetLock.getName())
+                .ref("refs/heads/*")
+                .group(REGISTERED_USERS)
+                .range(0, 1))
+        .update();
     revision(r).review(new ReviewInput().label("Patch-Set-Lock", 1));
 
-    exception.expect(ResourceConflictException.class);
-    exception.expectMessage(
-        String.format("The current patch set of change %s is locked", r.getChange().getId()));
-    move(r.getChangeId(), newBranch.get());
+    ResourceConflictException thrown =
+        assertThrows(
+            ResourceConflictException.class, () -> move(r.getChangeId(), newBranch.branch()));
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains(
+            String.format("The current patch set of change %s is locked", r.getChange().getId()));
   }
 
   @Test
   public void moveChangeOnlyKeepVetoVotes() throws Exception {
     // A vote for a label will be kept after moving if the label's function is *WithBlock and the
     // vote holds the minimum value.
-    createBranch(new Branch.NameKey(project, "foo"));
+    createBranch(BranchNameKey.create(project, "foo"));
 
     String codeReviewLabel = "Code-Review"; // 'Code-Review' uses 'MaxWithBlock' function.
     String testLabelA = "Label-A";
@@ -251,16 +282,13 @@ public class MoveChangeIT extends AbstractDaemonTest {
     configLabel(testLabelB, LabelFunction.MAX_NO_BLOCK);
     configLabel(testLabelC, LabelFunction.NO_BLOCK);
 
-    AccountGroup.UUID registered = SystemGroupBackend.REGISTERED_USERS;
-    try (ProjectConfigUpdate u = updateProject(project)) {
-      Util.allow(
-          u.getConfig(), Permission.forLabel(testLabelA), -1, +1, registered, "refs/heads/*");
-      Util.allow(
-          u.getConfig(), Permission.forLabel(testLabelB), -1, +1, registered, "refs/heads/*");
-      Util.allow(
-          u.getConfig(), Permission.forLabel(testLabelC), -1, +1, registered, "refs/heads/*");
-      u.save();
-    }
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allowLabel(testLabelA).ref("refs/heads/*").group(REGISTERED_USERS).range(-1, +1))
+        .add(allowLabel(testLabelB).ref("refs/heads/*").group(REGISTERED_USERS).range(-1, +1))
+        .add(allowLabel(testLabelC).ref("refs/heads/*").group(REGISTERED_USERS).range(-1, +1))
+        .update();
 
     String changeId = createChange().getChangeId();
     gApi.changes().id(changeId).current().review(ReviewInput.reject());
@@ -273,9 +301,9 @@ public class MoveChangeIT extends AbstractDaemonTest {
     input.label(testLabelC, -1);
     gApi.changes().id(changeId).current().review(input);
 
-    assertThat(gApi.changes().id(changeId).current().reviewer(admin.email).votes().keySet())
+    assertThat(gApi.changes().id(changeId).current().reviewer(admin.email()).votes().keySet())
         .containsExactly(codeReviewLabel, testLabelA, testLabelB, testLabelC);
-    assertThat(gApi.changes().id(changeId).current().reviewer(admin.email).votes().values())
+    assertThat(gApi.changes().id(changeId).current().reviewer(admin.email()).votes().values())
         .containsExactly((short) -2, (short) -1, (short) -1, (short) -1);
 
     // Move the change to the 'foo' branch.
@@ -284,28 +312,27 @@ public class MoveChangeIT extends AbstractDaemonTest {
     assertThat(gApi.changes().id(changeId).get().branch).isEqualTo("foo");
 
     // 'Code-Review -2' and 'Label-A -1' will be kept.
-    assertThat(gApi.changes().id(changeId).current().reviewer(admin.email).votes().values())
+    assertThat(gApi.changes().id(changeId).current().reviewer(admin.email()).votes().values())
         .containsExactly((short) -2, (short) -1, (short) 0, (short) 0);
 
     // Move the change back to 'master'.
     move(changeId, "master");
     assertThat(gApi.changes().id(changeId).get().branch).isEqualTo("master");
-    assertThat(gApi.changes().id(changeId).current().reviewer(admin.email).votes().values())
+    assertThat(gApi.changes().id(changeId).current().reviewer(admin.email()).votes().values())
         .containsExactly((short) -2, (short) -1, (short) 0, (short) 0);
   }
 
   @Test
-  public void moveToBranchWithoutLabel() throws Exception {
-    createBranch(new Branch.NameKey(project, "foo"));
+  public void moveToBranchThatDoesNotHaveCustomLabel() throws Exception {
+    createBranch(BranchNameKey.create(project, "foo"));
     String testLabelA = "Label-A";
     configLabel(testLabelA, LabelFunction.MAX_WITH_BLOCK, Arrays.asList("refs/heads/master"));
 
-    AccountGroup.UUID registered = SystemGroupBackend.REGISTERED_USERS;
-    try (ProjectConfigUpdate u = updateProject(project)) {
-      Util.allow(
-          u.getConfig(), Permission.forLabel(testLabelA), -1, +1, registered, "refs/heads/master");
-      u.save();
-    }
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allowLabel(testLabelA).ref("refs/heads/master").group(REGISTERED_USERS).range(-1, +1))
+        .update();
 
     String changeId = createChange().getChangeId();
 
@@ -313,23 +340,43 @@ public class MoveChangeIT extends AbstractDaemonTest {
     input.label(testLabelA, -1);
     gApi.changes().id(changeId).current().review(input);
 
-    assertThat(gApi.changes().id(changeId).current().reviewer(admin.email).votes().keySet())
+    assertThat(gApi.changes().id(changeId).current().reviewer(admin.email()).votes().keySet())
         .containsExactly(testLabelA);
-    assertThat(gApi.changes().id(changeId).current().reviewer(admin.email).votes().values())
+    assertThat(gApi.changes().id(changeId).current().reviewer(admin.email()).votes().values())
         .containsExactly((short) -1);
 
     move(changeId, "foo");
 
-    // TODO(dpursehouse): Assert about state of labels after move
+    // "foo" branch does not have the custom label
+    assertThat(gApi.changes().id(changeId).current().reviewer(admin.email()).votes().keySet())
+        .isEmpty();
+
+    // Move back to master and confirm that the custom label score is still there
+    move(changeId, "master");
+
+    assertThat(gApi.changes().id(changeId).current().reviewer(admin.email()).votes().keySet())
+        .containsExactly(testLabelA);
+    assertThat(gApi.changes().id(changeId).current().reviewer(admin.email()).votes().values())
+        .containsExactly((short) -1);
   }
 
   @Test
   public void moveNoDestinationBranchSpecified() throws Exception {
     PushOneCommit.Result r = createChange();
 
-    exception.expect(BadRequestException.class);
-    exception.expectMessage("destination branch is required");
-    move(r.getChangeId(), null);
+    BadRequestException thrown =
+        assertThrows(BadRequestException.class, () -> move(r.getChangeId(), null));
+    assertThat(thrown).hasMessageThat().contains("destination branch is required");
+  }
+
+  @Test
+  @GerritConfig(name = "change.move", value = "false")
+  public void moveCanBeDisabledByConfig() throws Exception {
+    PushOneCommit.Result r = createChange();
+
+    MethodNotAllowedException thrown =
+        assertThrows(MethodNotAllowedException.class, () -> move(r.getChangeId(), null));
+    assertThat(thrown).hasMessageThat().contains("move changes endpoint is disabled");
   }
 
   private void move(int changeNum, String destination) throws RestApiException {
@@ -348,7 +395,7 @@ public class MoveChangeIT extends AbstractDaemonTest {
   }
 
   private PushOneCommit.Result createChange(String branch, String changeId) throws Exception {
-    PushOneCommit push = pushFactory.create(db, admin.getIdent(), testRepo, changeId);
+    PushOneCommit push = pushFactory.create(admin.newIdent(), testRepo, changeId);
     PushOneCommit.Result result = push.to("refs/for/" + branch);
     result.assertOkStatus();
     return result;

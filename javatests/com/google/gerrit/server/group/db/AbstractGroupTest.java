@@ -18,17 +18,16 @@ import static com.google.gerrit.extensions.common.testing.CommitInfoSubject.asse
 
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.data.GroupDescription;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.common.CommitInfo;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.RefNames;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.config.AllUsersNameProvider;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.group.InternalGroup;
 import com.google.gerrit.server.util.time.TimeUtil;
-import com.google.gerrit.testing.GerritBaseTests;
 import com.google.gerrit.testing.InMemoryRepositoryManager;
 import java.io.IOException;
 import java.sql.Timestamp;
@@ -44,7 +43,7 @@ import org.junit.Before;
 import org.junit.Ignore;
 
 @Ignore
-public class AbstractGroupTest extends GerritBaseTests {
+public class AbstractGroupTest {
   protected static final TimeZone TZ = TimeZone.getTimeZone("America/Los_Angeles");
   protected static final String SERVER_ID = "server-id";
   protected static final String SERVER_NAME = "Gerrit Server";
@@ -65,9 +64,9 @@ public class AbstractGroupTest extends GerritBaseTests {
     allUsersName = new AllUsersName(AllUsersNameProvider.DEFAULT);
     repoManager = new InMemoryRepositoryManager();
     allUsersRepo = repoManager.createRepository(allUsersName);
-    serverAccountId = new Account.Id(SERVER_ACCOUNT_NUMBER);
+    serverAccountId = Account.id(SERVER_ACCOUNT_NUMBER);
     serverIdent = new PersonIdent(SERVER_NAME, SERVER_EMAIL, TimeUtil.nowTs(), TZ);
-    userId = new Account.Id(USER_ACCOUNT_NUMBER);
+    userId = Account.id(USER_ACCOUNT_NUMBER);
     userIdent = newPersonIdent(userId, serverIdent);
   }
 
@@ -124,9 +123,9 @@ public class AbstractGroupTest extends GerritBaseTests {
   }
 
   private static Optional<Account> getAccount(Account.Id id) {
-    Account account = new Account(id, TimeUtil.nowTs());
+    Account.Builder account = Account.builder(id, TimeUtil.nowTs());
     account.setFullName("Account " + id);
-    return Optional.of(account);
+    return Optional.of(account.build());
   }
 
   private Optional<GroupDescription.Basic> getGroup(AccountGroup.UUID uuid) {

@@ -16,7 +16,10 @@ package com.google.gerrit.server.api.changes;
 
 import static com.google.gerrit.server.api.ApiUtil.asRestApiException;
 
+import com.google.common.collect.ImmutableListMultimap;
+import com.google.common.collect.ListMultimap;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.changes.AbandonInput;
 import com.google.gerrit.extensions.api.changes.AddReviewerInput;
 import com.google.gerrit.extensions.api.changes.AddReviewerResult;
@@ -44,21 +47,23 @@ import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.ChangeMessageInfo;
 import com.google.gerrit.extensions.common.CommentInfo;
 import com.google.gerrit.extensions.common.CommitMessageInput;
-import com.google.gerrit.extensions.common.EditInfo;
 import com.google.gerrit.extensions.common.Input;
+import com.google.gerrit.extensions.common.InputWithMessage;
 import com.google.gerrit.extensions.common.MergePatchSetInput;
 import com.google.gerrit.extensions.common.PureRevertInfo;
+import com.google.gerrit.extensions.common.RevertSubmissionInfo;
 import com.google.gerrit.extensions.common.RobotCommentInfo;
 import com.google.gerrit.extensions.common.SuggestedReviewerInfo;
+import com.google.gerrit.extensions.registration.DynamicMap;
+import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
+import com.google.gerrit.server.DynamicOptions;
 import com.google.gerrit.server.StarredChangesUtil;
 import com.google.gerrit.server.StarredChangesUtil.IllegalLabelException;
-import com.google.gerrit.server.change.ChangeJson;
 import com.google.gerrit.server.change.ChangeMessageResource;
 import com.google.gerrit.server.change.ChangeResource;
-import com.google.gerrit.server.change.SetPrivateOp;
 import com.google.gerrit.server.change.WorkInProgressOp;
 import com.google.gerrit.server.restapi.change.Abandon;
 import com.google.gerrit.server.restapi.change.ChangeIncludedIn;
@@ -69,6 +74,7 @@ import com.google.gerrit.server.restapi.change.DeleteAssignee;
 import com.google.gerrit.server.restapi.change.DeleteChange;
 import com.google.gerrit.server.restapi.change.DeletePrivate;
 import com.google.gerrit.server.restapi.change.GetAssignee;
+import com.google.gerrit.server.restapi.change.GetChange;
 import com.google.gerrit.server.restapi.change.GetHashtags;
 import com.google.gerrit.server.restapi.change.GetPastAssignees;
 import com.google.gerrit.server.restapi.change.GetPureRevert;
@@ -91,6 +97,7 @@ import com.google.gerrit.server.restapi.change.PutTopic;
 import com.google.gerrit.server.restapi.change.Rebase;
 import com.google.gerrit.server.restapi.change.Restore;
 import com.google.gerrit.server.restapi.change.Revert;
+import com.google.gerrit.server.restapi.change.RevertSubmission;
 import com.google.gerrit.server.restapi.change.Reviewers;
 import com.google.gerrit.server.restapi.change.Revisions;
 import com.google.gerrit.server.restapi.change.SetReadyForReview;
@@ -98,14 +105,17 @@ import com.google.gerrit.server.restapi.change.SetWorkInProgress;
 import com.google.gerrit.server.restapi.change.SubmittedTogether;
 import com.google.gerrit.server.restapi.change.SuggestChangeReviewers;
 import com.google.gerrit.server.restapi.change.Unignore;
-import com.google.gwtorm.server.OrmException;
+import com.google.gerrit.util.cli.CmdLineParser;
 import com.google.inject.Inject;
+import com.google.inject.Injector;
 import com.google.inject.Provider;
+import com.google.inject.Singleton;
 import com.google.inject.assistedinject.Assisted;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.kohsuke.args4j.CmdLineException;
 
 class ChangeApiImpl implements ChangeApi {
   interface Factory {
@@ -124,6 +134,7 @@ class ChangeApiImpl implements ChangeApi {
   private final ChangeResource change;
   private final Abandon abandon;
   private final Revert revert;
+  private final RevertSubmission revertSubmission;
   private final Restore restore;
   private final CreateMergePatchSet updateByMerge;
   private final Provider<SubmittedTogether> submittedTogether;
@@ -133,7 +144,7 @@ class ChangeApiImpl implements ChangeApi {
   private final PutTopic putTopic;
   private final ChangeIncludedIn includedIn;
   private final PostReviewers postReviewers;
-  private final ChangeJson.Factory changeJson;
+  private final Provider<GetChange> getChangeProvider;
   private final PostHashtags postHashtags;
   private final GetHashtags getHashtags;
   private final PutAssignee putAssignee;
@@ -158,6 +169,7 @@ class ChangeApiImpl implements ChangeApi {
   private final PutMessage putMessage;
   private final Provider<GetPureRevert> getPureRevertProvider;
   private final StarredChangesUtil stars;
+  private final DynamicOptionParser dynamicOptionParser;
 
   @Inject
   ChangeApiImpl(
@@ -172,6 +184,7 @@ class ChangeApiImpl implements ChangeApi {
       ListReviewers listReviewers,
       Abandon abandon,
       Revert revert,
+      RevertSubmission revertSubmission,
       Restore restore,
       CreateMergePatchSet updateByMerge,
       Provider<SubmittedTogether> submittedTogether,
@@ -181,7 +194,7 @@ class ChangeApiImpl implements ChangeApi {
       PutTopic putTopic,
       ChangeIncludedIn includedIn,
       PostReviewers postReviewers,
-      ChangeJson.Factory changeJson,
+      Provider<GetChange> getChangeProvider,
       PostHashtags postHashtags,
       GetHashtags getHashtags,
       PutAssignee putAssignee,
@@ -206,9 +219,11 @@ class ChangeApiImpl implements ChangeApi {
       PutMessage putMessage,
       Provider<GetPureRevert> getPureRevertProvider,
       StarredChangesUtil stars,
+      DynamicOptionParser dynamicOptionParser,
       @Assisted ChangeResource change) {
     this.changeApi = changeApi;
     this.revert = revert;
+    this.revertSubmission = revertSubmission;
     this.reviewers = reviewers;
     this.revisions = revisions;
     this.reviewerApi = reviewerApi;
@@ -227,7 +242,7 @@ class ChangeApiImpl implements ChangeApi {
     this.putTopic = putTopic;
     this.includedIn = includedIn;
     this.postReviewers = postReviewers;
-    this.changeJson = changeJson;
+    this.getChangeProvider = getChangeProvider;
     this.postHashtags = postHashtags;
     this.getHashtags = getHashtags;
     this.putAssignee = putAssignee;
@@ -252,22 +267,13 @@ class ChangeApiImpl implements ChangeApi {
     this.putMessage = putMessage;
     this.getPureRevertProvider = getPureRevertProvider;
     this.stars = stars;
+    this.dynamicOptionParser = dynamicOptionParser;
     this.change = change;
   }
 
   @Override
   public String id() {
     return Integer.toString(change.getId().get());
-  }
-
-  @Override
-  public RevisionApi current() throws RestApiException {
-    return revision("current");
-  }
-
-  @Override
-  public RevisionApi revision(int id) throws RestApiException {
-    return revision(String.valueOf(id));
   }
 
   @Override
@@ -289,11 +295,6 @@ class ChangeApiImpl implements ChangeApi {
   }
 
   @Override
-  public void abandon() throws RestApiException {
-    abandon(new AbandonInput());
-  }
-
-  @Override
   public void abandon(AbandonInput in) throws RestApiException {
     try {
       abandon.apply(change, in);
@@ -303,24 +304,12 @@ class ChangeApiImpl implements ChangeApi {
   }
 
   @Override
-  public void restore() throws RestApiException {
-    restore(new RestoreInput());
-  }
-
-  @Override
   public void restore(RestoreInput in) throws RestApiException {
     try {
       restore.apply(change, in);
     } catch (Exception e) {
       throw asRestApiException("Cannot restore change", e);
     }
-  }
-
-  @Override
-  public void move(String destination) throws RestApiException {
-    MoveInput in = new MoveInput();
-    in.destinationBranch = destination;
-    move(in);
   }
 
   @Override
@@ -335,7 +324,7 @@ class ChangeApiImpl implements ChangeApi {
   @Override
   public void setPrivate(boolean value, @Nullable String message) throws RestApiException {
     try {
-      SetPrivateOp.Input input = new SetPrivateOp.Input(message);
+      InputWithMessage input = new InputWithMessage(message);
       if (value) {
         postPrivate.apply(change, input);
       } else {
@@ -365,16 +354,20 @@ class ChangeApiImpl implements ChangeApi {
   }
 
   @Override
-  public ChangeApi revert() throws RestApiException {
-    return revert(new RevertInput());
+  public ChangeApi revert(RevertInput in) throws RestApiException {
+    try {
+      return changeApi.id(revert.apply(change, in).value()._number);
+    } catch (Exception e) {
+      throw asRestApiException("Cannot revert change", e);
+    }
   }
 
   @Override
-  public ChangeApi revert(RevertInput in) throws RestApiException {
+  public RevertSubmissionInfo revertSubmission(RevertInput in) throws RestApiException {
     try {
-      return changeApi.id(revert.apply(change, in)._number);
+      return revertSubmission.apply(change, in).value();
     } catch (Exception e) {
-      throw asRestApiException("Cannot revert change", e);
+      throw asRestApiException("Cannot revert a change submission", e);
     }
   }
 
@@ -385,20 +378,6 @@ class ChangeApiImpl implements ChangeApi {
     } catch (Exception e) {
       throw asRestApiException("Cannot update change by merge", e);
     }
-  }
-
-  @Override
-  public List<ChangeInfo> submittedTogether() throws RestApiException {
-    SubmittedTogetherInfo info =
-        submittedTogether(
-            EnumSet.noneOf(ListChangesOption.class), EnumSet.noneOf(SubmittedTogetherOption.class));
-    return info.changes;
-  }
-
-  @Override
-  public SubmittedTogetherInfo submittedTogether(EnumSet<SubmittedTogetherOption> options)
-      throws RestApiException {
-    return submittedTogether(EnumSet.noneOf(ListChangesOption.class), options);
   }
 
   @Override
@@ -414,17 +393,6 @@ class ChangeApiImpl implements ChangeApi {
     } catch (Exception e) {
       throw asRestApiException("Cannot query submittedTogether", e);
     }
-  }
-
-  @Deprecated
-  @Override
-  public void publish() throws RestApiException {
-    throw new UnsupportedOperationException("draft workflow is discontinued");
-  }
-
-  @Override
-  public void rebase() throws RestApiException {
-    rebase(new RebaseInput());
   }
 
   @Override
@@ -447,7 +415,11 @@ class ChangeApiImpl implements ChangeApi {
 
   @Override
   public String topic() throws RestApiException {
-    return getTopic.apply(change);
+    try {
+      return getTopic.apply(change).value();
+    } catch (Exception e) {
+      throw asRestApiException("Cannot get topic", e);
+    }
   }
 
   @Override
@@ -464,23 +436,16 @@ class ChangeApiImpl implements ChangeApi {
   @Override
   public IncludedInInfo includedIn() throws RestApiException {
     try {
-      return includedIn.apply(change);
+      return includedIn.apply(change).value();
     } catch (Exception e) {
       throw asRestApiException("Could not extract IncludedIn data", e);
     }
   }
 
   @Override
-  public AddReviewerResult addReviewer(String reviewer) throws RestApiException {
-    AddReviewerInput in = new AddReviewerInput();
-    in.reviewer = reviewer;
-    return addReviewer(in);
-  }
-
-  @Override
   public AddReviewerResult addReviewer(AddReviewerInput in) throws RestApiException {
     try {
-      return postReviewers.apply(change, in);
+      return postReviewers.apply(change, in).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot add change reviewer", e);
     }
@@ -496,17 +461,14 @@ class ChangeApiImpl implements ChangeApi {
     };
   }
 
-  @Override
-  public SuggestedReviewersRequest suggestReviewers(String query) throws RestApiException {
-    return suggestReviewers().withQuery(query);
-  }
-
   private List<SuggestedReviewerInfo> suggestReviewers(SuggestedReviewersRequest r)
       throws RestApiException {
     try {
       suggestReviewers.setQuery(r.getQuery());
       suggestReviewers.setLimit(r.getLimit());
-      return suggestReviewers.apply(change);
+      suggestReviewers.setExcludeGroups(r.getExcludeGroups());
+      suggestReviewers.setReviewerState(r.getReviewerState());
+      return suggestReviewers.apply(change).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot retrieve suggested reviewers", e);
     }
@@ -515,43 +477,29 @@ class ChangeApiImpl implements ChangeApi {
   @Override
   public List<ReviewerInfo> reviewers() throws RestApiException {
     try {
-      return listReviewers.apply(change);
+      return listReviewers.apply(change).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot retrieve reviewers", e);
     }
   }
 
   @Override
-  public ChangeInfo get(EnumSet<ListChangesOption> s) throws RestApiException {
+  public ChangeInfo get(
+      EnumSet<ListChangesOption> options, ImmutableListMultimap<String, String> pluginOptions)
+      throws RestApiException {
     try {
-      return changeJson.create(s).format(change);
+      GetChange getChange = getChangeProvider.get();
+      options.forEach(getChange::addOption);
+      dynamicOptionParser.parseDynamicOptions(getChange, pluginOptions);
+      return getChange.apply(change).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot retrieve change", e);
     }
   }
 
   @Override
-  public ChangeInfo get() throws RestApiException {
-    return get(
-        EnumSet.complementOf(
-            EnumSet.of(ListChangesOption.CHECK, ListChangesOption.SKIP_MERGEABLE)));
-  }
-
-  @Override
-  public EditInfo getEdit() throws RestApiException {
-    return edit().get().orElse(null);
-  }
-
-  @Override
   public ChangeEditApi edit() throws RestApiException {
     return changeEditApi.create(change);
-  }
-
-  @Override
-  public void setMessage(String msg) throws RestApiException {
-    CommitMessageInput in = new CommitMessageInput();
-    in.message = msg;
-    setMessage(in);
   }
 
   @Override
@@ -561,11 +509,6 @@ class ChangeApiImpl implements ChangeApi {
     } catch (Exception e) {
       throw asRestApiException("Cannot edit commit message", e);
     }
-  }
-
-  @Override
-  public ChangeInfo info() throws RestApiException {
-    return get(EnumSet.noneOf(ListChangesOption.class));
   }
 
   @Override
@@ -589,7 +532,7 @@ class ChangeApiImpl implements ChangeApi {
   @Override
   public AccountInfo setAssignee(AssigneeInput input) throws RestApiException {
     try {
-      return putAssignee.apply(change, input);
+      return putAssignee.apply(change, input).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot set assignee", e);
     }
@@ -627,7 +570,7 @@ class ChangeApiImpl implements ChangeApi {
   @Override
   public Map<String, List<CommentInfo>> comments() throws RestApiException {
     try {
-      return listComments.apply(change);
+      return listComments.apply(change).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot get comments", e);
     }
@@ -645,7 +588,7 @@ class ChangeApiImpl implements ChangeApi {
   @Override
   public Map<String, List<RobotCommentInfo>> robotComments() throws RestApiException {
     try {
-      return listChangeRobotComments.apply(change);
+      return listChangeRobotComments.apply(change).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot get robot comments", e);
     }
@@ -654,7 +597,7 @@ class ChangeApiImpl implements ChangeApi {
   @Override
   public Map<String, List<CommentInfo>> drafts() throws RestApiException {
     try {
-      return listDrafts.apply(change);
+      return listDrafts.apply(change).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot get drafts", e);
     }
@@ -708,7 +651,7 @@ class ChangeApiImpl implements ChangeApi {
       } else {
         unignore.apply(change, new Input());
       }
-    } catch (OrmException | IllegalLabelException e) {
+    } catch (StorageException | IllegalLabelException e) {
       throw asRestApiException("Cannot ignore change", e);
     }
   }
@@ -717,7 +660,7 @@ class ChangeApiImpl implements ChangeApi {
   public boolean ignored() throws RestApiException {
     try {
       return stars.isIgnored(change);
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       throw asRestApiException("Cannot check if ignored", e);
     }
   }
@@ -732,7 +675,7 @@ class ChangeApiImpl implements ChangeApi {
       } else {
         markAsUnreviewed.apply(change, new Input());
       }
-    } catch (OrmException | IllegalLabelException e) {
+    } catch (StorageException | IllegalLabelException e) {
       throw asRestApiException(
           "Cannot mark change as " + (reviewed ? "reviewed" : "unreviewed"), e);
     }
@@ -748,7 +691,7 @@ class ChangeApiImpl implements ChangeApi {
     try {
       GetPureRevert getPureRevert = getPureRevertProvider.get();
       getPureRevert.setClaimedOriginal(claimedOriginal);
-      return getPureRevert.apply(change);
+      return getPureRevert.apply(change).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot compute pure revert", e);
     }
@@ -757,7 +700,7 @@ class ChangeApiImpl implements ChangeApi {
   @Override
   public List<ChangeMessageInfo> messages() throws RestApiException {
     try {
-      return changeMessages.list().apply(change);
+      return changeMessages.list().apply(change).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot list change messages", e);
     }
@@ -770,6 +713,38 @@ class ChangeApiImpl implements ChangeApi {
       return changeMessageApi.create(resource);
     } catch (Exception e) {
       throw asRestApiException("Cannot parse change message " + id, e);
+    }
+  }
+
+  @Singleton
+  static class DynamicOptionParser {
+    private final CmdLineParser.Factory cmdLineParserFactory;
+    private final Injector injector;
+    private final DynamicMap<DynamicOptions.DynamicBean> dynamicBeans;
+
+    @Inject
+    DynamicOptionParser(
+        CmdLineParser.Factory cmdLineParserFactory,
+        Injector injector,
+        DynamicMap<DynamicOptions.DynamicBean> dynamicBeans) {
+      this.cmdLineParserFactory = cmdLineParserFactory;
+      this.injector = injector;
+      this.dynamicBeans = dynamicBeans;
+    }
+
+    void parseDynamicOptions(Object bean, ListMultimap<String, String> pluginOptions)
+        throws BadRequestException {
+      CmdLineParser clp = cmdLineParserFactory.create(bean);
+      DynamicOptions dynamicOptions = new DynamicOptions(bean, injector, dynamicBeans);
+      dynamicOptions.parseDynamicBeans(clp);
+      dynamicOptions.setDynamicBeans();
+      dynamicOptions.onBeanParseStart();
+      try {
+        clp.parseOptionMap(pluginOptions);
+      } catch (CmdLineException | NumberFormatException e) {
+        throw new BadRequestException(e.getMessage(), e);
+      }
+      dynamicOptions.onBeanParseEnd();
     }
   }
 }

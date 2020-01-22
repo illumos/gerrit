@@ -14,15 +14,14 @@
 
 package com.google.gerrit.acceptance;
 
+import com.google.gerrit.entities.Change;
 import com.google.gerrit.index.QueryOptions;
 import com.google.gerrit.index.Schema;
 import com.google.gerrit.index.query.DataSource;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryParseException;
-import com.google.gerrit.reviewdb.client.Change.Id;
 import com.google.gerrit.server.index.change.ChangeIndex;
 import com.google.gerrit.server.query.change.ChangeData;
-import java.io.IOException;
 
 class ReadOnlyChangeIndex implements ChangeIndex {
   private final ChangeIndex index;
@@ -46,17 +45,17 @@ class ReadOnlyChangeIndex implements ChangeIndex {
   }
 
   @Override
-  public void replace(ChangeData obj) throws IOException {
+  public void replace(ChangeData obj) {
     // do nothing
   }
 
   @Override
-  public void delete(Id key) throws IOException {
+  public void delete(Change.Id key) {
     // do nothing
   }
 
   @Override
-  public void deleteAll() throws IOException {
+  public void deleteAll() {
     // do nothing
   }
 
@@ -67,7 +66,7 @@ class ReadOnlyChangeIndex implements ChangeIndex {
   }
 
   @Override
-  public void markReady(boolean ready) throws IOException {
+  public void markReady(boolean ready) {
     // do nothing
   }
 }

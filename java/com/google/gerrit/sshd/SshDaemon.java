@@ -51,6 +51,7 @@ import java.nio.file.PathMatcher;
 import java.nio.file.WatchService;
 import java.nio.file.attribute.UserPrincipalLookupService;
 import java.nio.file.spi.FileSystemProvider;
+import java.security.GeneralSecurityException;
 import java.security.InvalidKeyException;
 import java.security.KeyPair;
 import java.security.PublicKey;
@@ -66,14 +67,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.mina.transport.socket.SocketSessionConfig;
 import org.apache.sshd.common.BaseBuilder;
 import org.apache.sshd.common.NamedFactory;
-import org.apache.sshd.common.channel.RequestHandler;
 import org.apache.sshd.common.cipher.Cipher;
 import org.apache.sshd.common.compression.BuiltinCompressions;
 import org.apache.sshd.common.compression.Compression;
-import org.apache.sshd.common.file.FileSystemFactory;
 import org.apache.sshd.common.forward.DefaultForwarderFactory;
-import org.apache.sshd.common.future.CloseFuture;
-import org.apache.sshd.common.future.SshFutureListener;
 import org.apache.sshd.common.io.AbstractIoServiceFactory;
 import org.apache.sshd.common.io.IoAcceptor;
 import org.apache.sshd.common.io.IoServiceFactory;
@@ -87,7 +84,6 @@ import org.apache.sshd.common.keyprovider.KeyPairProvider;
 import org.apache.sshd.common.mac.Mac;
 import org.apache.sshd.common.random.Random;
 import org.apache.sshd.common.random.SingletonRandomFactory;
-import org.apache.sshd.common.session.ConnectionService;
 import org.apache.sshd.common.session.Session;
 import org.apache.sshd.common.session.helpers.DefaultUnknownChannelReferenceHandler;
 import org.apache.sshd.common.util.buffer.Buffer;
@@ -101,7 +97,6 @@ import org.apache.sshd.server.auth.gss.GSSAuthenticator;
 import org.apache.sshd.server.auth.gss.UserAuthGSSFactory;
 import org.apache.sshd.server.auth.pubkey.PublickeyAuthenticator;
 import org.apache.sshd.server.auth.pubkey.UserAuthPublicKeyFactory;
-import org.apache.sshd.server.command.Command;
 import org.apache.sshd.server.command.CommandFactory;
 import org.apache.sshd.server.forward.ForwardingFilter;
 import org.apache.sshd.server.global.CancelTcpipForwardHandler;
@@ -214,6 +209,7 @@ public class SshDaemon extends SshServer implements SshInfo, LifecycleListener {
     final boolean enableCompression = cfg.getBoolean("sshd", "enableCompression", false);
 
     SshSessionBackend backend = cfg.getEnum("sshd", null, "backend", SshSessionBackend.NIO2);
+    boolean channelIdTracking = cfg.getBoolean("sshd", "enableChannelIdTracking", true);
 
     System.setProperty(
         IoServiceFactoryFactory.class.getName(),
@@ -227,7 +223,7 @@ public class SshDaemon extends SshServer implements SshInfo, LifecycleListener {
     initMacs(cfg);
     initSignatures();
     initChannels();
-    initUnknownChannelReferenceHandler();
+    initUnknownChannelReferenceHandler(channelIdTracking);
     initForwarding();
     initFileSystemFactory();
     initSubsystems();
@@ -276,14 +272,11 @@ public class SshDaemon extends SshServer implements SshInfo, LifecycleListener {
             // Log a session close without authentication as a failure.
             //
             s.addCloseFutureListener(
-                new SshFutureListener<CloseFuture>() {
-                  @Override
-                  public void operationComplete(CloseFuture future) {
-                    connected.decrementAndGet();
-                    if (sd.isAuthenticationError()) {
-                      authFailures.increment();
-                      sshLog.onAuthFail(sd);
-                    }
+                future -> {
+                  connected.decrementAndGet();
+                  if (sd.isAuthenticationError()) {
+                    authFailures.increment();
+                    sshLog.onAuthFail(sd);
                   }
                 });
             return s;
@@ -295,7 +288,7 @@ public class SshDaemon extends SshServer implements SshInfo, LifecycleListener {
           }
         });
     setGlobalRequestHandlers(
-        Arrays.<RequestHandler<ConnectionService>>asList(
+        Arrays.asList(
             new KeepAliveHandler(),
             new NoMoreSessionsHandler(),
             new TcpipForwardHandler(),
@@ -390,12 +383,12 @@ public class SshDaemon extends SshServer implements SshInfo, LifecycleListener {
       return Collections.emptyList();
     }
 
-    final List<PublicKey> keys = myHostKeys();
-    final List<HostKey> r = new ArrayList<>();
+    List<HostKey> r = new ArrayList<>();
+    List<PublicKey> keys = myHostKeys();
     for (PublicKey pub : keys) {
-      final Buffer buf = new ByteArrayBuffer();
+      Buffer buf = new ByteArrayBuffer();
       buf.putRawPublicKey(pub);
-      final byte[] keyBin = buf.getCompactData();
+      byte[] keyBin = buf.getCompactData();
 
       for (String addr : advertised) {
         try {
@@ -406,24 +399,29 @@ public class SshDaemon extends SshServer implements SshInfo, LifecycleListener {
         }
       }
     }
+
     return Collections.unmodifiableList(r);
   }
 
   private List<PublicKey> myHostKeys() {
-    final KeyPairProvider p = getKeyPairProvider();
-    final List<PublicKey> keys = new ArrayList<>(6);
-    addPublicKey(keys, p, KeyPairProvider.SSH_ED25519);
-    addPublicKey(keys, p, KeyPairProvider.ECDSA_SHA2_NISTP256);
-    addPublicKey(keys, p, KeyPairProvider.ECDSA_SHA2_NISTP384);
-    addPublicKey(keys, p, KeyPairProvider.ECDSA_SHA2_NISTP521);
-    addPublicKey(keys, p, KeyPairProvider.SSH_RSA);
-    addPublicKey(keys, p, KeyPairProvider.SSH_DSS);
+    KeyPairProvider p = getKeyPairProvider();
+    List<PublicKey> keys = new ArrayList<>(6);
+    try {
+      addPublicKey(keys, p, KeyPairProvider.SSH_ED25519);
+      addPublicKey(keys, p, KeyPairProvider.ECDSA_SHA2_NISTP256);
+      addPublicKey(keys, p, KeyPairProvider.ECDSA_SHA2_NISTP384);
+      addPublicKey(keys, p, KeyPairProvider.ECDSA_SHA2_NISTP521);
+      addPublicKey(keys, p, KeyPairProvider.SSH_RSA);
+      addPublicKey(keys, p, KeyPairProvider.SSH_DSS);
+    } catch (IOException | GeneralSecurityException e) {
+      throw new IllegalStateException("Cannot load SSHD host key", e);
+    }
     return keys;
   }
 
-  private static void addPublicKey(
-      final Collection<PublicKey> out, KeyPairProvider p, String type) {
-    final KeyPair pair = p.loadKey(type);
+  private static void addPublicKey(final Collection<PublicKey> out, KeyPairProvider p, String type)
+      throws IOException, GeneralSecurityException {
+    final KeyPair pair = p.loadKey(null, type);
     if (pair != null && pair.getPublic() != null) {
       out.add(pair.getPublic());
     }
@@ -523,14 +521,14 @@ public class SshDaemon extends SshServer implements SshInfo, LifecycleListener {
 
   @SuppressWarnings("unchecked")
   private void initCiphers(Config cfg) {
-    final List<NamedFactory<Cipher>> a = BaseBuilder.setUpDefaultCiphers(true);
+    List<NamedFactory<Cipher>> a = BaseBuilder.setUpDefaultCiphers(true);
 
     for (Iterator<NamedFactory<Cipher>> i = a.iterator(); i.hasNext(); ) {
-      final NamedFactory<Cipher> f = i.next();
+      NamedFactory<Cipher> f = i.next();
       try {
-        final Cipher c = f.create();
-        final byte[] key = new byte[c.getBlockSize()];
-        final byte[] iv = new byte[c.getIVSize()];
+        Cipher c = f.create();
+        byte[] key = new byte[c.getKdfSize()];
+        byte[] iv = new byte[c.getIVSize()];
         c.init(Cipher.Mode.Encrypt, key, iv);
       } catch (InvalidKeyException e) {
         logger.atWarning().log(
@@ -623,7 +621,8 @@ public class SshDaemon extends SshServer implements SshInfo, LifecycleListener {
   }
 
   private void initSignatures() {
-    setSignatureFactories(BaseBuilder.setUpDefaultSignatures(true));
+    setSignatureFactories(
+        NamedFactory.setUpBuiltinFactories(false, ServerBuilder.DEFAULT_SIGNATURE_PREFERENCE));
   }
 
   private void initCompression(boolean enableCompression) {
@@ -639,10 +638,9 @@ public class SshDaemon extends SshServer implements SshInfo, LifecycleListener {
     // However, if there are CPU in abundance and the server is reachable through
     // slow networks, gits with huge amount of refs can benefit from SSH-compression
     // since git does not compress the ref announcement during the handshake.
-    //
-    // Compression can be especially useful when Gerrit slaves are being used
-    // for the larger clones and fetches and the master server mostly takes small
-    // receive-packs.
+    // Compression can be especially useful when Gerrit replica are being used
+    // for the larger clones and fetches and the primary server handling write
+    // operations mostly takes small receive-packs.
 
     if (enableCompression) {
       compressionFactories.add(BuiltinCompressions.zlib);
@@ -655,12 +653,15 @@ public class SshDaemon extends SshServer implements SshInfo, LifecycleListener {
     setChannelFactories(ServerBuilder.DEFAULT_CHANNEL_FACTORIES);
   }
 
-  private void initUnknownChannelReferenceHandler() {
-    setUnknownChannelReferenceHandler(DefaultUnknownChannelReferenceHandler.INSTANCE);
+  private void initUnknownChannelReferenceHandler(boolean enableChannelIdTracking) {
+    setUnknownChannelReferenceHandler(
+        enableChannelIdTracking
+            ? ChannelIdTrackingUnknownChannelReferenceHandler.TRACKER
+            : DefaultUnknownChannelReferenceHandler.INSTANCE);
   }
 
   private void initSubsystems() {
-    setSubsystemFactories(Collections.<NamedFactory<Command>>emptyList());
+    setSubsystemFactories(Collections.emptyList());
   }
 
   private void initUserAuth(
@@ -727,10 +728,8 @@ public class SshDaemon extends SshServer implements SshInfo, LifecycleListener {
 
   private void initFileSystemFactory() {
     setFileSystemFactory(
-        new FileSystemFactory() {
-          @Override
-          public FileSystem createFileSystem(Session session) throws IOException {
-            return new FileSystem() {
+        session ->
+            new FileSystem() {
               @Override
               public void close() throws IOException {}
 
@@ -788,8 +787,6 @@ public class SshDaemon extends SshServer implements SshInfo, LifecycleListener {
               public Set<String> supportedFileAttributeViews() {
                 return null;
               }
-            };
-          }
-        });
+            });
   }
 }

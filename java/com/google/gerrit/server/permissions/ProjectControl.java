@@ -16,21 +16,24 @@ package com.google.gerrit.server.permissions;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.gerrit.common.data.AccessSection.ALL;
-import static com.google.gerrit.common.data.RefConfigSection.REGEX_PREFIX;
-import static com.google.gerrit.reviewdb.client.RefNames.REFS_TAGS;
+import static com.google.gerrit.common.data.AccessSection.REGEX_PREFIX;
+import static com.google.gerrit.entities.RefNames.REFS_TAGS;
 import static com.google.gerrit.server.util.MagicBranch.NEW_CHANGE;
 
+import com.google.common.collect.Sets;
 import com.google.gerrit.common.data.AccessSection;
 import com.google.gerrit.common.data.Permission;
 import com.google.gerrit.common.data.PermissionRule;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.exceptions.StorageException;
+import com.google.gerrit.extensions.api.access.CoreOrPluginProjectPermission;
+import com.google.gerrit.extensions.api.access.PluginProjectPermission;
 import com.google.gerrit.extensions.conditions.BooleanCondition;
 import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.account.GroupMembership;
 import com.google.gerrit.server.config.GitReceivePackGroups;
@@ -44,12 +47,10 @@ import com.google.gerrit.server.permissions.PermissionBackend.RefFilterOptions;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.project.SectionMatcher;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -101,17 +102,17 @@ class ProjectControl {
     return new ForProjectImpl();
   }
 
-  ChangeControl controlFor(ReviewDb db, Change change) throws OrmException {
+  ChangeControl controlFor(Change change) {
     return changeControlFactory.create(
-        controlForRef(change.getDest()), db, change.getProject(), change.getId());
+        controlForRef(change.getDest()), change.getProject(), change.getId());
   }
 
   ChangeControl controlFor(ChangeNotes notes) {
     return changeControlFactory.create(controlForRef(notes.getChange().getDest()), notes);
   }
 
-  RefControl controlForRef(Branch.NameKey ref) {
-    return controlForRef(ref.get());
+  RefControl controlForRef(BranchNameKey ref) {
+    return controlForRef(ref.branch());
   }
 
   public RefControl controlForRef(String refName) {
@@ -349,7 +350,7 @@ class ProjectControl {
 
     @Override
     public ForRef ref(String ref) {
-      return controlForRef(ref).asForRef().database(db);
+      return controlForRef(ref).asForRef();
     }
 
     @Override
@@ -357,7 +358,7 @@ class ProjectControl {
       try {
         checkProject(cd.change());
         return super.change(cd);
-      } catch (OrmException e) {
+      } catch (StorageException e) {
         return FailedPermissionBackend.change("unavailable", e);
       }
     }
@@ -378,17 +379,18 @@ class ProjectControl {
     }
 
     @Override
-    public void check(ProjectPermission perm) throws AuthException, PermissionBackendException {
+    public void check(CoreOrPluginProjectPermission perm)
+        throws AuthException, PermissionBackendException {
       if (!can(perm)) {
         throw new AuthException(perm.describeForException() + " not permitted");
       }
     }
 
     @Override
-    public Set<ProjectPermission> test(Collection<ProjectPermission> permSet)
+    public <T extends CoreOrPluginProjectPermission> Set<T> test(Collection<T> permSet)
         throws PermissionBackendException {
-      EnumSet<ProjectPermission> ok = EnumSet.noneOf(ProjectPermission.class);
-      for (ProjectPermission perm : permSet) {
+      Set<T> ok = Sets.newHashSetWithExpectedSize(permSet.size());
+      for (T perm : permSet) {
         if (can(perm)) {
           ok.add(perm);
         }
@@ -397,17 +399,28 @@ class ProjectControl {
     }
 
     @Override
-    public BooleanCondition testCond(ProjectPermission perm) {
+    public BooleanCondition testCond(CoreOrPluginProjectPermission perm) {
       return new PermissionBackendCondition.ForProject(this, perm, getUser());
     }
 
     @Override
-    public Map<String, Ref> filter(Map<String, Ref> refs, Repository repo, RefFilterOptions opts)
+    public Collection<Ref> filter(Collection<Ref> refs, Repository repo, RefFilterOptions opts)
         throws PermissionBackendException {
       if (refFilter == null) {
         refFilter = refFilterFactory.create(ProjectControl.this);
       }
       return refFilter.filter(refs, repo, opts);
+    }
+
+    private boolean can(CoreOrPluginProjectPermission perm) throws PermissionBackendException {
+      if (perm instanceof ProjectPermission) {
+        return can((ProjectPermission) perm);
+      } else if (perm instanceof PluginProjectPermission) {
+        // TODO(xchangcheng): implement for plugin defined project permissions.
+        return false;
+      }
+
+      throw new PermissionBackendException(perm.describeForException() + " unsupported");
     }
 
     private boolean can(ProjectPermission perm) throws PermissionBackendException {

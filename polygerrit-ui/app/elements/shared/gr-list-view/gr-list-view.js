@@ -19,30 +19,41 @@
 
   const REQUEST_DEBOUNCE_INTERVAL_MS = 200;
 
-  Polymer({
-    is: 'gr-list-view',
+  /**
+   * @appliesMixin Gerrit.BaseUrlMixin
+   * @appliesMixin Gerrit.FireMixin
+   * @appliesMixin Gerrit.URLEncodingMixin
+   * @extends Polymer.Element
+   */
+  class GrListView extends Polymer.mixinBehaviors( [
+    Gerrit.BaseUrlBehavior,
+    Gerrit.FireBehavior,
+    Gerrit.URLEncodingBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-list-view'; }
 
-    properties: {
-      createNew: Boolean,
-      items: Array,
-      itemsPerPage: Number,
-      filter: {
-        type: String,
-        observer: '_filterChanged',
-      },
-      offset: Number,
-      loading: Boolean,
-      path: String,
-    },
+    static get properties() {
+      return {
+        createNew: Boolean,
+        items: Array,
+        itemsPerPage: Number,
+        filter: {
+          type: String,
+          observer: '_filterChanged',
+        },
+        offset: Number,
+        loading: Boolean,
+        path: String,
+      };
+    }
 
-    behaviors: [
-      Gerrit.BaseUrlBehavior,
-      Gerrit.URLEncodingBehavior,
-    ],
-
+    /** @override */
     detached() {
+      super.detached();
       this.cancelDebouncer('reload');
-    },
+    }
 
     _filterChanged(newFilter, oldFilter) {
       if (!newFilter && !oldFilter) {
@@ -50,7 +61,7 @@
       }
 
       this._debounceReload(newFilter);
-    },
+    }
 
     _debounceReload(filter) {
       this.debounce('reload', () => {
@@ -60,11 +71,11 @@
         }
         page.show(this.path);
       }, REQUEST_DEBOUNCE_INTERVAL_MS);
-    },
+    }
 
     _createNewItem() {
       this.fire('create-clicked');
-    },
+    }
 
     _computeNavLink(offset, direction, itemsPerPage, filter, path) {
       // Offset could be a string when passed from the router.
@@ -78,22 +89,31 @@
         href += ',' + newOffset;
       }
       return href;
-    },
+    }
 
     _computeCreateClass(createNew) {
       return createNew ? 'show' : '';
-    },
+    }
 
     _hidePrevArrow(loading, offset) {
       return loading || offset === 0;
-    },
+    }
 
     _hideNextArrow(loading, items) {
-      let lastPage = false;
-      if (items.length < this.itemsPerPage + 1) {
-        lastPage = true;
+      if (loading || !items || !items.length) {
+        return true;
       }
-      return loading || lastPage || !items || !items.length;
-    },
-  });
+      const lastPage = items.length < this.itemsPerPage + 1;
+      return lastPage;
+    }
+
+    // TODO: fix offset (including itemsPerPage)
+    // to either support a decimal or make it go to the nearest
+    // whole number (e.g 3).
+    _computePage(offset, itemsPerPage) {
+      return offset / itemsPerPage + 1;
+    }
+  }
+
+  customElements.define(GrListView.is, GrListView);
 })();

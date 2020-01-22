@@ -19,6 +19,8 @@ import static com.google.gerrit.server.query.change.ChangeStatusPredicate.open;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Change.Status;
 import com.google.gerrit.index.FieldDef;
 import com.google.gerrit.index.IndexConfig;
 import com.google.gerrit.index.IndexRewriter;
@@ -31,8 +33,7 @@ import com.google.gerrit.index.query.NotPredicate;
 import com.google.gerrit.index.query.OrPredicate;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryParseException;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Change.Status;
+import com.google.gerrit.index.query.TooManyTermsInQueryException;
 import com.google.gerrit.server.query.change.AndChangeSource;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.ChangeDataSource;
@@ -155,7 +156,7 @@ public class ChangeIndexRewriter implements IndexRewriter<ChangeData> {
 
     MutableInteger leafTerms = new MutableInteger();
     Predicate<ChangeData> out = rewriteImpl(in, index, opts, leafTerms);
-    if (in == out || out instanceof IndexPredicate) {
+    if (isSameInstance(in, out) || out instanceof IndexPredicate) {
       return new IndexedChangeQuery(index, out, opts);
     } else if (out == null /* cannot rewrite */) {
       return in;
@@ -183,7 +184,7 @@ public class ChangeIndexRewriter implements IndexRewriter<ChangeData> {
       throws QueryParseException {
     if (isIndexPredicate(in, index)) {
       if (++leafTerms.value > config.maxTerms()) {
-        throw new QueryParseException("too many terms in query");
+        throw new TooManyTermsInQueryException();
       }
       return in;
     } else if (in instanceof LimitPredicate) {
@@ -207,7 +208,7 @@ public class ChangeIndexRewriter implements IndexRewriter<ChangeData> {
     for (int i = 0; i < n; i++) {
       Predicate<ChangeData> c = in.getChild(i);
       Predicate<ChangeData> nc = rewriteImpl(c, index, opts, leafTerms);
-      if (nc == c) {
+      if (isSameInstance(nc, c)) {
         isIndexed.set(i);
         newChildren.add(c);
       } else if (nc == null /* cannot rewrite c */) {
@@ -290,5 +291,10 @@ public class ChangeIndexRewriter implements IndexRewriter<ChangeData> {
   private static boolean isRewritePossible(Predicate<ChangeData> p) {
     return p.getChildCount() > 0
         && (p instanceof AndPredicate || p instanceof OrPredicate || p instanceof NotPredicate);
+  }
+
+  @SuppressWarnings("ReferenceEquality")
+  private static <T> boolean isSameInstance(T a, T b) {
+    return a == b;
   }
 }

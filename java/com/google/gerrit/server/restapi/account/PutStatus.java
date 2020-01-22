@@ -29,13 +29,20 @@ import com.google.gerrit.server.account.AccountsUpdate;
 import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 
+/**
+ * REST endpoint to set the status of an account.
+ *
+ * <p>This REST endpoint handles {@code PUT /accounts/<account-identifier>/status} requests.
+ *
+ * <p>The account status is a free-form text that a user can set for the own account (e.g. the 'OOO'
+ * string is often used to signal that the user is out-of-office).
+ */
 @Singleton
 public class PutStatus implements RestModifyView<AccountResource, StatusInput> {
   private final Provider<CurrentUser> self;
@@ -54,8 +61,8 @@ public class PutStatus implements RestModifyView<AccountResource, StatusInput> {
 
   @Override
   public Response<String> apply(AccountResource rsrc, StatusInput input)
-      throws AuthException, ResourceNotFoundException, OrmException, IOException,
-          PermissionBackendException, ConfigInvalidException {
+      throws AuthException, ResourceNotFoundException, IOException, PermissionBackendException,
+          ConfigInvalidException {
     if (!self.get().hasSameAccountId(rsrc.getUser())) {
       permissionBackend.currentUser().check(GlobalPermission.MODIFY_ACCOUNT);
     }
@@ -63,7 +70,7 @@ public class PutStatus implements RestModifyView<AccountResource, StatusInput> {
   }
 
   public Response<String> apply(IdentifiedUser user, StatusInput input)
-      throws ResourceNotFoundException, IOException, ConfigInvalidException, OrmException {
+      throws ResourceNotFoundException, IOException, ConfigInvalidException {
     if (input == null) {
       input = new StatusInput();
     }
@@ -74,8 +81,8 @@ public class PutStatus implements RestModifyView<AccountResource, StatusInput> {
             .get()
             .update("Set Status via API", user.getAccountId(), u -> u.setStatus(newStatus))
             .orElseThrow(() -> new ResourceNotFoundException("account not found"));
-    return Strings.isNullOrEmpty(accountState.getAccount().getStatus())
+    return Strings.isNullOrEmpty(accountState.account().status())
         ? Response.none()
-        : Response.ok(accountState.getAccount().getStatus());
+        : Response.ok(accountState.account().status());
   }
 }

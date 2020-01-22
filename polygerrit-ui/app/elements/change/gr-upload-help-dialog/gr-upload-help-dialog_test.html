@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-upload-help-dialog</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-upload-help-dialog.html">
 
@@ -73,31 +75,40 @@ limitations under the License.
         assert.isUndefined(element._computeFetchCommand({fetch: {}}));
       });
 
+      test('not all defined', () => {
+        assert.isUndefined(
+            element._computeFetchCommand(testRev, undefined, ''));
+        assert.isUndefined(
+            element._computeFetchCommand(testRev, '', undefined));
+        assert.isUndefined(
+            element._computeFetchCommand(undefined, '', ''));
+      });
+
       test('insufficiently defined scheme', () => {
         assert.isUndefined(
-            element._computeFetchCommand(testRev, undefined, 'badscheme'));
+            element._computeFetchCommand(testRev, '', 'badscheme'));
 
         const rev = Object.assign({}, testRev);
         rev.fetch = Object.assign({}, testRev.fetch, {nocmds: {commands: {}}});
         assert.isUndefined(
-            element._computeFetchCommand(rev, undefined, 'nocmds'));
+            element._computeFetchCommand(rev, '', 'nocmds'));
 
         rev.fetch.nocmds.commands.unsupported = 'unsupported';
         assert.isUndefined(
-            element._computeFetchCommand(rev, undefined, 'nocmds'));
+            element._computeFetchCommand(rev, '', 'nocmds'));
       });
 
       test('default scheme and command', () => {
-        const cmd = element._computeFetchCommand(testRev);
+        const cmd = element._computeFetchCommand(testRev, '', '');
         assert.isTrue(cmd === 'http checkout' || cmd === 'ssh pull');
       });
 
       test('default command', () => {
         assert.strictEqual(
-            element._computeFetchCommand(testRev, undefined, 'http'),
+            element._computeFetchCommand(testRev, '', 'http'),
             'http checkout');
         assert.strictEqual(
-            element._computeFetchCommand(testRev, undefined, 'ssh'),
+            element._computeFetchCommand(testRev, '', 'ssh'),
             'ssh pull');
       });
 

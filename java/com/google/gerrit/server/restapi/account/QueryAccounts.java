@@ -16,19 +16,21 @@ package com.google.gerrit.server.restapi.account;
 
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.client.ListAccountsOption;
+import com.google.gerrit.extensions.client.ListOption;
 import com.google.gerrit.extensions.common.AccountInfo;
 import com.google.gerrit.extensions.common.AccountVisibility;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.extensions.restapi.TopLevelResource;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryParseException;
 import com.google.gerrit.index.query.QueryResult;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.account.AccountDirectory.FillOptions;
 import com.google.gerrit.server.account.AccountInfoComparator;
 import com.google.gerrit.server.account.AccountLoader;
@@ -40,7 +42,6 @@ import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.query.account.AccountPredicates;
 import com.google.gerrit.server.query.account.AccountQueryBuilder;
 import com.google.gerrit.server.query.account.AccountQueryProcessor;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import java.util.Collections;
@@ -52,6 +53,14 @@ import java.util.Set;
 import org.eclipse.jgit.lib.Config;
 import org.kohsuke.args4j.Option;
 
+/**
+ * REST endpoint to query accounts.
+ *
+ * <p>This REST endpoint handles {@code GET /accounts/} requests.
+ *
+ * <p>The account queries are parsed by {@link AccountQueryBuilder} and executed by {@link
+ * AccountQueryProcessor}.
+ */
 public class QueryAccounts implements RestReadView<TopLevelResource> {
   private static final int MAX_SUGGEST_RESULTS = 100;
 
@@ -99,7 +108,7 @@ public class QueryAccounts implements RestReadView<TopLevelResource> {
 
   @Option(name = "-O", usage = "Output option flags, in hex")
   void setOptionFlagsHex(String hex) {
-    options.addAll(ListAccountsOption.fromBits(Integer.parseInt(hex, 16)));
+    options.addAll(ListOption.fromBits(ListAccountsOption.class, Integer.parseInt(hex, 16)));
   }
 
   @Option(
@@ -149,14 +158,14 @@ public class QueryAccounts implements RestReadView<TopLevelResource> {
   }
 
   @Override
-  public List<AccountInfo> apply(TopLevelResource rsrc)
-      throws OrmException, RestApiException, PermissionBackendException {
+  public Response<List<AccountInfo>> apply(TopLevelResource rsrc)
+      throws RestApiException, PermissionBackendException {
     if (Strings.isNullOrEmpty(query)) {
       throw new BadRequestException("missing query field");
     }
 
     if (suggest && (!suggestConfig || query.length() < suggestFrom)) {
-      return Collections.emptyList();
+      return Response.ok(Collections.emptyList());
     }
 
     Set<FillOptions> fillOptions = EnumSet.of(FillOptions.ID);
@@ -216,7 +225,7 @@ public class QueryAccounts implements RestReadView<TopLevelResource> {
       }
       QueryResult<AccountState> result = queryProcessor.query(queryPred);
       for (AccountState accountState : result.entities()) {
-        Account.Id id = accountState.getAccount().getId();
+        Account.Id id = accountState.account().id();
         matches.put(id, accountLoader.get(id));
       }
 
@@ -227,10 +236,10 @@ public class QueryAccounts implements RestReadView<TopLevelResource> {
       if (!sorted.isEmpty() && result.more()) {
         sorted.get(sorted.size() - 1)._moreAccounts = true;
       }
-      return sorted;
+      return Response.ok(sorted);
     } catch (QueryParseException e) {
       if (suggest) {
-        return ImmutableList.of();
+        return Response.ok(ImmutableList.of());
       }
       throw new BadRequestException(e.getMessage());
     }

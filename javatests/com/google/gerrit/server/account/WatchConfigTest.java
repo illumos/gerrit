@@ -15,10 +15,11 @@
 package com.google.gerrit.server.account;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
 
 import com.google.common.collect.ImmutableSet;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.account.ProjectWatches.NotifyType;
 import com.google.gerrit.server.account.ProjectWatches.NotifyValue;
 import com.google.gerrit.server.account.ProjectWatches.ProjectWatchKey;
@@ -54,12 +55,12 @@ public class WatchConfigTest implements ValidationError.Sink {
             + "  notify = [NEW_PATCHSETS]\n"
             + "  notify = * [NEW_PATCHSETS, ALL_COMMENTS]\n");
     Map<ProjectWatchKey, ImmutableSet<NotifyType>> projectWatches =
-        ProjectWatches.parse(new Account.Id(1000000), cfg, this);
+        ProjectWatches.parse(Account.id(1000000), cfg, this);
 
     assertThat(validationErrors).isEmpty();
 
-    Project.NameKey myProject = new Project.NameKey("myProject");
-    Project.NameKey otherProject = new Project.NameKey("otherProject");
+    Project.NameKey myProject = Project.nameKey("myProject");
+    Project.NameKey otherProject = Project.nameKey("otherProject");
     Map<ProjectWatchKey, Set<NotifyType>> expectedProjectWatches = new HashMap<>();
     expectedProjectWatches.put(
         ProjectWatchKey.create(myProject, null),
@@ -87,7 +88,7 @@ public class WatchConfigTest implements ValidationError.Sink {
             + "[project \"otherProject\"]\n"
             + "  notify = [NEW_PATCHSETS]\n");
 
-    ProjectWatches.parse(new Account.Id(1000000), cfg, this);
+    ProjectWatches.parse(Account.id(1000000), cfg, this);
     assertThat(validationErrors).hasSize(1);
     assertThat(validationErrors.get(0).getMessage())
         .isEqualTo(
@@ -170,14 +171,14 @@ public class WatchConfigTest implements ValidationError.Sink {
   private void assertParseNotifyValueFails(String notifyValue) {
     assertThat(validationErrors).isEmpty();
     parseNotifyValue(notifyValue);
-    assertThat(validationErrors)
-        .named("expected validation error for notifyValue: " + notifyValue)
+    assertWithMessage("expected validation error for notifyValue: " + notifyValue)
+        .that(validationErrors)
         .isNotEmpty();
     validationErrors.clear();
   }
 
   private NotifyValue parseNotifyValue(String notifyValue) {
-    return NotifyValue.parse(new Account.Id(1000000), "project", notifyValue, this);
+    return NotifyValue.parse(Account.id(1000000), "project", notifyValue, this);
   }
 
   @Override

@@ -15,18 +15,16 @@
 package com.google.gerrit.server.restapi.change;
 
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.common.Input;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.extensions.webui.UiAction;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.StarredChangesUtil;
 import com.google.gerrit.server.StarredChangesUtil.IllegalLabelException;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 
 @Singleton
@@ -34,16 +32,11 @@ public class MarkAsUnreviewed
     implements RestModifyView<ChangeResource, Input>, UiAction<ChangeResource> {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
-  private final Provider<ReviewDb> dbProvider;
   private final ChangeData.Factory changeDataFactory;
   private final StarredChangesUtil stars;
 
   @Inject
-  MarkAsUnreviewed(
-      Provider<ReviewDb> dbProvider,
-      ChangeData.Factory changeDataFactory,
-      StarredChangesUtil stars) {
-    this.dbProvider = dbProvider;
+  MarkAsUnreviewed(ChangeData.Factory changeDataFactory, StarredChangesUtil stars) {
     this.changeDataFactory = changeDataFactory;
     this.stars = stars;
   }
@@ -57,18 +50,17 @@ public class MarkAsUnreviewed
   }
 
   @Override
-  public Response<String> apply(ChangeResource rsrc, Input input)
-      throws OrmException, IllegalLabelException {
+  public Response<String> apply(ChangeResource rsrc, Input input) throws IllegalLabelException {
     stars.markAsUnreviewed(rsrc);
-    return Response.ok("");
+    return Response.ok();
   }
 
   private boolean isReviewed(ChangeResource rsrc) {
     try {
       return changeDataFactory
-          .create(dbProvider.get(), rsrc.getNotes())
+          .create(rsrc.getNotes())
           .isReviewedBy(rsrc.getUser().asIdentifiedUser().getAccountId());
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       logger.atSevere().withCause(e).log("failed to check if change is reviewed");
     }
     return false;

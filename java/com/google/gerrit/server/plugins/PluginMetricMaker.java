@@ -47,7 +47,7 @@ public class PluginMetricMaker extends MetricMaker implements LifecycleListener 
   public PluginMetricMaker(MetricMaker root, String prefix) {
     this.root = root;
     this.prefix = prefix.endsWith("/") ? prefix : prefix + "/";
-    cleanup = Collections.synchronizedSet(new HashSet<RegistrationHandle>());
+    cleanup = Collections.synchronizedSet(new HashSet<>());
   }
 
   @Override
@@ -160,12 +160,9 @@ public class PluginMetricMaker extends MetricMaker implements LifecycleListener 
   public RegistrationHandle newTrigger(Set<CallbackMetric<?>> metrics, Runnable trigger) {
     final RegistrationHandle handle = root.newTrigger(metrics, trigger);
     cleanup.add(handle);
-    return new RegistrationHandle() {
-      @Override
-      public void remove() {
-        handle.remove();
-        cleanup.remove(handle);
-      }
+    return () -> {
+      handle.remove();
+      cleanup.remove(handle);
     };
   }
 

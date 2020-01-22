@@ -17,7 +17,8 @@ package com.google.gerrit.server.restapi.account;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableSet;
 import com.google.gerrit.common.data.ContributorAgreement;
-import com.google.gerrit.common.errors.NoSuchGroupException;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.exceptions.NoSuchGroupException;
 import com.google.gerrit.extensions.api.accounts.AgreementInput;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
@@ -27,7 +28,6 @@ import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
-import com.google.gerrit.reviewdb.client.AccountGroup;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.AccountResource;
 import com.google.gerrit.server.account.AccountState;
@@ -35,7 +35,6 @@ import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.extensions.events.AgreementSignup;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.restapi.group.AddMembers;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -43,6 +42,11 @@ import java.io.IOException;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.Config;
 
+/**
+ * REST endpoint to sign a contributor agreement for an account.
+ *
+ * <p>This REST endpoint handles {@code PUT /accounts/<account-identifier>/agreements} requests.
+ */
 @Singleton
 public class PutAgreement implements RestModifyView<AccountResource, AgreementInput> {
   private final ProjectCache projectCache;
@@ -67,7 +71,7 @@ public class PutAgreement implements RestModifyView<AccountResource, AgreementIn
 
   @Override
   public Response<String> apply(AccountResource resource, AgreementInput input)
-      throws IOException, OrmException, RestApiException, ConfigInvalidException {
+      throws IOException, RestApiException, ConfigInvalidException {
     if (!agreementsEnabled) {
       throw new MethodNotAllowedException("contributor agreements disabled");
     }
@@ -94,7 +98,7 @@ public class PutAgreement implements RestModifyView<AccountResource, AgreementIn
 
     AccountState accountState = self.get().state();
     try {
-      addMembers.addMembers(uuid, ImmutableSet.of(accountState.getAccount().getId()));
+      addMembers.addMembers(uuid, ImmutableSet.of(accountState.account().id()));
     } catch (NoSuchGroupException e) {
       throw new ResourceConflictException("autoverify group not found");
     }

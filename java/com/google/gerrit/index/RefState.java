@@ -23,10 +23,10 @@ import com.google.common.base.Splitter;
 import com.google.common.collect.MultimapBuilder;
 import com.google.common.collect.SetMultimap;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.git.ObjectIds;
 import java.io.IOException;
 import java.util.List;
-import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
@@ -42,7 +42,7 @@ public abstract class RefState {
       String s = new String(b, UTF_8);
       List<String> parts = Splitter.on(':').splitToList(s);
       RefState.check(parts.size() == 3 && !parts.get(0).isEmpty() && !parts.get(1).isEmpty(), s);
-      result.put(new Project.NameKey(parts.get(0)), RefState.create(parts.get(1), parts.get(2)));
+      result.put(Project.nameKey(parts.get(0)), RefState.create(parts.get(1), parts.get(2)));
     }
     return result;
   }
@@ -61,7 +61,7 @@ public abstract class RefState {
 
   public byte[] toByteArray(Project.NameKey project) {
     byte[] a = (project.toString() + ':' + ref() + ':').getBytes(UTF_8);
-    byte[] b = new byte[a.length + Constants.OBJECT_ID_STRING_LENGTH];
+    byte[] b = new byte[a.length + ObjectIds.STR_LEN];
     System.arraycopy(a, 0, b, 0, a.length);
     id().copyTo(b, a.length);
     return b;

@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-plugin-action-context</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-js-api-interface.html"/>
 
@@ -40,7 +42,6 @@ limitations under the License.
 
     setup(() => {
       sandbox = sinon.sandbox.create();
-      Gerrit._setPluginsCount(1);
       Gerrit.install(p => { plugin = p; }, '0.1',
           'http://test.com/plugins/testplugin/static/test.js');
       instance = new GrPluginActionContext(plugin);
@@ -135,17 +136,17 @@ limitations under the License.
         __key: 'key',
         __url: '/changes/1/revisions/2/foo~bar',
       };
-      const sendStub = sandbox.stub().returns(Promise.reject('boom'));
+      const sendStub = sandbox.stub().returns(Promise.reject(new Error('boom')));
       sandbox.stub(plugin, 'restApi').returns({
         send: sendStub,
       });
       const errorStub = sandbox.stub();
-      document.addEventListener('network-error', errorStub);
+      document.addEventListener('show-alert', errorStub);
       instance.call();
       flush(() => {
         assert.isTrue(errorStub.calledOnce);
         assert.equal(errorStub.args[0][0].detail.message,
-            'Plugin network error: boom');
+            'Plugin network error: Error: boom');
         done();
       });
     });

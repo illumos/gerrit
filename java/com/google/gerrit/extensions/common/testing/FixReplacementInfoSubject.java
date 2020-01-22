@@ -15,34 +15,43 @@
 package com.google.gerrit.extensions.common.testing;
 
 import static com.google.common.truth.Truth.assertAbout;
+import static com.google.gerrit.extensions.common.testing.RangeSubject.ranges;
 
 import com.google.common.truth.FailureMetadata;
 import com.google.common.truth.StringSubject;
 import com.google.common.truth.Subject;
-import com.google.common.truth.Truth;
 import com.google.gerrit.extensions.common.FixReplacementInfo;
 
-public class FixReplacementInfoSubject
-    extends Subject<FixReplacementInfoSubject, FixReplacementInfo> {
+public class FixReplacementInfoSubject extends Subject {
 
   public static FixReplacementInfoSubject assertThat(FixReplacementInfo fixReplacementInfo) {
-    return assertAbout(FixReplacementInfoSubject::new).that(fixReplacementInfo);
+    return assertAbout(fixReplacements()).that(fixReplacementInfo);
   }
+
+  public static Subject.Factory<FixReplacementInfoSubject, FixReplacementInfo> fixReplacements() {
+    return FixReplacementInfoSubject::new;
+  }
+
+  private final FixReplacementInfo fixReplacementInfo;
 
   private FixReplacementInfoSubject(
       FailureMetadata failureMetadata, FixReplacementInfo fixReplacementInfo) {
     super(failureMetadata, fixReplacementInfo);
+    this.fixReplacementInfo = fixReplacementInfo;
   }
 
   public StringSubject path() {
-    return Truth.assertThat(actual().path).named("path");
+    isNotNull();
+    return check("path").that(fixReplacementInfo.path);
   }
 
   public RangeSubject range() {
-    return RangeSubject.assertThat(actual().range).named("range");
+    isNotNull();
+    return check("range").about(ranges()).that(fixReplacementInfo.range);
   }
 
   public StringSubject replacement() {
-    return Truth.assertThat(actual().replacement).named("replacement");
+    isNotNull();
+    return check("replacement").that(fixReplacementInfo.replacement);
   }
 }

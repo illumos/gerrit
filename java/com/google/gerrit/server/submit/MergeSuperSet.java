@@ -18,23 +18,23 @@ import static com.google.common.base.Preconditions.checkState;
 import static java.util.Objects.requireNonNull;
 
 import com.google.common.base.Strings;
-import com.google.common.collect.Iterables;
+import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.Change;
 import com.google.gerrit.extensions.registration.DynamicItem;
 import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.logging.TraceContext;
+import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.permissions.ChangePermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.plugincontext.PluginContext;
+import com.google.gerrit.server.project.NoSuchChangeException;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import java.io.IOException;
@@ -55,13 +55,16 @@ import org.eclipse.jgit.lib.Config;
  * included.
  */
 public class MergeSuperSet {
+  private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
+  private final ChangeData.Factory changeDataFactory;
   private final Provider<InternalChangeQuery> queryProvider;
   private final Provider<MergeOpRepoManager> repoManagerProvider;
   private final DynamicItem<MergeSuperSetComputation> mergeSuperSetComputation;
   private final PermissionBackend permissionBackend;
   private final Config cfg;
   private final ProjectCache projectCache;
+  private final ChangeNotes.Factory notesFactory;
 
   private MergeOpRepoManager orm;
   private boolean closeOrm;
@@ -69,17 +72,21 @@ public class MergeSuperSet {
   @Inject
   MergeSuperSet(
       @GerritServerConfig Config cfg,
+      ChangeData.Factory changeDataFactory,
       Provider<InternalChangeQuery> queryProvider,
       Provider<MergeOpRepoManager> repoManagerProvider,
       DynamicItem<MergeSuperSetComputation> mergeSuperSetComputation,
       PermissionBackend permissionBackend,
-      ProjectCache projectCache) {
+      ProjectCache projectCache,
+      ChangeNotes.Factory notesFactory) {
     this.cfg = cfg;
+    this.changeDataFactory = changeDataFactory;
     this.queryProvider = queryProvider;
     this.repoManagerProvider = repoManagerProvider;
     this.mergeSuperSetComputation = mergeSuperSetComputation;
     this.permissionBackend = permissionBackend;
     this.projectCache = projectCache;
+    this.notesFactory = notesFactory;
   }
 
   public static boolean wholeTopicEnabled(Config config) {
@@ -93,28 +100,21 @@ public class MergeSuperSet {
     return this;
   }
 
-  public ChangeSet completeChangeSet(ReviewDb db, Change change, CurrentUser user)
-      throws IOException, OrmException, PermissionBackendException {
+  public ChangeSet completeChangeSet(Change change, CurrentUser user)
+      throws IOException, PermissionBackendException {
     try {
       if (orm == null) {
         orm = repoManagerProvider.get();
         closeOrm = true;
       }
-      List<ChangeData> cds = queryProvider.get().byLegacyChangeId(change.getId());
-      checkState(
-          cds.size() == 1,
-          "Expected exactly one ChangeData for change ID %s, got %s",
-          change.getId(),
-          cds.size());
-      ChangeData cd = Iterables.getFirst(cds, null);
-
+      ChangeData cd = changeDataFactory.create(change.getProject(), change.getId());
       boolean visible = false;
       if (cd != null) {
         ProjectState projectState = projectCache.checkedGet(cd.project());
 
         if (projectState.statePermitsRead()) {
           try {
-            permissionBackend.user(user).change(cd).database(db).check(ChangePermission.READ);
+            permissionBackend.user(user).change(cd).check(ChangePermission.READ);
             visible = true;
           } catch (AuthException e) {
             // Do nothing.
@@ -124,10 +124,10 @@ public class MergeSuperSet {
 
       ChangeSet changeSet = new ChangeSet(cd, visible);
       if (wholeTopicEnabled(cfg)) {
-        return completeChangeSetIncludingTopics(db, changeSet, user);
+        return completeChangeSetIncludingTopics(changeSet, user);
       }
       try (TraceContext traceContext = PluginContext.newTrace(mergeSuperSetComputation)) {
-        return mergeSuperSetComputation.get().completeWithoutTopic(db, orm, changeSet, user);
+        return mergeSuperSetComputation.get().completeWithoutTopic(orm, changeSet, user);
       }
     } finally {
       if (closeOrm && orm != null) {
@@ -141,9 +141,8 @@ public class MergeSuperSet {
    * Completes {@code changeSet} with any additional changes from its topics
    *
    * <p>{@link #completeChangeSetIncludingTopics} calls this repeatedly, alternating with {@link
-   * MergeSuperSetComputation#completeWithoutTopic(ReviewDb, MergeOpRepoManager, ChangeSet,
-   * CurrentUser)}, to discover what additional changes should be submitted with a change until the
-   * set stops growing.
+   * MergeSuperSetComputation#completeWithoutTopic(MergeOpRepoManager, ChangeSet, CurrentUser)}, to
+   * discover what additional changes should be submitted with a change until the set stops growing.
    *
    * <p>{@code topicsSeen} and {@code visibleTopicsSeen} keep track of topics already explored to
    * avoid wasted work.
@@ -151,12 +150,8 @@ public class MergeSuperSet {
    * @return the resulting larger {@link ChangeSet}
    */
   private ChangeSet topicClosure(
-      ReviewDb db,
-      ChangeSet changeSet,
-      CurrentUser user,
-      Set<String> topicsSeen,
-      Set<String> visibleTopicsSeen)
-      throws OrmException, PermissionBackendException, IOException {
+      ChangeSet changeSet, CurrentUser user, Set<String> topicsSeen, Set<String> visibleTopicsSeen)
+      throws PermissionBackendException, IOException {
     List<ChangeData> visibleChanges = new ArrayList<>();
     List<ChangeData> nonVisibleChanges = new ArrayList<>();
 
@@ -167,7 +162,7 @@ public class MergeSuperSet {
         continue;
       }
       for (ChangeData topicCd : byTopicOpen(topic)) {
-        if (canRead(db, user, topicCd)) {
+        if (canRead(user, topicCd)) {
           visibleChanges.add(topicCd);
         } else {
           nonVisibleChanges.add(topicCd);
@@ -190,41 +185,55 @@ public class MergeSuperSet {
     return new ChangeSet(visibleChanges, nonVisibleChanges);
   }
 
-  private ChangeSet completeChangeSetIncludingTopics(
-      ReviewDb db, ChangeSet changeSet, CurrentUser user)
-      throws IOException, OrmException, PermissionBackendException {
+  private ChangeSet completeChangeSetIncludingTopics(ChangeSet changeSet, CurrentUser user)
+      throws IOException, PermissionBackendException {
     Set<String> topicsSeen = new HashSet<>();
     Set<String> visibleTopicsSeen = new HashSet<>();
     int oldSeen;
     int seen;
 
-    changeSet = topicClosure(db, changeSet, user, topicsSeen, visibleTopicsSeen);
+    changeSet = topicClosure(changeSet, user, topicsSeen, visibleTopicsSeen);
     seen = topicsSeen.size() + visibleTopicsSeen.size();
 
     do {
       oldSeen = seen;
       try (TraceContext traceContext = PluginContext.newTrace(mergeSuperSetComputation)) {
-        changeSet = mergeSuperSetComputation.get().completeWithoutTopic(db, orm, changeSet, user);
+        changeSet = mergeSuperSetComputation.get().completeWithoutTopic(orm, changeSet, user);
       }
-      changeSet = topicClosure(db, changeSet, user, topicsSeen, visibleTopicsSeen);
+      changeSet = topicClosure(changeSet, user, topicsSeen, visibleTopicsSeen);
       seen = topicsSeen.size() + visibleTopicsSeen.size();
     } while (seen != oldSeen);
     return changeSet;
   }
 
-  private List<ChangeData> byTopicOpen(String topic) throws OrmException {
+  private List<ChangeData> byTopicOpen(String topic) {
     return queryProvider.get().byTopicOpen(topic);
   }
 
-  private boolean canRead(ReviewDb db, CurrentUser user, ChangeData cd)
+  private boolean canRead(CurrentUser user, ChangeData cd)
       throws PermissionBackendException, IOException {
     ProjectState projectState = projectCache.checkedGet(cd.project());
     if (projectState == null || !projectState.statePermitsRead()) {
       return false;
     }
 
+    ChangeNotes notes;
     try {
-      permissionBackend.user(user).change(cd).database(db).check(ChangePermission.READ);
+      notes = cd.notes();
+    } catch (NoSuchChangeException e) {
+      // The change was found in the index but is missing in NoteDb.
+      // This can happen in systems with multiple primary nodes when the replication of the index
+      // documents is faster than the replication of the Git data.
+      // Instead of failing, create the change notes from the index data so that the read permission
+      // check can be performed successfully.
+      logger.atWarning().log(
+          "Got change %d of project %s from index, but couldn't find it in NoteDb",
+          cd.getId().get(), cd.project().get());
+      notes = notesFactory.createFromIndexedChange(cd.change());
+    }
+
+    try {
+      permissionBackend.user(user).change(notes).check(ChangePermission.READ);
       return true;
     } catch (AuthException e) {
       return false;

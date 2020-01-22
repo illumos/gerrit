@@ -15,27 +15,24 @@
 package com.google.gerrit.server.git.validators;
 
 import static com.google.common.base.Preconditions.checkState;
-import static com.google.gerrit.reviewdb.client.Change.CHANGE_ID_PATTERN;
-import static com.google.gerrit.reviewdb.client.RefNames.REFS_CHANGES;
-import static com.google.gerrit.reviewdb.client.RefNames.REFS_CONFIG;
+import static com.google.gerrit.entities.Change.CHANGE_ID_PATTERN;
+import static com.google.gerrit.entities.RefNames.REFS_CHANGES;
+import static com.google.gerrit.entities.RefNames.REFS_CONFIG;
 import static java.util.stream.Collectors.toList;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Iterables;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.FooterConstants;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.BooleanProjectConfig;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.config.ConsistencyCheckInfo.ConsistencyProblemInfo;
 import com.google.gerrit.extensions.registration.DynamicItem;
 import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.BooleanProjectConfig;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Branch.NameKey;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.RefNames;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.externalids.ExternalIdsConsistencyChecker;
@@ -47,6 +44,11 @@ import com.google.gerrit.server.events.CommitReceivedEvent;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.ValidationError;
 import com.google.gerrit.server.git.validators.ValidationMessage.Type;
+import com.google.gerrit.server.patch.DiffSummary;
+import com.google.gerrit.server.patch.DiffSummaryKey;
+import com.google.gerrit.server.patch.PatchListCache;
+import com.google.gerrit.server.patch.PatchListKey;
+import com.google.gerrit.server.patch.PatchListNotAvailableException;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.permissions.RefPermission;
@@ -79,7 +81,8 @@ import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.util.SystemReader;
 
 /**
- * Represents a list of CommitValidationListeners to run for a push to one branch of one project.
+ * Represents a list of {@link CommitValidationListener}s to run for a push to one branch of one
+ * project.
  */
 public class CommitValidators {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
@@ -97,37 +100,42 @@ public class CommitValidators {
     private final AllProjectsName allProjects;
     private final ExternalIdsConsistencyChecker externalIdsConsistencyChecker;
     private final AccountValidator accountValidator;
-    private final String installCommitMsgHookCommand;
     private final ProjectCache projectCache;
+    private final ProjectConfig.Factory projectConfigFactory;
+    private final PatchListCache patchListCache;
+    private final Config config;
 
     @Inject
     Factory(
         @GerritPersonIdent PersonIdent gerritIdent,
         DynamicItem<UrlFormatter> urlFormatter,
-        @GerritServerConfig Config cfg,
+        @GerritServerConfig Config config,
         PluginSetContext<CommitValidationListener> pluginValidators,
         GitRepositoryManager repoManager,
         AllUsersName allUsers,
         AllProjectsName allProjects,
         ExternalIdsConsistencyChecker externalIdsConsistencyChecker,
         AccountValidator accountValidator,
-        ProjectCache projectCache) {
+        ProjectCache projectCache,
+        ProjectConfig.Factory projectConfigFactory,
+        PatchListCache patchListCache) {
       this.gerritIdent = gerritIdent;
       this.urlFormatter = urlFormatter;
+      this.config = config;
       this.pluginValidators = pluginValidators;
       this.repoManager = repoManager;
       this.allUsers = allUsers;
       this.allProjects = allProjects;
       this.externalIdsConsistencyChecker = externalIdsConsistencyChecker;
       this.accountValidator = accountValidator;
-      this.installCommitMsgHookCommand =
-          cfg != null ? cfg.getString("gerrit", null, "installCommitMsgHookCommand") : null;
       this.projectCache = projectCache;
+      this.projectConfigFactory = projectConfigFactory;
+      this.patchListCache = patchListCache;
     }
 
     public CommitValidators forReceiveCommits(
         PermissionBackend.ForProject forProject,
-        Branch.NameKey branch,
+        BranchNameKey branch,
         IdentifiedUser user,
         SshInfo sshInfo,
         NoteMap rejectCommits,
@@ -135,8 +143,8 @@ public class CommitValidators {
         @Nullable Change change,
         boolean skipValidation)
         throws IOException {
-      PermissionBackend.ForRef perm = forProject.ref(branch.get());
-      ProjectState projectState = projectCache.checkedGet(branch.getParentKey());
+      PermissionBackend.ForRef perm = forProject.ref(branch.branch());
+      ProjectState projectState = projectCache.checkedGet(branch.project());
       return new CommitValidators(
           ImmutableList.of(
               new UploadMergesPermissionValidator(perm),
@@ -146,13 +154,8 @@ public class CommitValidators {
               new CommitterUploaderValidator(user, perm, urlFormatter.get()),
               new SignedOffByValidator(user, perm, projectState),
               new ChangeIdValidator(
-                  projectState,
-                  user,
-                  urlFormatter.get(),
-                  installCommitMsgHookCommand,
-                  sshInfo,
-                  change),
-              new ConfigValidator(branch, user, rw, allUsers, allProjects),
+                  projectState, user, urlFormatter.get(), config, sshInfo, change),
+              new ConfigValidator(projectConfigFactory, branch, user, rw, allUsers, allProjects),
               new BannedCommitsValidator(rejectCommits),
               new PluginCommitValidationListener(pluginValidators, skipValidation),
               new ExternalIdUpdateListener(allUsers, externalIdsConsistencyChecker),
@@ -162,29 +165,25 @@ public class CommitValidators {
 
     public CommitValidators forGerritCommits(
         PermissionBackend.ForProject forProject,
-        NameKey branch,
+        BranchNameKey branch,
         IdentifiedUser user,
         SshInfo sshInfo,
         RevWalk rw,
         @Nullable Change change)
         throws IOException {
-      PermissionBackend.ForRef perm = forProject.ref(branch.get());
-      ProjectState projectState = projectCache.checkedGet(branch.getParentKey());
+      PermissionBackend.ForRef perm = forProject.ref(branch.branch());
+      ProjectState projectState = projectCache.checkedGet(branch.project());
       return new CommitValidators(
           ImmutableList.of(
               new UploadMergesPermissionValidator(perm),
               new ProjectStateValidationListener(projectState),
               new AmendedGerritMergeCommitValidationListener(perm, gerritIdent),
               new AuthorUploaderValidator(user, perm, urlFormatter.get()),
-              new SignedOffByValidator(user, perm, projectCache.checkedGet(branch.getParentKey())),
+              new FileCountValidator(patchListCache, config),
+              new SignedOffByValidator(user, perm, projectCache.checkedGet(branch.project())),
               new ChangeIdValidator(
-                  projectState,
-                  user,
-                  urlFormatter.get(),
-                  installCommitMsgHookCommand,
-                  sshInfo,
-                  change),
-              new ConfigValidator(branch, user, rw, allUsers, allProjects),
+                  projectState, user, urlFormatter.get(), config, sshInfo, change),
+              new ConfigValidator(projectConfigFactory, branch, user, rw, allUsers, allProjects),
               new PluginCommitValidationListener(pluginValidators),
               new ExternalIdUpdateListener(allUsers, externalIdsConsistencyChecker),
               new AccountCommitValidator(repoManager, allUsers, accountValidator),
@@ -192,7 +191,7 @@ public class CommitValidators {
     }
 
     public CommitValidators forMergedCommits(
-        PermissionBackend.ForProject forProject, Branch.NameKey branch, IdentifiedUser user)
+        PermissionBackend.ForProject forProject, BranchNameKey branch, IdentifiedUser user)
         throws IOException {
       // Generally only include validators that are based on permissions of the
       // user creating a change for a merged commit; generally exclude
@@ -207,11 +206,11 @@ public class CommitValidators {
       //    discuss what to do about it.
       //  - Plugin validators may do things like require certain commit message
       //    formats, so we play it safe and exclude them.
-      PermissionBackend.ForRef perm = forProject.ref(branch.get());
+      PermissionBackend.ForRef perm = forProject.ref(branch.branch());
       return new CommitValidators(
           ImmutableList.of(
               new UploadMergesPermissionValidator(perm),
-              new ProjectStateValidationListener(projectCache.checkedGet(branch.getParentKey())),
+              new ProjectStateValidationListener(projectCache.checkedGet(branch.project())),
               new AuthorUploaderValidator(user, perm, urlFormatter.get()),
               new CommitterUploaderValidator(user, perm, urlFormatter.get())));
     }
@@ -245,6 +244,7 @@ public class CommitValidators {
     private static final String MISSING_CHANGE_ID_MSG = "missing Change-Id in message footer";
     private static final String MISSING_SUBJECT_MSG =
         "missing subject; Change-Id must be in message footer";
+    private static final String CHANGE_ID_ABOVE_FOOTER_MSG = "Change-Id must be in message footer";
     private static final String MULTIPLE_CHANGE_ID_MSG =
         "multiple Change-Id lines in message footer";
     private static final String INVALID_CHANGE_ID_MSG =
@@ -267,14 +267,14 @@ public class CommitValidators {
         ProjectState projectState,
         IdentifiedUser user,
         UrlFormatter urlFormatter,
-        String installCommitMsgHookCommand,
+        Config config,
         SshInfo sshInfo,
         Change change) {
       this.projectState = projectState;
-      this.urlFormatter = urlFormatter;
-      this.installCommitMsgHookCommand = installCommitMsgHookCommand;
-      this.sshInfo = sshInfo;
       this.user = user;
+      this.urlFormatter = urlFormatter;
+      installCommitMsgHookCommand = config.getString("gerrit", null, "installCommitMsgHookCommand");
+      this.sshInfo = sshInfo;
       this.change = change;
     }
 
@@ -294,8 +294,20 @@ public class CommitValidators {
             && CHANGE_ID.matcher(shortMsg.substring(CHANGE_ID_PREFIX.length()).trim()).matches()) {
           throw new CommitValidationException(MISSING_SUBJECT_MSG);
         }
+        if (commit.getFullMessage().contains("\n" + CHANGE_ID_PREFIX)) {
+          messages.add(
+              new CommitValidationMessage(
+                  CHANGE_ID_ABOVE_FOOTER_MSG
+                      + "\n"
+                      + "\n"
+                      + "Hint: run\n"
+                      + "  git commit --amend\n"
+                      + "and move 'Change-Id: Ixxx..' to the bottom on a separate line\n",
+                  Type.ERROR));
+          throw new CommitValidationException(CHANGE_ID_ABOVE_FOOTER_MSG, messages);
+        }
         if (projectState.is(BooleanProjectConfig.REQUIRE_CHANGE_ID)) {
-          messages.add(getMissingChangeIdErrorMsg(MISSING_CHANGE_ID_MSG, commit));
+          messages.add(getMissingChangeIdErrorMsg(MISSING_CHANGE_ID_MSG));
           throw new CommitValidationException(MISSING_CHANGE_ID_MSG, messages);
         }
       } else if (idList.size() > 1) {
@@ -305,7 +317,7 @@ public class CommitValidators {
         // Reject Change-Ids with wrong format and invalid placeholder ID from
         // Egit (I0000000000000000000000000000000000000000).
         if (!CHANGE_ID.matcher(v).matches() || v.matches("^I00*$")) {
-          messages.add(getMissingChangeIdErrorMsg(INVALID_CHANGE_ID_MSG, receiveEvent.commit));
+          messages.add(getMissingChangeIdErrorMsg(INVALID_CHANGE_ID_MSG));
           throw new CommitValidationException(INVALID_CHANGE_ID_MSG, messages);
         }
         if (change != null && !v.equals(change.getKey().get())) {
@@ -321,31 +333,17 @@ public class CommitValidators {
           || NEW_PATCHSET_PATTERN.matcher(event.command.getRefName()).matches();
     }
 
-    private CommitValidationMessage getMissingChangeIdErrorMsg(String errMsg, RevCommit c) {
-      StringBuilder sb = new StringBuilder();
-      sb.append(errMsg).append("\n");
-
-      boolean hinted = false;
-      if (c.getFullMessage().contains(CHANGE_ID_PREFIX)) {
-        String lastLine = Iterables.getLast(Splitter.on('\n').split(c.getFullMessage()), "");
-        if (!lastLine.contains(CHANGE_ID_PREFIX)) {
-          hinted = true;
-          sb.append("\n")
-              .append("Hint: run\n")
-              .append("  git commit --amend\n")
-              .append("and move 'Change-Id: Ixxx..' to the bottom on a separate line\n");
-        }
-      }
-
-      // Print only one hint to avoid overwhelming the user.
-      if (!hinted) {
-        sb.append("\nHint: to automatically insert a Change-Id, install the hook:\n")
-            .append(getCommitMessageHookInstallationHint())
-            .append("\n")
-            .append("and then amend the commit:\n")
-            .append("  git commit --amend --no-edit\n");
-      }
-      return new CommitValidationMessage(sb.toString(), Type.ERROR);
+    private CommitValidationMessage getMissingChangeIdErrorMsg(String errMsg) {
+      return new CommitValidationMessage(
+          errMsg
+              + "\n"
+              + "\nHint: to automatically insert a Change-Id, install the hook:\n"
+              + getCommitMessageHookInstallationHint()
+              + "\n"
+              + "and then amend the commit:\n"
+              + "  git commit --amend --no-edit\n"
+              + "Finally, push your changes again\n",
+          Type.ERROR);
     }
 
     private String getCommitMessageHookInstallationHint() {
@@ -388,20 +386,57 @@ public class CommitValidators {
     }
   }
 
+  /** Limits the number of files per change. */
+  private static class FileCountValidator implements CommitValidationListener {
+
+    private final PatchListCache patchListCache;
+    private final int maxFileCount;
+
+    FileCountValidator(PatchListCache patchListCache, Config config) {
+      this.patchListCache = patchListCache;
+      maxFileCount = config.getInt("change", null, "maxFiles", 100_000);
+    }
+
+    @Override
+    public List<CommitValidationMessage> onCommitReceived(CommitReceivedEvent receiveEvent)
+        throws CommitValidationException {
+      PatchListKey patchListKey =
+          PatchListKey.againstBase(
+              receiveEvent.commit.getId(), receiveEvent.commit.getParentCount());
+      DiffSummaryKey diffSummaryKey = DiffSummaryKey.fromPatchListKey(patchListKey);
+      try {
+        DiffSummary diffSummary =
+            patchListCache.getDiffSummary(diffSummaryKey, receiveEvent.project.getNameKey());
+        if (diffSummary.getPaths().size() > maxFileCount) {
+          throw new CommitValidationException(
+              String.format(
+                  "Exceeding maximum number of files per change (%d > %d)",
+                  diffSummary.getPaths().size(), maxFileCount));
+        }
+      } catch (PatchListNotAvailableException e) {
+        logger.atWarning().withCause(e).log("Failed to validate file count");
+      }
+      return Collections.emptyList();
+    }
+  }
+
   /** If this is the special project configuration branch, validate the config. */
   public static class ConfigValidator implements CommitValidationListener {
-    private final Branch.NameKey branch;
+    private final ProjectConfig.Factory projectConfigFactory;
+    private final BranchNameKey branch;
     private final IdentifiedUser user;
     private final RevWalk rw;
     private final AllUsersName allUsers;
     private final AllProjectsName allProjects;
 
     public ConfigValidator(
-        Branch.NameKey branch,
+        ProjectConfig.Factory projectConfigFactory,
+        BranchNameKey branch,
         IdentifiedUser user,
         RevWalk rw,
         AllUsersName allUsers,
         AllProjectsName allProjects) {
+      this.projectConfigFactory = projectConfigFactory;
       this.branch = branch;
       this.user = user;
       this.rw = rw;
@@ -412,11 +447,11 @@ public class CommitValidators {
     @Override
     public List<CommitValidationMessage> onCommitReceived(CommitReceivedEvent receiveEvent)
         throws CommitValidationException {
-      if (REFS_CONFIG.equals(branch.get())) {
+      if (REFS_CONFIG.equals(branch.branch())) {
         List<CommitValidationMessage> messages = new ArrayList<>();
 
         try {
-          ProjectConfig cfg = new ProjectConfig(receiveEvent.project.getNameKey());
+          ProjectConfig cfg = projectConfigFactory.create(receiveEvent.project.getNameKey());
           cfg.load(rw, receiveEvent.command.getNewId());
           if (!cfg.getValidationErrors().isEmpty()) {
             addError("Invalid project configuration:", messages);

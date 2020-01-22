@@ -16,16 +16,18 @@ package com.google.gerrit.server.restapi.change;
 
 import com.google.common.base.Strings;
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Change.Status;
+import com.google.gerrit.entities.ChangeMessage;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.changes.RestoreInput;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
+import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.extensions.webui.UiAction;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Change.Status;
-import com.google.gerrit.reviewdb.client.ChangeMessage;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.PatchSetUtil;
@@ -42,23 +44,19 @@ import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
 import com.google.gerrit.server.update.Context;
-import com.google.gerrit.server.update.RetryHelper;
-import com.google.gerrit.server.update.RetryingRestModifyView;
 import com.google.gerrit.server.update.UpdateException;
 import com.google.gerrit.server.util.time.TimeUtil;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
 
 @Singleton
-public class Restore extends RetryingRestModifyView<ChangeResource, RestoreInput, ChangeInfo>
-    implements UiAction<ChangeResource> {
+public class Restore
+    implements RestModifyView<ChangeResource, RestoreInput>, UiAction<ChangeResource> {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
+  private final BatchUpdate.Factory updateFactory;
   private final RestoredSender.Factory restoredSenderFactory;
-  private final Provider<ReviewDb> dbProvider;
   private final ChangeJson.Factory json;
   private final ChangeMessagesUtil cmUtil;
   private final PatchSetUtil psUtil;
@@ -67,17 +65,15 @@ public class Restore extends RetryingRestModifyView<ChangeResource, RestoreInput
 
   @Inject
   Restore(
+      BatchUpdate.Factory updateFactory,
       RestoredSender.Factory restoredSenderFactory,
-      Provider<ReviewDb> dbProvider,
       ChangeJson.Factory json,
       ChangeMessagesUtil cmUtil,
       PatchSetUtil psUtil,
-      RetryHelper retryHelper,
       ChangeRestored changeRestored,
       ProjectCache projectCache) {
-    super(retryHelper);
+    this.updateFactory = updateFactory;
     this.restoredSenderFactory = restoredSenderFactory;
-    this.dbProvider = dbProvider;
     this.json = json;
     this.cmUtil = cmUtil;
     this.psUtil = psUtil;
@@ -86,23 +82,20 @@ public class Restore extends RetryingRestModifyView<ChangeResource, RestoreInput
   }
 
   @Override
-  protected ChangeInfo applyImpl(
-      BatchUpdate.Factory updateFactory, ChangeResource rsrc, RestoreInput input)
-      throws RestApiException, UpdateException, OrmException, PermissionBackendException,
-          IOException {
+  public Response<ChangeInfo> apply(ChangeResource rsrc, RestoreInput input)
+      throws RestApiException, UpdateException, PermissionBackendException, IOException {
     // Not allowed to restore if the current patch set is locked.
     psUtil.checkPatchSetNotLocked(rsrc.getNotes());
 
-    rsrc.permissions().database(dbProvider).check(ChangePermission.RESTORE);
+    rsrc.permissions().check(ChangePermission.RESTORE);
     projectCache.checkedGet(rsrc.getProject()).checkStatePermitsWrite();
 
     Op op = new Op(input);
     try (BatchUpdate u =
-        updateFactory.create(
-            dbProvider.get(), rsrc.getChange().getProject(), rsrc.getUser(), TimeUtil.nowTs())) {
+        updateFactory.create(rsrc.getChange().getProject(), rsrc.getUser(), TimeUtil.nowTs())) {
       u.addOp(rsrc.getId(), op).execute();
     }
-    return json.noOptions().format(op.change);
+    return Response.ok(json.noOptions().format(op.change));
   }
 
   private class Op implements BatchUpdateOp {
@@ -117,20 +110,20 @@ public class Restore extends RetryingRestModifyView<ChangeResource, RestoreInput
     }
 
     @Override
-    public boolean updateChange(ChangeContext ctx) throws OrmException, ResourceConflictException {
+    public boolean updateChange(ChangeContext ctx) throws ResourceConflictException {
       change = ctx.getChange();
-      if (change == null || change.getStatus() != Status.ABANDONED) {
+      if (change == null || !change.isAbandoned()) {
         throw new ResourceConflictException("change is " + ChangeUtil.status(change));
       }
       PatchSet.Id psId = change.currentPatchSetId();
       ChangeUpdate update = ctx.getUpdate(psId);
-      patchSet = psUtil.get(ctx.getDb(), ctx.getNotes(), psId);
+      patchSet = psUtil.get(ctx.getNotes(), psId);
       change.setStatus(Status.NEW);
       change.setLastUpdatedOn(ctx.getWhen());
       update.setStatus(change.getStatus());
 
       message = newMessage(ctx);
-      cmUtil.addChangeMessage(ctx.getDb(), update, message);
+      cmUtil.addChangeMessage(update, message);
       return true;
     }
 
@@ -145,7 +138,7 @@ public class Restore extends RetryingRestModifyView<ChangeResource, RestoreInput
     }
 
     @Override
-    public void postUpdate(Context ctx) throws OrmException {
+    public void postUpdate(Context ctx) {
       try {
         ReplyToChangeSender cm = restoredSenderFactory.create(ctx.getProject(), change.getId());
         cm.setFrom(ctx.getAccountId());
@@ -168,7 +161,7 @@ public class Restore extends RetryingRestModifyView<ChangeResource, RestoreInput
             .setVisible(false);
 
     Change change = rsrc.getChange();
-    if (change.getStatus() != Status.ABANDONED) {
+    if (!change.isAbandoned()) {
       return description;
     }
 
@@ -186,13 +179,13 @@ public class Restore extends RetryingRestModifyView<ChangeResource, RestoreInput
       if (psUtil.isPatchSetLocked(rsrc.getNotes())) {
         return description;
       }
-    } catch (OrmException | IOException e) {
+    } catch (StorageException | IOException e) {
       logger.atSevere().withCause(e).log(
           "Failed to check if the current patch set of change %s is locked", change.getId());
       return description;
     }
 
-    boolean visible = rsrc.permissions().database(dbProvider).testOrFalse(ChangePermission.RESTORE);
+    boolean visible = rsrc.permissions().testOrFalse(ChangePermission.RESTORE);
     return description.setVisible(visible);
   }
 }

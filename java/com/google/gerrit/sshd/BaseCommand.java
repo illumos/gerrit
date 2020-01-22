@@ -20,10 +20,10 @@ import com.google.common.base.Joiner;
 import com.google.common.flogger.FluentLogger;
 import com.google.common.util.concurrent.Atomics;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.annotations.PluginName;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.AccessPath;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.DynamicOptions;
@@ -57,6 +57,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.apache.sshd.common.SshException;
 import org.apache.sshd.server.Environment;
 import org.apache.sshd.server.ExitCallback;
+import org.apache.sshd.server.channel.ChannelSession;
 import org.apache.sshd.server.command.Command;
 import org.kohsuke.args4j.Argument;
 import org.kohsuke.args4j.CmdLineException;
@@ -182,7 +183,7 @@ public abstract class BaseCommand implements Command {
   }
 
   @Override
-  public void destroy() {
+  public void destroy(ChannelSession channel) {
     Future<?> future = task.getAndSet(null);
     if (future != null && !future.isDone()) {
       future.cancel(true);
@@ -264,7 +265,8 @@ public abstract class BaseCommand implements Command {
   /**
    * Spawn a function into its own thread.
    *
-   * <p>Typically this should be invoked within {@link Command#start(Environment)}, such as:
+   * <p>Typically this should be invoked within {@link Command#start(ChannelSession, Environment)},
+   * such as:
    *
    * <pre>
    * startThread(new CommandRunnable() {

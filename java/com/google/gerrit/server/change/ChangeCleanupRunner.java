@@ -24,7 +24,6 @@ import com.google.gerrit.server.update.RetryHelper;
 import com.google.gerrit.server.update.UpdateException;
 import com.google.gerrit.server.util.ManualRequestContext;
 import com.google.gerrit.server.util.OneOffRequestContext;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 
 /** Runnable to enable scheduling change cleanups to run periodically */
@@ -80,12 +79,15 @@ public class ChangeCleanupRunner implements Runnable {
       // abandonInactiveOpenChanges skips failures instead of throwing, so retrying will never
       // actually happen. For the purposes of this class that is fine: they'll get tried again the
       // next time the scheduled task is run.
-      retryHelper.execute(
-          updateFactory -> {
-            abandonUtil.abandonInactiveOpenChanges(updateFactory);
-            return null;
-          });
-    } catch (RestApiException | UpdateException | OrmException e) {
+      retryHelper
+          .changeUpdate(
+              "abandonInactiveOpenChanges",
+              updateFactory -> {
+                abandonUtil.abandonInactiveOpenChanges(updateFactory);
+                return null;
+              })
+          .call();
+    } catch (RestApiException | UpdateException e) {
       logger.atSevere().withCause(e).log("Failed to cleanup changes.");
     }
   }

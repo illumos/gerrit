@@ -22,13 +22,13 @@ import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.data.PermissionRule;
 import com.google.gerrit.common.data.PermissionRule.Action;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.api.access.GlobalOrPluginPermission;
 import com.google.gerrit.extensions.api.access.PluginPermission;
 import com.google.gerrit.extensions.conditions.BooleanCondition;
 import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.PeerDaemonUser;
@@ -40,7 +40,6 @@ import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.util.Collection;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -109,7 +108,7 @@ public class DefaultPermissionBackend extends PermissionBackend {
             PerThreadCache.getOrCompute(
                 PerThreadCache.Key.create(ProjectControl.class, project, user.getCacheKey()),
                 () -> projectControlFactory.create(user, state));
-        return control.asForProject().database(db);
+        return control.asForProject();
       } catch (Exception e) {
         Throwable cause = e.getCause() != null ? e.getCause() : e;
         return FailedPermissionBackend.project(
@@ -128,7 +127,7 @@ public class DefaultPermissionBackend extends PermissionBackend {
     @Override
     public <T extends GlobalOrPluginPermission> Set<T> test(Collection<T> permSet)
         throws PermissionBackendException {
-      Set<T> ok = newSet(permSet);
+      Set<T> ok = Sets.newHashSetWithExpectedSize(permSet.size());
       for (T perm : permSet) {
         if (can(perm)) {
           ok.add(perm);
@@ -147,7 +146,7 @@ public class DefaultPermissionBackend extends PermissionBackend {
         return can((GlobalPermission) perm);
       } else if (perm instanceof PluginPermission) {
         PluginPermission pluginPermission = (PluginPermission) perm;
-        return has(DefaultPermissionMappings.pluginPermissionName(pluginPermission))
+        return has(DefaultPermissionMappings.pluginCapabilityName(pluginPermission))
             || (pluginPermission.fallBackToAdmin() && isAdmin());
       }
       throw new PermissionBackendException(perm + " unsupported");
@@ -266,15 +265,5 @@ public class DefaultPermissionBackend extends PermissionBackend {
               .collect(toSet());
       return denied.isEmpty() || !user.getEffectiveGroups().containsAnyOf(denied);
     }
-  }
-
-  private static <T extends GlobalOrPluginPermission> Set<T> newSet(Collection<T> permSet) {
-    if (permSet instanceof EnumSet) {
-      @SuppressWarnings({"unchecked", "rawtypes"})
-      Set<T> s = ((EnumSet) permSet).clone();
-      s.clear();
-      return s;
-    }
-    return Sets.newHashSetWithExpectedSize(permSet.size());
   }
 }

@@ -14,11 +14,10 @@
 
 package com.google.gerrit.server.mail.send;
 
-import com.google.gerrit.common.errors.EmailException;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.EmailException;
 import com.google.gerrit.server.account.ProjectWatches.NotifyType;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 
@@ -26,14 +25,13 @@ import com.google.inject.assistedinject.Assisted;
 public class DeleteVoteSender extends ReplyToChangeSender {
   public interface Factory extends ReplyToChangeSender.Factory<DeleteVoteSender> {
     @Override
-    DeleteVoteSender create(Project.NameKey project, Change.Id change);
+    DeleteVoteSender create(Project.NameKey project, Change.Id changeId);
   }
 
   @Inject
   protected DeleteVoteSender(
-      EmailArguments ea, @Assisted Project.NameKey project, @Assisted Change.Id id)
-      throws OrmException {
-    super(ea, "deleteVote", newChangeData(ea, project, id));
+      EmailArguments args, @Assisted Project.NameKey project, @Assisted Change.Id changeId) {
+    super(args, "deleteVote", newChangeData(args, project, changeId));
   }
 
   @Override

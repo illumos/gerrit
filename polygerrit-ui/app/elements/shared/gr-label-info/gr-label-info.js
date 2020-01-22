@@ -17,17 +17,22 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-label-info',
+  /** @extends Polymer.Element */
+  class GrLabelInfo extends Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element)) {
+    static get is() { return 'gr-label-info'; }
 
-    properties: {
-      labelInfo: Object,
-      label: String,
-      /** @type {?} */
-      change: Object,
-      account: Object,
-      mutable: Boolean,
-    },
+    static get properties() {
+      return {
+        labelInfo: Object,
+        label: String,
+        /** @type {?} */
+        change: Object,
+        account: Object,
+        mutable: Boolean,
+      };
+    }
 
     /**
      * @param {!Object} labelInfo
@@ -37,7 +42,7 @@
      */
     _mapLabelInfo(labelInfo, account, changeLabelsRecord) {
       const result = [];
-      if (!labelInfo) { return result; }
+      if (!labelInfo || !account) { return result; }
       if (!labelInfo.values) {
         if (labelInfo.rejected || labelInfo.approved) {
           const ok = labelInfo.approved || !labelInfo.rejected;
@@ -85,7 +90,7 @@
         }
       }
       return result;
-    },
+    }
 
     /**
      * A user is able to delete a vote iff the mutable property is true and the
@@ -94,7 +99,7 @@
      *
      * @param {!Object} reviewer An object describing the reviewer that left the
      *     vote.
-     * @param {Boolean} mutable
+     * @param {boolean} mutable
      * @param {!Object} change
      */
     _computeDeleteClass(reviewer, mutable, change) {
@@ -106,7 +111,7 @@
         return '';
       }
       return 'hidden';
-    },
+    }
 
     /**
      * Closure annotation for Polymer.prototype.splice is off.
@@ -129,18 +134,19 @@
                 target.disabled = false;
                 if (!response.ok) { return; }
                 Gerrit.Nav.navigateToChange(this.change);
-              }).catch(err => {
+              })
+              .catch(err => {
                 target.disabled = false;
                 return;
               });
-    },
+    }
 
     _computeValueTooltip(labelInfo, score) {
       if (!labelInfo || !labelInfo.values || !labelInfo.values[score]) {
         return '';
       }
       return labelInfo.values[score];
-    },
+    }
 
     /**
      * @param {!Object} labelInfo
@@ -148,7 +154,7 @@
      *    order to trigger computation when a label is removed from the change.
      */
     _computeShowPlaceholder(labelInfo, changeLabelsRecord) {
-      if (labelInfo.all) {
+      if (labelInfo && labelInfo.all) {
         for (const label of labelInfo.all) {
           if (label.value && label.value != labelInfo.default_value) {
             return 'hidden';
@@ -156,6 +162,8 @@
         }
       }
       return '';
-    },
-  });
+    }
+  }
+
+  customElements.define(GrLabelInfo.is, GrLabelInfo);
 })();

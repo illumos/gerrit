@@ -15,7 +15,10 @@
 package com.google.gerrit.acceptance.rest.project;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.block;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static org.eclipse.jgit.lib.Constants.R_TAGS;
 
 import com.google.common.collect.FluentIterable;
@@ -23,6 +26,8 @@ import com.google.common.collect.ImmutableList;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.PushOneCommit;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.common.data.Permission;
 import com.google.gerrit.extensions.api.projects.ProjectApi.ListRefsRequest;
 import com.google.gerrit.extensions.api.projects.TagApi;
@@ -33,6 +38,7 @@ import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.inject.Inject;
 import java.sql.Timestamp;
 import java.util.List;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -57,31 +63,44 @@ public class TagsIT extends AbstractDaemonTest {
           + "=XFeC\n"
           + "-----END PGP SIGNATURE-----";
 
+  @Inject private ProjectOperations projectOperations;
+  @Inject private RequestScopeOperations requestScopeOperations;
+
   @Test
   public void listTagsOfNonExistingProject() throws Exception {
-    exception.expect(ResourceNotFoundException.class);
-    gApi.projects().name("does-not-exist").tags().get();
+    assertThrows(
+        ResourceNotFoundException.class, () -> gApi.projects().name("does-not-exist").tags().get());
   }
 
   @Test
   public void getTagOfNonExistingProject() throws Exception {
-    exception.expect(ResourceNotFoundException.class);
-    gApi.projects().name("does-not-exist").tag("tag").get();
+    assertThrows(
+        ResourceNotFoundException.class,
+        () -> gApi.projects().name("does-not-exist").tag("tag").get());
   }
 
   @Test
   public void listTagsOfNonVisibleProject() throws Exception {
-    blockRead("refs/*");
-    setApiUser(user);
-    exception.expect(ResourceNotFoundException.class);
-    gApi.projects().name(project.get()).tags().get();
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(Permission.READ).ref("refs/*").group(REGISTERED_USERS))
+        .update();
+    requestScopeOperations.setApiUser(user.id());
+    assertThrows(
+        ResourceNotFoundException.class, () -> gApi.projects().name(project.get()).tags().get());
   }
 
   @Test
   public void getTagOfNonVisibleProject() throws Exception {
-    blockRead("refs/*");
-    exception.expect(ResourceNotFoundException.class);
-    gApi.projects().name(project.get()).tag("tag").get();
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(Permission.READ).ref("refs/*").group(REGISTERED_USERS))
+        .update();
+    assertThrows(
+        ResourceNotFoundException.class,
+        () -> gApi.projects().name(project.get()).tag("tag").get());
   }
 
   @Test
@@ -127,7 +146,7 @@ public class TagsIT extends AbstractDaemonTest {
   public void listTagsOfNonVisibleBranch() throws Exception {
     grantTagPermissions();
 
-    PushOneCommit push1 = pushFactory.create(db, admin.getIdent(), testRepo);
+    PushOneCommit push1 = pushFactory.create(admin.newIdent(), testRepo);
     PushOneCommit.Result r1 = push1.to("refs/heads/master");
     r1.assertOkStatus();
     TagInput tag1 = new TagInput();
@@ -138,7 +157,7 @@ public class TagsIT extends AbstractDaemonTest {
     assertThat(result.revision).isEqualTo(tag1.revision);
 
     pushTo("refs/heads/hidden");
-    PushOneCommit push2 = pushFactory.create(db, admin.getIdent(), testRepo);
+    PushOneCommit push2 = pushFactory.create(admin.newIdent(), testRepo);
     PushOneCommit.Result r2 = push2.to("refs/heads/hidden");
     r2.assertOkStatus();
 
@@ -156,7 +175,11 @@ public class TagsIT extends AbstractDaemonTest {
     assertThat(tags.get(1).ref).isEqualTo(R_TAGS + tag2.ref);
     assertThat(tags.get(1).revision).isEqualTo(tag2.revision);
 
-    blockRead("refs/heads/hidden");
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(Permission.READ).ref("refs/heads/hidden").group(REGISTERED_USERS))
+        .update();
     tags = getTags().get();
     assertThat(tags).hasSize(1);
     assertThat(tags.get(0).ref).isEqualTo(R_TAGS + tag1.ref);
@@ -167,7 +190,7 @@ public class TagsIT extends AbstractDaemonTest {
   public void lightweightTag() throws Exception {
     grantTagPermissions();
 
-    PushOneCommit push = pushFactory.create(db, admin.getIdent(), testRepo);
+    PushOneCommit push = pushFactory.create(admin.newIdent(), testRepo);
     PushOneCommit.Result r = push.to("refs/heads/master");
     r.assertOkStatus();
 
@@ -188,7 +211,7 @@ public class TagsIT extends AbstractDaemonTest {
     assertThat(result.canDelete).isTrue();
     assertThat(result.created).isEqualTo(timestamp(r));
 
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     result = tag(input.ref).get();
     assertThat(result.canDelete).isNull();
 
@@ -199,7 +222,7 @@ public class TagsIT extends AbstractDaemonTest {
   public void annotatedTag() throws Exception {
     grantTagPermissions();
 
-    PushOneCommit push = pushFactory.create(db, admin.getIdent(), testRepo);
+    PushOneCommit push = pushFactory.create(admin.newIdent(), testRepo);
     PushOneCommit.Result r = push.to("refs/heads/master");
     r.assertOkStatus();
 
@@ -212,8 +235,8 @@ public class TagsIT extends AbstractDaemonTest {
     assertThat(result.ref).isEqualTo(R_TAGS + input.ref);
     assertThat(result.object).isEqualTo(input.revision);
     assertThat(result.message).isEqualTo(input.message);
-    assertThat(result.tagger.name).isEqualTo(admin.fullName);
-    assertThat(result.tagger.email).isEqualTo(admin.email);
+    assertThat(result.tagger.name).isEqualTo(admin.fullName());
+    assertThat(result.tagger.email).isEqualTo(admin.email());
     assertThat(result.created).isEqualTo(result.tagger.date);
 
     eventRecorder.assertRefUpdatedEvents(project.get(), result.ref, null, result.revision);
@@ -227,8 +250,8 @@ public class TagsIT extends AbstractDaemonTest {
     assertThat(result2.ref).isEqualTo(input2.ref);
     assertThat(result2.object).isEqualTo(input2.revision);
     assertThat(result2.message).isEqualTo(input2.message);
-    assertThat(result2.tagger.name).isEqualTo(admin.fullName);
-    assertThat(result2.tagger.email).isEqualTo(admin.email);
+    assertThat(result2.tagger.name).isEqualTo(admin.fullName());
+    assertThat(result2.tagger.email).isEqualTo(admin.email());
     assertThat(result2.created).isEqualTo(result2.tagger.date);
 
     eventRecorder.assertRefUpdatedEvents(project.get(), result2.ref, null, result2.revision);
@@ -244,30 +267,38 @@ public class TagsIT extends AbstractDaemonTest {
     assertThat(result.ref).isEqualTo(R_TAGS + "test");
 
     input.ref = "refs/tags/test";
-    exception.expect(ResourceConflictException.class);
-    exception.expectMessage("tag \"" + R_TAGS + "test\" already exists");
-    tag(input.ref).create(input);
+    ResourceConflictException thrown =
+        assertThrows(ResourceConflictException.class, () -> tag(input.ref).create(input));
+    assertThat(thrown).hasMessageThat().contains("tag \"" + R_TAGS + "test\" already exists");
   }
 
   @Test
   public void createTagNotAllowed() throws Exception {
-    block(R_TAGS + "*", Permission.CREATE, REGISTERED_USERS);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(Permission.CREATE).ref(R_TAGS + "*").group(REGISTERED_USERS))
+        .update();
     TagInput input = new TagInput();
     input.ref = "test";
-    exception.expect(AuthException.class);
-    exception.expectMessage("not permitted: create");
-    tag(input.ref).create(input);
+    AuthException thrown = assertThrows(AuthException.class, () -> tag(input.ref).create(input));
+    assertThat(thrown).hasMessageThat().contains("not permitted: create");
   }
 
   @Test
   public void createAnnotatedTagNotAllowed() throws Exception {
-    block(R_TAGS + "*", Permission.CREATE_TAG, REGISTERED_USERS);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(Permission.CREATE_TAG).ref(R_TAGS + "*").group(REGISTERED_USERS))
+        .update();
     TagInput input = new TagInput();
     input.ref = "test";
     input.message = "annotation";
-    exception.expect(AuthException.class);
-    exception.expectMessage("Cannot create annotated tag \"" + R_TAGS + "test\"");
-    tag(input.ref).create(input);
+    AuthException thrown = assertThrows(AuthException.class, () -> tag(input.ref).create(input));
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains("Cannot create annotated tag \"" + R_TAGS + "test\"");
   }
 
   @Test
@@ -275,9 +306,9 @@ public class TagsIT extends AbstractDaemonTest {
     TagInput input = new TagInput();
     input.ref = "test";
     input.message = SIGNED_ANNOTATION;
-    exception.expect(MethodNotAllowedException.class);
-    exception.expectMessage("Cannot create signed tag \"" + R_TAGS + "test\"");
-    tag(input.ref).create(input);
+    MethodNotAllowedException thrown =
+        assertThrows(MethodNotAllowedException.class, () -> tag(input.ref).create(input));
+    assertThat(thrown).hasMessageThat().contains("Cannot create signed tag \"" + R_TAGS + "test\"");
   }
 
   @Test
@@ -285,9 +316,9 @@ public class TagsIT extends AbstractDaemonTest {
     TagInput input = new TagInput();
     input.ref = "test";
 
-    exception.expect(BadRequestException.class);
-    exception.expectMessage("ref must match URL");
-    tag("TEST").create(input);
+    BadRequestException thrown =
+        assertThrows(BadRequestException.class, () -> tag("TEST").create(input));
+    assertThat(thrown).hasMessageThat().contains("ref must match URL");
   }
 
   @Test
@@ -297,9 +328,9 @@ public class TagsIT extends AbstractDaemonTest {
     TagInput input = new TagInput();
     input.ref = "refs/heads/test";
 
-    exception.expect(BadRequestException.class);
-    exception.expectMessage("invalid tag name \"" + input.ref + "\"");
-    tag(input.ref).create(input);
+    BadRequestException thrown =
+        assertThrows(BadRequestException.class, () -> tag(input.ref).create(input));
+    assertThat(thrown).hasMessageThat().contains("invalid tag name \"" + input.ref + "\"");
   }
 
   @Test
@@ -309,9 +340,9 @@ public class TagsIT extends AbstractDaemonTest {
     TagInput input = new TagInput();
     input.ref = "//";
 
-    exception.expect(BadRequestException.class);
-    exception.expectMessage("invalid tag name \"refs/tags/\"");
-    tag(input.ref).create(input);
+    BadRequestException thrown =
+        assertThrows(BadRequestException.class, () -> tag(input.ref).create(input));
+    assertThat(thrown).hasMessageThat().contains("invalid tag name \"refs/tags/\"");
   }
 
   @Test
@@ -322,9 +353,9 @@ public class TagsIT extends AbstractDaemonTest {
     input.ref = "test";
     input.revision = "abcdefg";
 
-    exception.expect(BadRequestException.class);
-    exception.expectMessage("Invalid base revision");
-    tag(input.ref).create(input);
+    BadRequestException thrown =
+        assertThrows(BadRequestException.class, () -> tag(input.ref).create(input));
+    assertThat(thrown).hasMessageThat().contains("Invalid base revision");
   }
 
   @Test
@@ -332,7 +363,7 @@ public class TagsIT extends AbstractDaemonTest {
     grantTagPermissions();
 
     // If revision is not specified, the tag is created based on HEAD, which points to master.
-    RevCommit expectedRevision = getRemoteHead(project, "master");
+    RevCommit expectedRevision = projectOperations.project(project).getHead("master");
 
     TagInput input = new TagInput();
     input.ref = "test";
@@ -348,7 +379,7 @@ public class TagsIT extends AbstractDaemonTest {
     grantTagPermissions();
 
     // If revision is not specified, the tag is created based on HEAD, which points to master.
-    RevCommit expectedRevision = getRemoteHead(project, "master");
+    RevCommit expectedRevision = projectOperations.project(project).getHead("master");
 
     TagInput input = new TagInput();
     input.ref = "test";
@@ -363,7 +394,7 @@ public class TagsIT extends AbstractDaemonTest {
   public void baseRevisionIsTrimmed() throws Exception {
     grantTagPermissions();
 
-    RevCommit revision = getRemoteHead(project, "master");
+    RevCommit revision = projectOperations.project(project).getHead("master");
 
     TagInput input = new TagInput();
     input.ref = "test";
@@ -411,18 +442,17 @@ public class TagsIT extends AbstractDaemonTest {
   }
 
   private void assertBadRequest(ListRefsRequest<TagInfo> req) throws Exception {
-    try {
-      req.get();
-      fail("Expected BadRequestException");
-    } catch (BadRequestException e) {
-      // Expected
-    }
+    assertThrows(BadRequestException.class, () -> req.get());
   }
 
   private void grantTagPermissions() throws Exception {
-    grant(project, R_TAGS + "*", Permission.CREATE);
-    grant(project, R_TAGS + "", Permission.DELETE);
-    grant(project, R_TAGS + "*", Permission.CREATE_TAG);
-    grant(project, R_TAGS + "*", Permission.CREATE_SIGNED_TAG);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.CREATE).ref(R_TAGS + "*").group(adminGroupUuid()))
+        .add(allow(Permission.DELETE).ref(R_TAGS + "").group(adminGroupUuid()))
+        .add(allow(Permission.CREATE_TAG).ref(R_TAGS + "*").group(adminGroupUuid()))
+        .add(allow(Permission.CREATE_SIGNED_TAG).ref(R_TAGS + "*").group(adminGroupUuid()))
+        .update();
   }
 }

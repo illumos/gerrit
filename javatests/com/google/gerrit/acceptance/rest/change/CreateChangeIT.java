@@ -15,11 +15,11 @@
 package com.google.gerrit.acceptance.rest.change;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.TruthJUnit.assume;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.block;
 import static com.google.gerrit.common.data.Permission.READ;
-import static com.google.gerrit.reviewdb.client.RefNames.changeMetaRef;
+import static com.google.gerrit.entities.RefNames.changeMetaRef;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
-import static java.util.concurrent.TimeUnit.SECONDS;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static org.eclipse.jgit.lib.Constants.SIGNED_OFF_BY_TAG;
 
 import com.google.common.base.Strings;
@@ -28,53 +28,66 @@ import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.acceptance.PushOneCommit.Result;
 import com.google.gerrit.acceptance.RestResponse;
+import com.google.gerrit.acceptance.UseClockStep;
+import com.google.gerrit.acceptance.UseSystemTime;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.changes.ChangeApi;
 import com.google.gerrit.extensions.api.changes.CherryPickInput;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
+import com.google.gerrit.extensions.api.projects.BranchInput;
 import com.google.gerrit.extensions.client.ChangeStatus;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.ChangeInput;
 import com.google.gerrit.extensions.common.MergeInput;
+import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Change;
 import com.google.gerrit.server.submit.ChangeAlreadyMergedException;
 import com.google.gerrit.testing.FakeEmailSender.Message;
-import com.google.gerrit.testing.TestTimeUtil;
+import com.google.inject.Inject;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.transport.RefSpec;
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
+@UseClockStep
 public class CreateChangeIT extends AbstractDaemonTest {
-  @BeforeClass
-  public static void setTimeForTesting() {
-    TestTimeUtil.resetWithClockStep(1, SECONDS);
-  }
-
-  @AfterClass
-  public static void restoreTime() {
-    TestTimeUtil.useSystemTime();
-  }
+  @Inject private ProjectOperations projectOperations;
+  @Inject private RequestScopeOperations requestScopeOperations;
 
   @Test
   public void createEmptyChange_MissingBranch() throws Exception {
     ChangeInput ci = new ChangeInput();
     ci.project = project.get();
     assertCreateFails(ci, BadRequestException.class, "branch must be non-empty");
+  }
+
+  @Test
+  public void createEmptyChange_NonExistingBranch() throws Exception {
+    ChangeInput ci = newChangeInput(ChangeStatus.NEW);
+    ci.branch = "non-existing";
+    assertCreateFails(ci, BadRequestException.class, "Destination branch does not exist");
   }
 
   @Test
@@ -117,6 +130,13 @@ public class CreateChangeIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void createNewChange_RequiresAuthentication() throws Exception {
+    requestScopeOperations.setApiUserAnonymous();
+    assertCreateFails(
+        newChangeInput(ChangeStatus.NEW), AuthException.class, "Authentication required");
+  }
+
+  @Test
   public void createNewChange() throws Exception {
     ChangeInfo info = assertCreateSucceeds(newChangeInput(ChangeStatus.NEW));
     assertThat(info.revisions.get(info.currentRevision).commit.message)
@@ -144,19 +164,44 @@ public class CreateChangeIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void cannotCreateChangeWithChangeIfOfExistingChangeOnSameBranch() throws Exception {
+    String changeId = createChange().getChangeId();
+
+    ChangeInput ci = newChangeInput(ChangeStatus.NEW);
+    ci.subject = "Subject\n\nChange-Id: " + changeId;
+    assertCreateFails(
+        ci,
+        ResourceConflictException.class,
+        "A change with Change-Id " + changeId + " already exists for this branch.");
+  }
+
+  @Test
+  public void canCreateChangeWithChangeIfOfExistingChangeOnOtherBranch() throws Exception {
+    String changeId = createChange().getChangeId();
+
+    createBranch(BranchNameKey.create(project, "other"));
+
+    ChangeInput ci = newChangeInput(ChangeStatus.NEW);
+    ci.subject = "Subject\n\nChange-Id: " + changeId;
+    ci.branch = "other";
+    ChangeInfo info = assertCreateSucceeds(ci);
+    assertThat(info.changeId).isEqualTo(changeId);
+  }
+
+  @Test
   public void notificationsOnChangeCreation() throws Exception {
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     watch(project.get());
 
     // check that watcher is notified
-    setApiUser(admin);
+    requestScopeOperations.setApiUser(admin.id());
     assertCreateSucceeds(newChangeInput(ChangeStatus.NEW));
 
     List<Message> messages = sender.getMessages();
     assertThat(messages).hasSize(1);
     Message m = messages.get(0);
-    assertThat(m.rcpt()).containsExactly(user.emailAddress);
-    assertThat(m.body()).contains(admin.fullName + " has uploaded this change for review.");
+    assertThat(m.rcpt()).containsExactly(user.getEmailAddress());
+    assertThat(m.body()).contains(admin.fullName() + " has uploaded this change for review.");
 
     // check that watcher is not notified if notify=NONE
     sender.clear();
@@ -175,7 +220,7 @@ public class CreateChangeIT extends AbstractDaemonTest {
       assertThat(message)
           .contains(
               String.format(
-                  "%sAdministrator <%s>", SIGNED_OFF_BY_TAG, admin.getIdent().getEmailAddress()));
+                  "%sAdministrator <%s>", SIGNED_OFF_BY_TAG, admin.newIdent().getEmailAddress()));
     } finally {
       setSignedOffByFooter(false);
     }
@@ -196,7 +241,7 @@ public class CreateChangeIT extends AbstractDaemonTest {
       assertThat(message)
           .contains(
               String.format(
-                  "%sAdministrator <%s>", SIGNED_OFF_BY_TAG, admin.getIdent().getEmailAddress()));
+                  "%sAdministrator <%s>", SIGNED_OFF_BY_TAG, admin.newIdent().getEmailAddress()));
     } finally {
       setSignedOffByFooter(false);
     }
@@ -234,6 +279,16 @@ public class CreateChangeIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void createChangeWithNonExistingParentCommitFails() throws Exception {
+    ChangeInput input = newChangeInput(ChangeStatus.NEW);
+    input.baseCommit = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+    assertCreateFails(
+        input,
+        UnprocessableEntityException.class,
+        String.format("Base %s doesn't exist", input.baseCommit));
+  }
+
+  @Test
   public void createChangeWithParentCommitOnWrongBranchFails() throws Exception {
     Map<String, PushOneCommit.Result> setup =
         changeInTwoBranches("foo", "foo.txt", "bar", "bar.txt");
@@ -244,6 +299,20 @@ public class CreateChangeIT extends AbstractDaemonTest {
         input,
         BadRequestException.class,
         String.format("Commit %s doesn't exist on ref refs/heads/foo", input.baseCommit));
+  }
+
+  @Test
+  public void createChangeWithParentCommitWithNonExistingTargetBranch() throws Exception {
+    Result initialCommit =
+        pushFactory
+            .create(user.newIdent(), testRepo, "initial commit", "readme.txt", "initial commit")
+            .to("refs/heads/master");
+    initialCommit.assertOkStatus();
+
+    ChangeInput input = newChangeInput(ChangeStatus.NEW);
+    input.branch = "non-existing";
+    input.baseCommit = initialCommit.getCommit().getName();
+    assertCreateFails(input, BadRequestException.class, "Destination branch does not exist");
   }
 
   @Test
@@ -258,7 +327,11 @@ public class CreateChangeIT extends AbstractDaemonTest {
   public void createChangeWithoutAccessToParentCommitFails() throws Exception {
     Map<String, PushOneCommit.Result> results =
         changeInTwoBranches("invisible-branch", "a.txt", "visible-branch", "b.txt");
-    block(project, "refs/heads/invisible-branch", READ, REGISTERED_USERS);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(READ).ref("refs/heads/invisible-branch").group(REGISTERED_USERS))
+        .update();
 
     ChangeInput in = newChangeInput(ChangeStatus.NEW);
     in.branch = "visible-branch";
@@ -268,29 +341,17 @@ public class CreateChangeIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void createChangeOnInvisibleBranchFails() throws Exception {
-    changeInTwoBranches("invisible-branch", "a.txt", "branchB", "b.txt");
-    block(project, "refs/heads/invisible-branch", READ, REGISTERED_USERS);
-
-    ChangeInput in = newChangeInput(ChangeStatus.NEW);
-    in.branch = "invisible-branch";
-    assertCreateFails(in, ResourceNotFoundException.class, "");
-  }
-
-  @Test
   public void noteDbCommit() throws Exception {
-    assume().that(notesMigration.readChanges()).isTrue();
-
     ChangeInfo c = assertCreateSucceeds(newChangeInput(ChangeStatus.NEW));
     try (Repository repo = repoManager.openRepository(project);
         RevWalk rw = new RevWalk(repo)) {
       RevCommit commit =
-          rw.parseCommit(repo.exactRef(changeMetaRef(new Change.Id(c._number))).getObjectId());
+          rw.parseCommit(repo.exactRef(changeMetaRef(Change.id(c._number))).getObjectId());
 
       assertThat(commit.getShortMessage()).isEqualTo("Create change");
 
       PersonIdent expectedAuthor =
-          changeNoteUtil.newIdent(getAccount(admin.id), c.created, serverIdent.get());
+          changeNoteUtil.newIdent(getAccount(admin.id()), c.created, serverIdent.get());
       assertThat(commit.getAuthorIdent()).isEqualTo(expectedAuthor);
 
       assertThat(commit.getCommitterIdent())
@@ -318,6 +379,62 @@ public class CreateChangeIT extends AbstractDaemonTest {
     changeInTwoBranches("branchA", "shared.txt", "branchB", "shared.txt");
     ChangeInput in = newMergeChangeInput("branchA", "branchB", "ours");
     assertCreateSucceeds(in);
+  }
+
+  @Test
+  public void createMergeChangeFailsWithConflictIfThereAreTooManyCommonPredecessors()
+      throws Exception {
+    // Create an initial commit in master.
+    Result initialCommit =
+        pushFactory
+            .create(user.newIdent(), testRepo, "initial commit", "readme.txt", "initial commit")
+            .to("refs/heads/master");
+    initialCommit.assertOkStatus();
+
+    String file = "shared.txt";
+    List<RevCommit> parents = new ArrayList<>();
+    // RecursiveMerger#MAX_BASES = 200, cannot use RecursiveMerger#MAX_BASES as it is not static.
+    int maxBases = 200;
+
+    // Create more than RecursiveMerger#MAX_BASES base commits.
+    for (int i = 1; i <= maxBases + 1; i++) {
+      parents.add(
+          testRepo
+              .commit()
+              .message("Base " + i)
+              .add(file, "content " + i)
+              .parent(initialCommit.getCommit())
+              .create());
+    }
+
+    // Create 2 branches.
+    String branchA = "branchA";
+    String branchB = "branchB";
+    createBranch(BranchNameKey.create(project, branchA));
+    createBranch(BranchNameKey.create(project, branchB));
+
+    // Push an octopus merge to both of the branches.
+    Result octopusA =
+        pushFactory
+            .create(user.newIdent(), testRepo)
+            .setParents(parents)
+            .to("refs/heads/" + branchA);
+    octopusA.assertOkStatus();
+
+    Result octopusB =
+        pushFactory
+            .create(user.newIdent(), testRepo)
+            .setParents(parents)
+            .to("refs/heads/" + branchB);
+    octopusB.assertOkStatus();
+
+    // Creating a merge commit for the 2 octopus commits fails, because they have more than
+    // RecursiveMerger#MAX_BASES common predecessors.
+    assertCreateFails(
+        newMergeChangeInput("branchA", "branchB", ""),
+        ResourceConflictException.class,
+        "Cannot create merge commit: No merge base could be determined."
+            + " Reason=TOO_MANY_MERGE_BASES.");
   }
 
   @Test
@@ -397,11 +514,193 @@ public class CreateChangeIT extends AbstractDaemonTest {
     cherry.current().review(ReviewInput.approve());
     cherry.current().submit();
 
-    ObjectId remoteId = getRemoteHead();
+    ObjectId remoteId = projectOperations.project(project).getHead("master");
     assertThat(remoteId).isNotEqualTo(commitId);
 
     ChangeInput in = newMergeChangeInput("master", commitId.getName(), "");
     assertCreateSucceeds(in);
+  }
+
+  @Test
+  public void createChangeOnExistingBranchNotPermitted() throws Exception {
+    createBranch(BranchNameKey.create(project, "foo"));
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(READ).ref("refs/heads/*").group(REGISTERED_USERS))
+        .update();
+    requestScopeOperations.setApiUser(user.id());
+    ChangeInput input = newChangeInput(ChangeStatus.NEW);
+    input.branch = "foo";
+
+    assertCreateFails(input, ResourceNotFoundException.class, "ref refs/heads/foo not found");
+  }
+
+  @Test
+  public void createChangeOnNonExistingBranch() throws Exception {
+    requestScopeOperations.setApiUser(user.id());
+    ChangeInput input = newChangeInput(ChangeStatus.NEW);
+    input.branch = "foo";
+    input.newBranch = true;
+    assertCreateSucceeds(input);
+  }
+
+  @Test
+  public void createChangeOnNonExistingBranchNotPermitted() throws Exception {
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(READ).ref("refs/heads/*").group(REGISTERED_USERS))
+        .update();
+    requestScopeOperations.setApiUser(user.id());
+    ChangeInput input = newChangeInput(ChangeStatus.NEW);
+    input.branch = "foo";
+    // sets this option to be true to make sure permission check happened before this option could
+    // be considered.
+    input.newBranch = true;
+
+    assertCreateFails(input, ResourceNotFoundException.class, "ref refs/heads/foo not found");
+  }
+
+  @Test
+  public void createMergeChangeOnNonExistingBranchNotPossible() throws Exception {
+    requestScopeOperations.setApiUser(user.id());
+    ChangeInput input = newMergeChangeInput("foo", "master", "");
+    input.newBranch = true;
+    assertCreateFails(
+        input, BadRequestException.class, "Cannot create merge: destination branch does not exist");
+  }
+
+  @Test
+  @UseSystemTime
+  public void sha1sOfTwoNewChangesDiffer() throws Exception {
+    ChangeInput changeInput = newChangeInput(ChangeStatus.NEW);
+    ChangeInfo info1 = assertCreateSucceeds(changeInput);
+    ChangeInfo info2 = assertCreateSucceeds(changeInput);
+    assertThat(info1.currentRevision).isNotEqualTo(info2.currentRevision);
+  }
+
+  @Test
+  @UseSystemTime
+  public void sha1sOfTwoNewChangesDifferIfCreatedConcurrently() throws Exception {
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      for (int i = 0; i < 10; i++) {
+        ChangeInput changeInput = newChangeInput(ChangeStatus.NEW);
+
+        CyclicBarrier sync = new CyclicBarrier(2);
+        Callable<ChangeInfo> createChange =
+            () -> {
+              requestScopeOperations.setApiUser(admin.id());
+              sync.await();
+              return assertCreateSucceeds(changeInput);
+            };
+
+        Future<ChangeInfo> changeInfo1 = executor.submit(createChange);
+        Future<ChangeInfo> changeInfo2 = executor.submit(createChange);
+        assertThat(changeInfo1.get().currentRevision)
+            .isNotEqualTo(changeInfo2.get().currentRevision);
+      }
+    } finally {
+      executor.shutdown();
+      executor.awaitTermination(5, TimeUnit.SECONDS);
+    }
+  }
+
+  @Test
+  public void createChangeWithSubmittedMergeSource() throws Exception {
+    // Provide coverage for a performance optimization in CommitsCollection#canRead.
+    BranchInput branchInput = new BranchInput();
+    String mergeTarget = "refs/heads/new-branch";
+    RevCommit startCommit = projectOperations.project(project).getHead("master");
+
+    branchInput.revision = startCommit.name();
+    branchInput.ref = mergeTarget;
+
+    gApi.projects().name(project.get()).branch(mergeTarget).create(branchInput);
+
+    // To create a merge commit, create two changes from the same parent,
+    // and submit them one after the other.
+    PushOneCommit.Result result1 =
+        pushFactory
+            .create(
+                admin.newIdent(), testRepo, "subject1", ImmutableMap.of("file1.txt", "content 1"))
+            .to("refs/for/master");
+    result1.assertOkStatus();
+
+    testRepo.branch("HEAD").update(startCommit);
+    PushOneCommit.Result result2 =
+        pushFactory
+            .create(
+                admin.newIdent(), testRepo, "subject2", ImmutableMap.of("file2.txt", "content 2"))
+            .to("refs/for/master");
+    result2.assertOkStatus();
+
+    ReviewInput reviewInput = ReviewInput.approve().label("Code-Review", 2);
+
+    gApi.changes().id(result1.getChangeId()).revision("current").review(reviewInput);
+    gApi.changes().id(result1.getChangeId()).revision("current").submit();
+
+    gApi.changes().id(result2.getChangeId()).revision("current").review(reviewInput);
+    gApi.changes().id(result2.getChangeId()).revision("current").submit();
+
+    String mergeRev = gApi.projects().name(project.get()).branch("master").get().revision;
+    RevCommit mergeCommit = projectOperations.project(project).getHead("master");
+    assertThat(mergeCommit.getParents().length).isEqualTo(2);
+
+    testRepo.git().fetch().call();
+    testRepo.branch("HEAD").update(mergeCommit);
+    PushOneCommit.Result result3 =
+        pushFactory
+            .create(
+                admin.newIdent(), testRepo, "subject3", ImmutableMap.of("file1.txt", "content 3"))
+            .to("refs/for/master");
+    result2.assertOkStatus();
+    gApi.changes().id(result3.getChangeId()).revision("current").review(reviewInput);
+    gApi.changes().id(result3.getChangeId()).revision("current").submit();
+
+    // Now master doesn't point directly to mergeRev
+    ChangeInput in = new ChangeInput();
+    in.branch = mergeTarget;
+    in.merge = new MergeInput();
+    in.project = project.get();
+    in.merge.source = mergeRev;
+    in.subject = "propagate merge";
+
+    gApi.changes().create(in);
+  }
+
+  @Test
+  public void createChangeWithSourceBranch() throws Exception {
+    changeInTwoBranches("branchA", "a.txt", "branchB", "b.txt");
+
+    // create a merge change from branchA to master in gerrit
+    ChangeInput in = new ChangeInput();
+    in.project = project.get();
+    in.branch = "branchA";
+    in.subject = "message";
+    in.status = ChangeStatus.NEW;
+    MergeInput mergeInput = new MergeInput();
+
+    String mergeRev = gApi.projects().name(project.get()).branch("branchB").get().revision;
+    mergeInput.source = mergeRev;
+    in.merge = mergeInput;
+
+    assertCreateSucceeds(in);
+
+    // Succeeds with a visible branch
+    in.merge.sourceBranch = "refs/heads/branchB";
+    gApi.changes().create(in);
+
+    // Make it invisible
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(READ).ref(in.merge.sourceBranch).group(REGISTERED_USERS))
+        .update();
+
+    // Now it fails.
+    assertThrows(BadRequestException.class, () -> gApi.changes().create(in));
   }
 
   private ChangeInput newChangeInput(ChangeStatus status) {
@@ -417,12 +716,20 @@ public class CreateChangeIT extends AbstractDaemonTest {
   private ChangeInfo assertCreateSucceeds(ChangeInput in) throws Exception {
     ChangeInfo out = gApi.changes().create(in).get();
     assertThat(out.project).isEqualTo(in.project);
-    assertThat(out.branch).isEqualTo(in.branch);
+    assertThat(RefNames.fullName(out.branch)).isEqualTo(RefNames.fullName(in.branch));
     assertThat(out.subject).isEqualTo(in.subject.split("\n")[0]);
     assertThat(out.topic).isEqualTo(in.topic);
     assertThat(out.status).isEqualTo(in.status);
-    assertThat(out.isPrivate).isEqualTo(in.isPrivate);
-    assertThat(out.workInProgress).isEqualTo(in.workInProgress);
+    if (in.isPrivate) {
+      assertThat(out.isPrivate).isTrue();
+    } else {
+      assertThat(out.isPrivate).isNull();
+    }
+    if (in.workInProgress) {
+      assertThat(out.workInProgress).isTrue();
+    } else {
+      assertThat(out.workInProgress).isNull();
+    }
     assertThat(out.revisions).hasSize(1);
     assertThat(out.submitted).isNull();
     assertThat(in.status).isEqualTo(ChangeStatus.NEW);
@@ -432,19 +739,18 @@ public class CreateChangeIT extends AbstractDaemonTest {
   private void assertCreateFails(
       ChangeInput in, Class<? extends RestApiException> errType, String errSubstring)
       throws Exception {
-    exception.expect(errType);
-    exception.expectMessage(errSubstring);
-    gApi.changes().create(in);
+    Throwable thrown = assertThrows(errType, () -> gApi.changes().create(in));
+    assertThat(thrown).hasMessageThat().contains(errSubstring);
   }
 
   // TODO(davido): Expose setting of account preferences in the API
   private void setSignedOffByFooter(boolean value) throws Exception {
-    RestResponse r = adminRestSession.get("/accounts/" + admin.email + "/preferences");
+    RestResponse r = adminRestSession.get("/accounts/" + admin.email() + "/preferences");
     r.assertOK();
     GeneralPreferencesInfo i = newGson().fromJson(r.getReader(), GeneralPreferencesInfo.class);
     i.signedOffBy = value;
 
-    r = adminRestSession.put("/accounts/" + admin.email + "/preferences", i);
+    r = adminRestSession.put("/accounts/" + admin.email() + "/preferences", i);
     r.assertOK();
     GeneralPreferencesInfo o = newGson().fromJson(r.getReader(), GeneralPreferencesInfo.class);
 
@@ -454,7 +760,7 @@ public class CreateChangeIT extends AbstractDaemonTest {
       assertThat(o.signedOffBy).isNull();
     }
 
-    resetCurrentApiUser();
+    requestScopeOperations.resetCurrentApiUser();
   }
 
   private ChangeInput newMergeChangeInput(String targetBranch, String sourceRef, String strategy) {
@@ -488,24 +794,24 @@ public class CreateChangeIT extends AbstractDaemonTest {
     // create a initial commit in master
     Result initialCommit =
         pushFactory
-            .create(db, user.getIdent(), testRepo, "initial commit", "readme.txt", "initial commit")
+            .create(user.newIdent(), testRepo, "initial commit", "readme.txt", "initial commit")
             .to("refs/heads/master");
     initialCommit.assertOkStatus();
 
     // create two new branches
-    createBranch(new Branch.NameKey(project, branchA));
-    createBranch(new Branch.NameKey(project, branchB));
+    createBranch(BranchNameKey.create(project, branchA));
+    createBranch(BranchNameKey.create(project, branchB));
 
     // create a commit in branchA
     Result changeA =
         pushFactory
-            .create(db, user.getIdent(), testRepo, "change A", fileA, "A content")
+            .create(user.newIdent(), testRepo, "change A", fileA, "A content")
             .to("refs/heads/" + branchA);
     changeA.assertOkStatus();
 
     // create a commit in branchB
     PushOneCommit commitB =
-        pushFactory.create(db, user.getIdent(), testRepo, "change B", fileB, "B content");
+        pushFactory.create(user.newIdent(), testRepo, "change B", fileB, "B content");
     commitB.setParent(initialCommit.getCommit());
     Result changeB = commitB.to("refs/heads/" + branchB);
     changeB.assertOkStatus();

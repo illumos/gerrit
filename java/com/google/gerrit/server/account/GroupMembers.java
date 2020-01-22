@@ -19,9 +19,9 @@ import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Streams;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.group.InternalGroup;
 import com.google.gerrit.server.group.InternalGroupDescription;
 import com.google.gerrit.server.group.SystemGroupBackend;
@@ -67,7 +67,7 @@ public class GroupMembers {
       throw new IllegalStateException("listAccounts called with PROJECT_OWNERS argument");
     }
     try {
-      return listAccounts(groupUUID, null, new HashSet<AccountGroup.UUID>());
+      return listAccounts(groupUUID, null, new HashSet<>());
     } catch (NoSuchProjectException e) {
       throw new IllegalStateException(e);
     }
@@ -81,7 +81,7 @@ public class GroupMembers {
    */
   public Set<Account> listAccounts(AccountGroup.UUID groupUUID, Project.NameKey project)
       throws NoSuchProjectException, IOException {
-    return listAccounts(groupUUID, project, new HashSet<AccountGroup.UUID>());
+    return listAccounts(groupUUID, project, new HashSet<>());
   }
 
   private Set<Account> listAccounts(
@@ -131,7 +131,7 @@ public class GroupMembers {
             .filter(groupControl::canSeeMember)
             .map(accountCache::get)
             .flatMap(Streams::stream)
-            .map(AccountState::getAccount)
+            .map(AccountState::account)
             .collect(toImmutableSet());
 
     Set<Account> indirectMembers = new HashSet<>();

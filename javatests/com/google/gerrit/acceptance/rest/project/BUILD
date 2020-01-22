@@ -1,14 +1,29 @@
 load("@rules_java//java:defs.bzl", "java_library")
 load("//javatests/com/google/gerrit/acceptance:tests.bzl", "acceptance_tests")
 
-acceptance_tests(
-    srcs = glob(["*IT.java"]),
-    group = "rest_project",
+[acceptance_tests(
+    srcs = [f],
+    group = f[:f.index(".")],
     labels = ["rest"],
     deps = [
+        ":labelassert",
         ":project",
         ":push_tag_util",
         ":refassert",
+        "//lib/commons:lang",
+    ],
+) for f in glob(["*IT.java"])]
+
+java_library(
+    name = "labelassert",
+    srcs = [
+        "LabelAssert.java",
+    ],
+    deps = [
+        "//java/com/google/gerrit/common:server",
+        "//java/com/google/gerrit/extensions:api",
+        "//java/com/google/gerrit/server",
+        "//lib/truth",
     ],
 )
 
@@ -30,11 +45,10 @@ java_library(
         "ProjectAssert.java",
     ],
     deps = [
+        "//java/com/google/gerrit/entities",
         "//java/com/google/gerrit/extensions:api",
-        "//java/com/google/gerrit/reviewdb:server",
         "//java/com/google/gerrit/server",
         "//lib:guava",
-        "//lib:gwtorm",
         "//lib/truth",
     ],
 )

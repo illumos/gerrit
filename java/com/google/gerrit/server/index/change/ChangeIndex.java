@@ -14,19 +14,25 @@
 
 package com.google.gerrit.server.index.change;
 
+import com.google.gerrit.entities.Change;
 import com.google.gerrit.index.Index;
 import com.google.gerrit.index.IndexDefinition;
 import com.google.gerrit.index.query.Predicate;
-import com.google.gerrit.reviewdb.client.Change;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.LegacyChangeIdPredicate;
+import com.google.gerrit.server.query.change.LegacyChangeIdStrPredicate;
 
+/**
+ * Index for Gerrit changes. This class is mainly used for typing the generic parent class that
+ * contains actual implementations.
+ */
 public interface ChangeIndex extends Index<Change.Id, ChangeData> {
-  public interface Factory
-      extends IndexDefinition.IndexFactory<Change.Id, ChangeData, ChangeIndex> {}
+  interface Factory extends IndexDefinition.IndexFactory<Change.Id, ChangeData, ChangeIndex> {}
 
   @Override
   default Predicate<ChangeData> keyPredicate(Change.Id id) {
-    return new LegacyChangeIdPredicate(id);
+    return getSchema().useLegacyNumericFields()
+        ? new LegacyChangeIdPredicate(id)
+        : new LegacyChangeIdStrPredicate(id);
   }
 }

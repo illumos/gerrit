@@ -19,7 +19,7 @@ limitations under the License.
 <link rel="import" href="../../../behaviors/gr-path-list-behavior/gr-path-list-behavior.html">
 <link rel="import" href="../../../behaviors/gr-url-encoding-behavior/gr-url-encoding-behavior.html">
 <link rel="import" href="../../../behaviors/rest-client-behavior/rest-client-behavior.html">
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 <link rel="import" href="../../../styles/gr-change-list-styles.html">
 <link rel="import" href="../../core/gr-navigation/gr-navigation.html">
 <link rel="import" href="../../shared/gr-account-link/gr-account-link.html">
@@ -29,6 +29,8 @@ limitations under the License.
 <link rel="import" href="../../shared/gr-limited-text/gr-limited-text.html">
 <link rel="import" href="../../shared/gr-tooltip-content/gr-tooltip-content.html">
 <link rel="import" href="../../../styles/shared-styles.html">
+<link rel="import" href="../../plugins/gr-endpoint-decorator/gr-endpoint-decorator.html">
+<link rel="import" href="../../plugins/gr-endpoint-param/gr-endpoint-param.html">
 
 <dom-module id="gr-change-list-item">
   <template>
@@ -76,7 +78,7 @@ limitations under the License.
         display: inline-flex;
       }
       .status .comma {
-        padding-right: .2rem;
+        padding-right: var(--spacing-xs);
       }
       /* Used to hide the leading separator comma for statuses. */
       .status .comma:first-of-type {
@@ -85,7 +87,7 @@ limitations under the License.
       .size gr-tooltip-content {
         margin: -.4rem -.6rem;
         max-width: 2.5rem;
-        padding: .4rem .6rem;
+        padding: var(--spacing-m) var(--spacing-l);
       }
       a {
         color: inherit;
@@ -97,16 +99,14 @@ limitations under the License.
       }
       .u-monospace {
         font-family: var(--monospace-font-family);
+        font-size: var(--font-size-mono);
+        line-height: var(--line-height-mono);
       }
       .u-green {
         color: var(--vote-text-color-recommended);
       }
       .u-red {
         color: var(--vote-text-color-disliked);
-      }
-      .label.u-green:not(.u-monospace),
-      .label.u-red:not(.u-monospace) {
-        font-size: 1.2rem;
       }
       .u-gray-background {
         background-color: var(--table-header-background-color);
@@ -124,7 +124,9 @@ limitations under the License.
         }
       }
     </style>
-    <style include="gr-change-list-styles"></style>
+    <style include="gr-change-list-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <td class="cell leftPadding"></td>
     <td class="cell star" hidden$="[[!showStar]]" hidden>
       <gr-change-star change="{{change}}"></gr-change-star>
@@ -159,16 +161,14 @@ limitations under the License.
     <td class="cell owner"
         hidden$="[[isColumnHidden('Owner', visibleChangeTableColumns)]]">
       <gr-account-link
-          account="[[change.owner]]"
-          additional-text="[[_computeAccountStatusString(change.owner)]]"></gr-account-link>
+          account="[[change.owner]]"></gr-account-link>
     </td>
     <td class="cell assignee"
         hidden$="[[isColumnHidden('Assignee', visibleChangeTableColumns)]]">
       <template is="dom-if" if="[[change.assignee]]">
         <gr-account-link
             id="assigneeAccountLink"
-            account="[[change.assignee]]"
-            additional-text="[[_computeAccountStatusString(change.assignee)]]"></gr-account-link>
+            account="[[change.assignee]]"></gr-account-link>
       </template>
       <template is="dom-if" if="[[!change.assignee]]">
         <span class="placeholder">--</span>
@@ -221,6 +221,15 @@ limitations under the License.
       <td title$="[[_computeLabelTitle(change, labelName)]]"
           class$="[[_computeLabelClass(change, labelName)]]">
         [[_computeLabelValue(change, labelName)]]
+      </td>
+    </template>
+    <template is="dom-repeat" items="[[_dynamicCellEndpoints]]"
+      as="pluginEndpointName">
+      <td class="cell endpoint">
+        <gr-endpoint-decorator name$="[[pluginEndpointName]]">
+          <gr-endpoint-param name="change" value="[[change]]">
+          </gr-endpoint-param>
+        </gr-endpoint-decorator>
       </td>
     </template>
   </template>

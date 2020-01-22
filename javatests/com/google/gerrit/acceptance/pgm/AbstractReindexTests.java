@@ -15,6 +15,7 @@
 package com.google.gerrit.acceptance.pgm;
 
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
+import static com.google.common.truth.StreamSubject.streams;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.common.truth.Truth8.assertThat;
@@ -26,11 +27,11 @@ import com.google.common.io.RecursiveDeleteOption;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.StandaloneSiteTest;
 import com.google.gerrit.acceptance.pgm.IndexUpgradeController.UpgradeAttempt;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.api.GerritApi;
 import com.google.gerrit.extensions.common.ChangeInput;
 import com.google.gerrit.launcher.GerritLauncher;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.index.GerritIndexStatus;
 import com.google.gerrit.server.index.change.ChangeIndexCollection;
 import com.google.gerrit.server.index.change.ChangeSchemaDefinitions;
@@ -73,13 +74,13 @@ public abstract class AbstractReindexTests extends StandaloneSiteTest {
           .containsExactly(changeId);
       // Query account index
       assertThat(gApi.accounts().query("admin").get().stream().map(a -> a._accountId))
-          .containsExactly(adminId.get());
+          .containsExactly(admin.id().get());
       // Query group index
       assertThat(
               gApi.groups().query("Group").withOption(MEMBERS).get().stream()
                   .flatMap(g -> g.members.stream())
                   .map(a -> a._accountId))
-          .containsExactly(adminId.get());
+          .containsExactly(admin.id().get());
       // Query project index
       assertThat(gApi.projects().query(project.get()).get().stream().map(p -> p.name))
           .containsExactly(project.get());
@@ -195,7 +196,7 @@ public abstract class AbstractReindexTests extends StandaloneSiteTest {
       // Updating and searching old schema version works.
       Provider<InternalChangeQuery> queryProvider =
           ctx.getInjector().getProvider(InternalChangeQuery.class);
-      assertThat(queryProvider.get().byKey(new Change.Key(changeId))).hasSize(1);
+      assertThat(queryProvider.get().byKey(Change.key(changeId))).hasSize(1);
       assertThat(queryProvider.get().byTopicOpen("topic1")).isEmpty();
 
       GerritApi gApi = ctx.getInjector().getInstance(GerritApi.class);
@@ -223,7 +224,7 @@ public abstract class AbstractReindexTests extends StandaloneSiteTest {
   }
 
   private void setUpChange() throws Exception {
-    project = new Project.NameKey("reindex-project-test");
+    project = Project.nameKey("reindex-project-test");
     try (ServerContext ctx = startServer()) {
       configureIndex(ctx.getInjector());
       GerritApi gApi = ctx.getInjector().getInstance(GerritApi.class);
@@ -240,7 +241,7 @@ public abstract class AbstractReindexTests extends StandaloneSiteTest {
   }
 
   private void enableSlaveMode() throws Exception {
-    updateConfig(config -> config.setBoolean("container", null, "slave", true));
+    updateConfig(config -> config.setBoolean("container", null, "replica", true));
   }
 
   private void updateConfig(Consumer<Config> configConsumer) throws Exception {
@@ -255,30 +256,31 @@ public abstract class AbstractReindexTests extends StandaloneSiteTest {
   }
 
   private void assertSearchVersion(ServerContext ctx, int expected) {
-    assertThat(
+    assertWithMessage("search version")
+        .that(
             ctx.getInjector()
                 .getInstance(ChangeIndexCollection.class)
                 .getSearchIndex()
                 .getSchema()
                 .getVersion())
-        .named("search version")
         .isEqualTo(expected);
   }
 
   private void assertWriteVersions(ServerContext ctx, Integer... expected) {
-    assertThat(
+    assertWithMessage("write versions")
+        .about(streams())
+        .that(
             ctx.getInjector().getInstance(ChangeIndexCollection.class).getWriteIndexes().stream()
                 .map(i -> i.getSchema().getVersion()))
-        .named("write versions")
         .containsExactlyElementsIn(ImmutableSet.copyOf(expected));
   }
 
   private void assertReady(int expectedReady) throws Exception {
     Set<Integer> allVersions = ChangeSchemaDefinitions.INSTANCE.getSchemas().keySet();
     GerritIndexStatus status = new GerritIndexStatus(sitePaths);
-    assertThat(
+    assertWithMessage("ready state for index versions")
+        .that(
             allVersions.stream().collect(toImmutableMap(v -> v, v -> status.getReady(CHANGES, v))))
-        .named("ready state for index versions")
         .isEqualTo(allVersions.stream().collect(toImmutableMap(v -> v, v -> v == expectedReady)));
   }
 }

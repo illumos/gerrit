@@ -114,7 +114,7 @@ public class JarScanner implements PluginContentScanner, AutoCloseable {
     for (Class<? extends Annotation> annotoation : annotations) {
       String descr = classObjToClassDescr.get(annotoation);
       Collection<ClassData> discoverdData = rawMap.get(descr);
-      Collection<ClassData> values = firstNonNull(discoverdData, Collections.<ClassData>emptySet());
+      Collection<ClassData> values = firstNonNull(discoverdData, Collections.emptySet());
 
       result.put(
           annotoation,
@@ -144,7 +144,7 @@ public class JarScanner implements PluginContentScanner, AutoCloseable {
         continue;
       }
 
-      ClassData def = new ClassData(Collections.<String>emptySet());
+      ClassData def = new ClassData(Collections.emptySet());
       try {
         new ClassReader(read(jarFile, entry)).accept(def, SKIP_ALL);
       } catch (RuntimeException err) {
@@ -195,7 +195,7 @@ public class JarScanner implements PluginContentScanner, AutoCloseable {
     Collection<String> exports;
 
     private ClassData(Collection<String> exports) {
-      super(Opcodes.ASM6);
+      super(Opcodes.ASM7);
       this.exports = exports;
     }
 
@@ -263,7 +263,7 @@ public class JarScanner implements PluginContentScanner, AutoCloseable {
 
   private abstract static class AbstractAnnotationVisitor extends AnnotationVisitor {
     AbstractAnnotationVisitor() {
-      super(Opcodes.ASM6);
+      super(Opcodes.ASM7);
     }
 
     @Override
@@ -331,13 +331,6 @@ public class JarScanner implements PluginContentScanner, AutoCloseable {
     if (attributes == null) {
       return Collections.emptyMap();
     }
-    return Maps.transformEntries(
-        attributes,
-        new Maps.EntryTransformer<Object, Object, String>() {
-          @Override
-          public String transformEntry(Object key, Object value) {
-            return (String) value;
-          }
-        });
+    return Maps.transformEntries(attributes, (key, value) -> (String) value);
   }
 }

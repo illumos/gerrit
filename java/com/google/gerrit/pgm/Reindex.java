@@ -14,7 +14,6 @@
 
 package com.google.gerrit.pgm;
 
-import static com.google.gerrit.server.schema.DataSourceProvider.Context.MULTI_USER;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toSet;
 
@@ -24,23 +23,22 @@ import com.google.gerrit.elasticsearch.ElasticIndexModule;
 import com.google.gerrit.extensions.config.FactoryModule;
 import com.google.gerrit.index.Index;
 import com.google.gerrit.index.IndexDefinition;
+import com.google.gerrit.index.IndexType;
 import com.google.gerrit.index.SiteIndexer;
 import com.google.gerrit.lifecycle.LifecycleManager;
 import com.google.gerrit.lucene.LuceneIndexModule;
 import com.google.gerrit.pgm.util.BatchProgramModule;
 import com.google.gerrit.pgm.util.SiteProgram;
-import com.google.gerrit.pgm.util.ThreadLimiter;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.index.IndexModule;
-import com.google.gerrit.server.index.IndexModule.IndexType;
 import com.google.gerrit.server.index.change.ChangeSchemaDefinitions;
 import com.google.gerrit.server.plugins.PluginGuiceEnvironment;
+import com.google.gerrit.server.util.ReplicaUtil;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.Key;
 import com.google.inject.Module;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -81,10 +79,9 @@ public class Reindex extends SiteProgram {
   @Override
   public int run() throws Exception {
     mustHaveValidSite();
-    dbInjector = createDbInjector(MULTI_USER);
+    dbInjector = createDbInjector();
     cfgInjector = dbInjector.createChildInjector();
     globalConfig = dbInjector.getInstance(Key.get(Config.class, GerritServerConfig.class));
-    threads = ThreadLimiter.limitThreads(dbInjector, threads);
     overrideConfig();
     LifecycleManager dbManager = new LifecycleManager();
     dbManager.add(dbInjector);
@@ -117,7 +114,7 @@ public class Reindex extends SiteProgram {
     return true;
   }
 
-  private boolean reindex() throws IOException {
+  private boolean reindex() {
     boolean ok = true;
     for (IndexDefinition<?, ?, ?> def : indexDefs) {
       if (indices.isEmpty() || indices.contains(def.getName())) {
@@ -148,22 +145,20 @@ public class Reindex extends SiteProgram {
     if (changesVersion != null) {
       versions.put(ChangeSchemaDefinitions.INSTANCE.getName(), changesVersion);
     }
-    boolean slave = globalConfig.getBoolean("container", "slave", false);
+    boolean replica = ReplicaUtil.isReplica(globalConfig);
     List<Module> modules = new ArrayList<>();
     Module indexModule;
-    switch (IndexModule.getIndexType(dbInjector)) {
-      case LUCENE:
-        indexModule = LuceneIndexModule.singleVersionWithExplicitVersions(versions, threads, slave);
-        break;
-      case ELASTICSEARCH:
-        indexModule =
-            ElasticIndexModule.singleVersionWithExplicitVersions(versions, threads, slave);
-        break;
-      default:
-        throw new IllegalStateException("unsupported index.type");
+    IndexType indexType = IndexModule.getIndexType(dbInjector);
+    if (indexType.isLucene()) {
+      indexModule = LuceneIndexModule.singleVersionWithExplicitVersions(versions, threads, replica);
+    } else if (indexType.isElasticsearch()) {
+      indexModule =
+          ElasticIndexModule.singleVersionWithExplicitVersions(versions, threads, replica);
+    } else {
+      throw new IllegalStateException("unsupported index.type = " + indexType);
     }
     modules.add(indexModule);
-    modules.add(dbInjector.getInstance(BatchProgramModule.class));
+    modules.add(new BatchProgramModule());
     modules.add(
         new FactoryModule() {
           @Override
@@ -177,7 +172,7 @@ public class Reindex extends SiteProgram {
 
   private void overrideConfig() {
     // Disable auto-commit for speed; committing will happen at the end of the process.
-    if (IndexModule.getIndexType(dbInjector) == IndexType.LUCENE) {
+    if (IndexModule.getIndexType(dbInjector).isLucene()) {
       globalConfig.setLong("index", "changes_open", "commitWithin", -1);
       globalConfig.setLong("index", "changes_closed", "commitWithin", -1);
     }
@@ -189,8 +184,7 @@ public class Reindex extends SiteProgram {
     globalConfig.setBoolean("index", null, "autoReindexIfStale", false);
   }
 
-  private <K, V, I extends Index<K, V>> boolean reindex(IndexDefinition<K, V, I> def)
-      throws IOException {
+  private <K, V, I extends Index<K, V>> boolean reindex(IndexDefinition<K, V, I> def) {
     I index = def.getIndexCollection().getSearchIndex();
     requireNonNull(
         index, () -> String.format("no active search index configured for %s", def.getName()));

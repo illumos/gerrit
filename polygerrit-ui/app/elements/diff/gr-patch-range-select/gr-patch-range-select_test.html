@@ -19,10 +19,12 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-patch-range-select</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
-<script src="../../../bower_components/page/page.js"></script>
+<script src="/bower_components/page/page.js"></script>
 
 <link rel="import" href="../../diff/gr-comment-api/gr-comment-api.html">
 <link rel="import" href="../../shared/gr-rest-api-interface/mock-diff-response_test.html">
@@ -233,10 +235,11 @@ limitations under the License.
           // Should be recomputed for each available patch
           sandbox.stub(element, '_computeBaseDropdownContent');
           assert.equal(element._computeBaseDropdownContent.callCount, 0);
-          commentApiWrapper.loadComments().then().then(() => {
-            assert.equal(element._computeBaseDropdownContent.callCount, 1);
-            done();
-          });
+          commentApiWrapper.loadComments().then()
+              .then(() => {
+                assert.equal(element._computeBaseDropdownContent.callCount, 1);
+                done();
+              });
         });
 
     test('_computePatchDropdownContent called when basePatchNum updates', () => {
@@ -284,9 +287,10 @@ limitations under the License.
       // Should be recomputed for each available patch
       sandbox.stub(element, '_computePatchDropdownContent');
       assert.equal(element._computePatchDropdownContent.callCount, 0);
-      commentApiWrapper.loadComments().then().then(() => {
-        done();
-      });
+      commentApiWrapper.loadComments().then()
+          .then(() => {
+            done();
+          });
     });
 
     test('_computePatchDropdownContent', () => {

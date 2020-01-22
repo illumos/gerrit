@@ -14,18 +14,19 @@
 
 package com.google.gerrit.server.group.db;
 
+import static com.google.common.collect.ImmutableList.toImmutableList;
+
 import com.google.auto.value.AutoValue;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.MultimapBuilder;
 import com.google.common.flogger.FluentLogger;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.AccountGroupByIdAud;
-import com.google.gerrit.reviewdb.client.AccountGroupMemberAudit;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.AccountGroupByIdAudit;
+import com.google.gerrit.entities.AccountGroupMemberAudit;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.server.config.AllUsersName;
-import com.google.gerrit.server.config.GerritServerId;
 import com.google.gerrit.server.notedb.NoteDbUtil;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
@@ -49,18 +50,16 @@ import org.eclipse.jgit.util.RawParseUtils;
 public class AuditLogReader {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
-  private final String serverId;
   private final AllUsersName allUsersName;
 
   @Inject
-  public AuditLogReader(@GerritServerId String serverId, AllUsersName allUsersName) {
-    this.serverId = serverId;
+  public AuditLogReader(AllUsersName allUsersName) {
     this.allUsersName = allUsersName;
   }
 
   // Having separate methods for reading the two types of audit records mirrors the split in
-  // ReviewDb. Once ReviewDb is gone, the audit record interface becomes more flexible and we can
-  // revisit this, e.g. to do only a single walk, or even change the record types.
+  // ReviewDb. Now that ReviewDb is gone, the audit record interface is more flexible and this may
+  // be changed, e.g. to do only a single walk, or even change the record types.
 
   public ImmutableList<AccountGroupMemberAudit> getMembersAudit(
       Repository allUsersRepo, AccountGroup.UUID uuid) throws IOException, ConfigInvalidException {
@@ -69,73 +68,82 @@ public class AuditLogReader {
 
   private ImmutableList<AccountGroupMemberAudit> getMembersAudit(
       AccountGroup.Id groupId, List<ParsedCommit> commits) {
-    ListMultimap<MemberKey, AccountGroupMemberAudit> audits =
+    ListMultimap<MemberKey, AccountGroupMemberAudit.Builder> audits =
         MultimapBuilder.hashKeys().linkedListValues().build();
-    ImmutableList.Builder<AccountGroupMemberAudit> result = ImmutableList.builder();
+    List<AccountGroupMemberAudit.Builder> result = new ArrayList<>();
     for (ParsedCommit pc : commits) {
       for (Account.Id id : pc.addedMembers()) {
         MemberKey key = MemberKey.create(groupId, id);
-        AccountGroupMemberAudit audit =
-            new AccountGroupMemberAudit(
-                new AccountGroupMemberAudit.Key(id, groupId, pc.when()), pc.authorId());
+        AccountGroupMemberAudit.Builder audit =
+            AccountGroupMemberAudit.builder()
+                .memberId(id)
+                .groupId(groupId)
+                .addedOn(pc.when())
+                .addedBy(pc.authorId());
         audits.put(key, audit);
         result.add(audit);
       }
       for (Account.Id id : pc.removedMembers()) {
-        List<AccountGroupMemberAudit> adds = audits.get(MemberKey.create(groupId, id));
+        List<AccountGroupMemberAudit.Builder> adds = audits.get(MemberKey.create(groupId, id));
         if (!adds.isEmpty()) {
-          AccountGroupMemberAudit audit = adds.remove(0);
+          AccountGroupMemberAudit.Builder audit = adds.remove(0);
           audit.removed(pc.authorId(), pc.when());
         } else {
           // Match old behavior of DbGroupAuditListener and add a "legacy" add/remove pair.
-          AccountGroupMemberAudit audit =
-              new AccountGroupMemberAudit(
-                  new AccountGroupMemberAudit.Key(id, groupId, pc.when()), pc.authorId());
-          audit.removedLegacy();
+          AccountGroupMemberAudit.Builder audit =
+              AccountGroupMemberAudit.builder()
+                  .groupId(groupId)
+                  .memberId(id)
+                  .addedOn(pc.when())
+                  .addedBy(pc.authorId())
+                  .removedLegacy();
           result.add(audit);
         }
       }
     }
-    return result.build();
+    return result.stream().map(AccountGroupMemberAudit.Builder::build).collect(toImmutableList());
   }
 
-  public ImmutableList<AccountGroupByIdAud> getSubgroupsAudit(
+  public ImmutableList<AccountGroupByIdAudit> getSubgroupsAudit(
       Repository repo, AccountGroup.UUID uuid) throws IOException, ConfigInvalidException {
     return getSubgroupsAudit(getGroupId(repo, uuid), parseCommits(repo, uuid));
   }
 
-  private ImmutableList<AccountGroupByIdAud> getSubgroupsAudit(
+  private ImmutableList<AccountGroupByIdAudit> getSubgroupsAudit(
       AccountGroup.Id groupId, List<ParsedCommit> commits) {
-    ListMultimap<SubgroupKey, AccountGroupByIdAud> audits =
+    ListMultimap<SubgroupKey, AccountGroupByIdAudit.Builder> audits =
         MultimapBuilder.hashKeys().linkedListValues().build();
-    ImmutableList.Builder<AccountGroupByIdAud> result = ImmutableList.builder();
+    List<AccountGroupByIdAudit.Builder> result = new ArrayList<>();
     for (ParsedCommit pc : commits) {
       for (AccountGroup.UUID uuid : pc.addedSubgroups()) {
         SubgroupKey key = SubgroupKey.create(groupId, uuid);
-        AccountGroupByIdAud audit =
-            new AccountGroupByIdAud(
-                new AccountGroupByIdAud.Key(groupId, uuid, pc.when()), pc.authorId());
+        AccountGroupByIdAudit.Builder audit =
+            AccountGroupByIdAudit.builder()
+                .groupId(groupId)
+                .includeUuid(uuid)
+                .addedOn(pc.when())
+                .addedBy(pc.authorId());
         audits.put(key, audit);
         result.add(audit);
       }
       for (AccountGroup.UUID uuid : pc.removedSubgroups()) {
-        List<AccountGroupByIdAud> adds = audits.get(SubgroupKey.create(groupId, uuid));
+        List<AccountGroupByIdAudit.Builder> adds = audits.get(SubgroupKey.create(groupId, uuid));
         if (!adds.isEmpty()) {
-          AccountGroupByIdAud audit = adds.remove(0);
+          AccountGroupByIdAudit.Builder audit = adds.remove(0);
           audit.removed(pc.authorId(), pc.when());
         } else {
           // Unlike members, DbGroupAuditListener didn't insert an add/remove pair here.
         }
       }
     }
-    return result.build();
+    return result.stream().map(AccountGroupByIdAudit.Builder::build).collect(toImmutableList());
   }
 
   private Optional<ParsedCommit> parse(AccountGroup.UUID uuid, RevCommit c) {
-    Optional<Account.Id> authorId = NoteDbUtil.parseIdent(c.getAuthorIdent(), serverId);
+    Optional<Account.Id> authorId = NoteDbUtil.parseIdent(c.getAuthorIdent());
     if (!authorId.isPresent()) {
-      // Only report audit events from identified users, since this is a non-nullable field in
-      // ReviewDb. May be revisited after groups are fully migrated to NoteDb.
+      // Only report audit events from identified users, since this was a non-nullable field in
+      // ReviewDb. May be revisited.
       return Optional.empty();
     }
 
@@ -168,7 +176,7 @@ public class AuditLogReader {
   private Optional<Account.Id> parseAccount(AccountGroup.UUID uuid, RevCommit c, FooterLine line) {
     Optional<Account.Id> result =
         Optional.ofNullable(RawParseUtils.parsePersonIdent(line.getValue()))
-            .flatMap(ident -> NoteDbUtil.parseIdent(ident, serverId));
+            .flatMap(ident -> NoteDbUtil.parseIdent(ident));
     if (!result.isPresent()) {
       logInvalid(uuid, c, line);
     }
@@ -182,7 +190,7 @@ public class AuditLogReader {
       logInvalid(uuid, c, line);
       return Optional.empty();
     }
-    return Optional.of(new AccountGroup.UUID(ident.getEmailAddress()));
+    return Optional.of(AccountGroup.uuid(ident.getEmailAddress()));
   }
 
   private static void logInvalid(AccountGroup.UUID uuid, RevCommit c, FooterLine line) {

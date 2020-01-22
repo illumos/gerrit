@@ -18,9 +18,10 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
 
 import com.google.gerrit.acceptance.AbstractDaemonTest;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.conditions.BooleanCondition;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.permissions.ChangePermission;
 import com.google.gerrit.server.permissions.GlobalPermission;
@@ -34,6 +35,7 @@ import org.junit.Test;
 public class PermissionBackendConditionIT extends AbstractDaemonTest {
 
   @Inject PermissionBackend pb;
+  @Inject ProjectOperations projectOperations;
 
   @Test
   public void globalPermissions_sameUserAndPermissionEquals() throws Exception {
@@ -110,7 +112,7 @@ public class PermissionBackendConditionIT extends AbstractDaemonTest {
 
   @Test
   public void projectPermissions_differentResourceSameUserDoesNotEqual() throws Exception {
-    Project.NameKey project2 = createProject("p2");
+    Project.NameKey project2 = projectOperations.newProject().create();
     BooleanCondition cond1 = pb.user(user()).project(project).testCond(ProjectPermission.READ);
     BooleanCondition cond2 = pb.user(user()).project(project2).testCond(ProjectPermission.READ);
 
@@ -120,7 +122,7 @@ public class PermissionBackendConditionIT extends AbstractDaemonTest {
 
   @Test
   public void refPermissions_sameResourceAndUserEquals() throws Exception {
-    Branch.NameKey branch = new Branch.NameKey(project, "branch");
+    BranchNameKey branch = BranchNameKey.create(project, "branch");
     BooleanCondition cond1 = pb.user(user()).ref(branch).testCond(RefPermission.READ);
     BooleanCondition cond2 = pb.user(user()).ref(branch).testCond(RefPermission.READ);
 
@@ -130,7 +132,7 @@ public class PermissionBackendConditionIT extends AbstractDaemonTest {
 
   @Test
   public void refPermissions_sameResourceAndDifferentUserDoesNotEqual() throws Exception {
-    Branch.NameKey branch = new Branch.NameKey(project, "branch");
+    BranchNameKey branch = BranchNameKey.create(project, "branch");
     BooleanCondition cond1 = pb.user(user()).ref(branch).testCond(RefPermission.READ);
     BooleanCondition cond2 = pb.user(admin()).ref(branch).testCond(RefPermission.READ);
 
@@ -140,8 +142,8 @@ public class PermissionBackendConditionIT extends AbstractDaemonTest {
 
   @Test
   public void refPermissions_differentResourceAndSameUserDoesNotEqual() throws Exception {
-    Branch.NameKey branch1 = new Branch.NameKey(project, "branch");
-    Branch.NameKey branch2 = new Branch.NameKey(project, "branch2");
+    BranchNameKey branch1 = BranchNameKey.create(project, "branch");
+    BranchNameKey branch2 = BranchNameKey.create(project, "branch2");
     BooleanCondition cond1 = pb.user(user()).ref(branch1).testCond(RefPermission.READ);
     BooleanCondition cond2 = pb.user(user()).ref(branch2).testCond(RefPermission.READ);
 
@@ -151,8 +153,8 @@ public class PermissionBackendConditionIT extends AbstractDaemonTest {
 
   @Test
   public void refPermissions_differentResourceAndSameUserDoesNotEqual2() throws Exception {
-    Branch.NameKey branch1 = new Branch.NameKey(project, "branch");
-    Branch.NameKey branch2 = new Branch.NameKey(createProject("p2"), "branch");
+    BranchNameKey branch1 = BranchNameKey.create(project, "branch");
+    BranchNameKey branch2 = BranchNameKey.create(projectOperations.newProject().create(), "branch");
     BooleanCondition cond1 = pb.user(user()).ref(branch1).testCond(RefPermission.READ);
     BooleanCondition cond2 = pb.user(user()).ref(branch2).testCond(RefPermission.READ);
 
@@ -161,10 +163,10 @@ public class PermissionBackendConditionIT extends AbstractDaemonTest {
   }
 
   private CurrentUser user() {
-    return identifiedUserFactory.create(user.id);
+    return identifiedUserFactory.create(user.id());
   }
 
   private CurrentUser admin() {
-    return identifiedUserFactory.create(admin.id);
+    return identifiedUserFactory.create(admin.id());
   }
 }

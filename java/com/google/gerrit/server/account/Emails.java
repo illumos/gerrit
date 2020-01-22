@@ -14,39 +14,36 @@
 
 package com.google.gerrit.server.account;
 
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 
-import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSetMultimap;
-import com.google.common.collect.Streams;
-import com.google.gerrit.reviewdb.client.Account;
+import com.google.common.collect.MultimapBuilder;
+import com.google.common.collect.SetMultimap;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.UserIdentity;
 import com.google.gerrit.server.account.externalids.ExternalId;
 import com.google.gerrit.server.account.externalids.ExternalIds;
-import com.google.gerrit.server.query.account.InternalAccountQuery;
 import com.google.gerrit.server.update.RetryHelper;
-import com.google.gerrit.server.update.RetryHelper.Action;
-import com.google.gerrit.server.update.RetryHelper.ActionType;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
+import java.sql.Timestamp;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Set;
+import org.eclipse.jgit.lib.PersonIdent;
 
 /** Class to access accounts by email. */
 @Singleton
 public class Emails {
   private final ExternalIds externalIds;
-  private final Provider<InternalAccountQuery> queryProvider;
   private final RetryHelper retryHelper;
 
   @Inject
-  public Emails(
-      ExternalIds externalIds,
-      Provider<InternalAccountQuery> queryProvider,
-      RetryHelper retryHelper) {
+  public Emails(ExternalIds externalIds, RetryHelper retryHelper) {
     this.externalIds = externalIds;
-    this.queryProvider = queryProvider;
     this.retryHelper = retryHelper;
   }
 
@@ -65,15 +62,22 @@ public class Emails {
    * have no external ID for the preferred email. Having accounts with a preferred email that does
    * not exist as external ID is an inconsistency, but existing functionality relies on still
    * getting those accounts, which is why they are included. Accounts by preferred email are fetched
-   * from the account index.
+   * from the account index as a fallback for email addresses that could not be resolved using
+   * {@link ExternalIds}.
    *
    * @see #getAccountsFor(String...)
    */
-  public ImmutableSet<Account.Id> getAccountFor(String email) throws IOException, OrmException {
-    return Streams.concat(
-            externalIds.byEmail(email).stream().map(ExternalId::accountId),
-            executeIndexQuery(() -> queryProvider.get().byPreferredEmail(email).stream())
-                .map(a -> a.getAccount().getId()))
+  public ImmutableSet<Account.Id> getAccountFor(String email) throws IOException {
+    ImmutableSet<Account.Id> accounts =
+        externalIds.byEmail(email).stream().map(ExternalId::accountId).collect(toImmutableSet());
+    if (!accounts.isEmpty()) {
+      return accounts;
+    }
+
+    return retryHelper
+        .accountIndexQuery("queryAccountsByPreferredEmail", q -> q.byPreferredEmail(email)).call()
+        .stream()
+        .map(a -> a.account().id())
         .collect(toImmutableSet());
   }
 
@@ -83,13 +87,21 @@ public class Emails {
    * @see #getAccountFor(String)
    */
   public ImmutableSetMultimap<String, Account.Id> getAccountsFor(String... emails)
-      throws IOException, OrmException {
-    ImmutableSetMultimap.Builder<String, Account.Id> builder = ImmutableSetMultimap.builder();
+      throws IOException {
+    SetMultimap<String, Account.Id> result =
+        MultimapBuilder.hashKeys(emails.length).hashSetValues(1).build();
     externalIds.byEmails(emails).entries().stream()
-        .forEach(e -> builder.put(e.getKey(), e.getValue().accountId()));
-    executeIndexQuery(() -> queryProvider.get().byPreferredEmail(emails).entries().stream())
-        .forEach(e -> builder.put(e.getKey(), e.getValue().getAccount().getId()));
-    return builder.build();
+        .forEach(e -> result.put(e.getKey(), e.getValue().accountId()));
+    List<String> emailsToBackfill =
+        Arrays.stream(emails).filter(e -> !result.containsKey(e)).collect(toImmutableList());
+    if (!emailsToBackfill.isEmpty()) {
+      retryHelper
+          .accountIndexQuery(
+              "queryAccountsByPreferredEmails", q -> q.byPreferredEmail(emailsToBackfill))
+          .call().entries().stream()
+          .forEach(e -> result.put(e.getKey(), e.getValue().account().id()));
+    }
+    return ImmutableSetMultimap.copyOf(result);
   }
 
   /**
@@ -102,13 +114,21 @@ public class Emails {
     return externalIds.byEmail(email).stream().map(ExternalId::accountId).collect(toImmutableSet());
   }
 
-  private <T> T executeIndexQuery(Action<T> action) throws OrmException {
-    try {
-      return retryHelper.execute(ActionType.INDEX_QUERY, action, OrmException.class::isInstance);
-    } catch (Exception e) {
-      Throwables.throwIfUnchecked(e);
-      Throwables.throwIfInstanceOf(e, OrmException.class);
-      throw new OrmException(e);
+  public UserIdentity toUserIdentity(PersonIdent who) throws IOException {
+    UserIdentity u = new UserIdentity();
+    u.setName(who.getName());
+    u.setEmail(who.getEmailAddress());
+    u.setDate(new Timestamp(who.getWhen().getTime()));
+    u.setTimeZone(who.getTimeZoneOffset());
+
+    // If only one account has access to this email address, select it
+    // as the identity of the user.
+    //
+    Set<Account.Id> a = getAccountFor(u.getEmail());
+    if (a.size() == 1) {
+      u.setAccount(a.iterator().next());
     }
+
+    return u;
   }
 }

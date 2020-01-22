@@ -17,7 +17,7 @@ package com.google.gerrit.server.restapi.account;
 import static com.google.gerrit.common.data.GlobalCapability.PRIORITY;
 import static com.google.gerrit.server.permissions.DefaultPermissionMappings.globalOrPluginPermissionName;
 import static com.google.gerrit.server.permissions.DefaultPermissionMappings.globalPermissionName;
-import static com.google.gerrit.server.permissions.DefaultPermissionMappings.pluginPermissionName;
+import static com.google.gerrit.server.permissions.DefaultPermissionMappings.pluginCapabilityName;
 
 import com.google.common.collect.Iterables;
 import com.google.gerrit.common.data.GlobalCapability;
@@ -28,11 +28,11 @@ import com.google.gerrit.extensions.config.CapabilityDefinition;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.restapi.BinaryResult;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.OptionUtil;
-import com.google.gerrit.server.OutputFormat;
 import com.google.gerrit.server.account.AccountLimits;
 import com.google.gerrit.server.account.AccountResource;
 import com.google.gerrit.server.account.AccountResource.Capability;
@@ -40,7 +40,6 @@ import com.google.gerrit.server.git.QueueProvider;
 import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gson.reflect.TypeToken;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -50,6 +49,11 @@ import java.util.Map;
 import java.util.Set;
 import org.kohsuke.args4j.Option;
 
+/**
+ * REST endpoint to list the global capabilities that are assigned to an account.
+ *
+ * <p>This REST endpoint handles {@code GET /accounts/<account-identifier>/capabilities/} requests.
+ */
 public class GetCapabilities implements RestReadView<AccountResource> {
   @Option(name = "-q", metaVar = "CAP", usage = "Capability to inspect")
   void addQuery(String name) {
@@ -79,7 +83,7 @@ public class GetCapabilities implements RestReadView<AccountResource> {
   }
 
   @Override
-  public Object apply(AccountResource resource)
+  public Response<Map<String, Object>> apply(AccountResource resource)
       throws RestApiException, PermissionBackendException {
     permissionBackend.checkUsesDefaultCapabilities();
     PermissionBackend.WithUser perm = permissionBackend.currentUser();
@@ -97,9 +101,7 @@ public class GetCapabilities implements RestReadView<AccountResource> {
     addRanges(have, limits);
     addPriority(have, limits);
 
-    return OutputFormat.JSON
-        .newGson()
-        .toJsonTree(have, new TypeToken<Map<String, Object>>() {}.getType());
+    return Response.ok(have);
   }
 
   private Set<GlobalOrPluginPermission> permissionsToTest() {
@@ -113,7 +115,7 @@ public class GetCapabilities implements RestReadView<AccountResource> {
     for (String pluginName : pluginCapabilities.plugins()) {
       for (String capability : pluginCapabilities.byPlugin(pluginName).keySet()) {
         PluginPermission p = new PluginPermission(pluginName, capability);
-        if (want(pluginPermissionName(p))) {
+        if (want(pluginCapabilityName(p))) {
           toTest.add(p);
         }
       }
@@ -162,6 +164,12 @@ public class GetCapabilities implements RestReadView<AccountResource> {
     }
   }
 
+  /**
+   * REST endpoint to check if a global capability is assigned to an account.
+   *
+   * <p>This REST endpoint handles {@code GET
+   * /accounts/<account-identifier>/capabilities/<capability-identifier>} requests.
+   */
   @Singleton
   public static class CheckOne implements RestReadView<AccountResource.Capability> {
     private final PermissionBackend permissionBackend;
@@ -172,9 +180,9 @@ public class GetCapabilities implements RestReadView<AccountResource> {
     }
 
     @Override
-    public BinaryResult apply(Capability resource) throws ResourceNotFoundException {
+    public Response<BinaryResult> apply(Capability resource) throws ResourceNotFoundException {
       permissionBackend.checkUsesDefaultCapabilities();
-      return BinaryResult.create("ok\n");
+      return Response.ok(BinaryResult.create("ok\n"));
     }
   }
 }

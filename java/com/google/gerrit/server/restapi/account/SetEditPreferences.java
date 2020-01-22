@@ -14,13 +14,14 @@
 
 package com.google.gerrit.server.restapi.account;
 
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.client.EditPreferencesInfo;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestModifyView;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.UserInitiated;
 import com.google.gerrit.server.account.AccountResource;
@@ -29,7 +30,6 @@ import com.google.gerrit.server.account.AccountsUpdate;
 import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -37,6 +37,18 @@ import java.io.IOException;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.errors.RepositoryNotFoundException;
 
+/**
+ * REST endpoint to set edit preferences for an account.
+ *
+ * <p>This REST endpoint handles {@code PUT /accounts/<account-identifier>/preferences.edit}
+ * requests.
+ *
+ * <p>General preferences can be set by {@link SetPreferences} and diff preferences can be set by
+ * {@link SetDiffPreferences}.
+ *
+ * <p>Default edit preferences that apply for all accounts can be set by {@link
+ * com.google.gerrit.server.restapi.config.SetEditPreferences}.
+ */
 @Singleton
 public class SetEditPreferences implements RestModifyView<AccountResource, EditPreferencesInfo> {
 
@@ -55,9 +67,9 @@ public class SetEditPreferences implements RestModifyView<AccountResource, EditP
   }
 
   @Override
-  public EditPreferencesInfo apply(AccountResource rsrc, EditPreferencesInfo input)
+  public Response<EditPreferencesInfo> apply(AccountResource rsrc, EditPreferencesInfo input)
       throws RestApiException, RepositoryNotFoundException, IOException, ConfigInvalidException,
-          PermissionBackendException, OrmException {
+          PermissionBackendException {
     if (!self.get().hasSameAccountId(rsrc.getUser())) {
       permissionBackend.currentUser().check(GlobalPermission.MODIFY_ACCOUNT);
     }
@@ -67,10 +79,11 @@ public class SetEditPreferences implements RestModifyView<AccountResource, EditP
     }
 
     Account.Id id = rsrc.getUser().getAccountId();
-    return accountsUpdateProvider
-        .get()
-        .update("Set Edit Preferences via API", id, u -> u.setEditPreferences(input))
-        .map(AccountState::getEditPreferences)
-        .orElseThrow(() -> new ResourceNotFoundException(IdString.fromDecoded(id.toString())));
+    return Response.ok(
+        accountsUpdateProvider
+            .get()
+            .update("Set Edit Preferences via API", id, u -> u.setEditPreferences(input))
+            .map(AccountState::editPreferences)
+            .orElseThrow(() -> new ResourceNotFoundException(IdString.fromDecoded(id.toString()))));
   }
 }

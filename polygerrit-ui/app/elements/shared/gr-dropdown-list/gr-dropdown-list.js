@@ -45,9 +45,11 @@
    */
   Defs.item;
 
-  Polymer({
-    is: 'gr-dropdown-list',
-
+  /** @extends Polymer.Element */
+  class GrDropdownList extends Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element)) {
+    static get is() { return 'gr-dropdown-list'; }
     /**
      * Fired when the selected value changes
      *
@@ -56,20 +58,28 @@
      * @property {string|number} value
      */
 
-    properties: {
-      initialCount: Number,
-      /** @type {!Array<!Defs.item>} */
-      items: Object,
-      text: String,
-      value: {
-        type: String,
-        notify: true,
-      },
-    },
+    static get properties() {
+      return {
+        initialCount: Number,
+        /** @type {!Array<!Defs.item>} */
+        items: Object,
+        text: String,
+        disabled: {
+          type: Boolean,
+          value: false,
+        },
+        value: {
+          type: String,
+          notify: true,
+        },
+      };
+    }
 
-    observers: [
-      '_handleValueChange(value, items)',
-    ],
+    static get observers() {
+      return [
+        '_handleValueChange(value, items)',
+      ];
+    }
 
     /**
      * Handle a click on the iron-dropdown element.
@@ -82,7 +92,7 @@
       this.async(() => {
         this.$.dropdown.close();
       }, 1);
-    },
+    }
 
     /**
      * Handle a click on the button to open the dropdown.
@@ -91,24 +101,27 @@
      */
     _showDropdownTapHandler(e) {
       this._open();
-    },
+    }
 
     /**
      * Open the dropdown.
      */
     _open() {
       this.$.dropdown.open();
-    },
+    }
 
     _computeMobileText(item) {
       return item.mobileText ? item.mobileText : item.text;
-    },
+    }
 
     _handleValueChange(value, items) {
+      // Polymer 2: check for undefined
+      if ([value, items].some(arg => arg === undefined)) {
+        return;
+      }
+
       if (!value) { return; }
-      const selectedObj = items.find(item => {
-        return item.value + '' === value + '';
-      });
+      const selectedObj = items.find(item => item.value + '' === value + '');
       if (!selectedObj) { return; }
       this.text = selectedObj.triggerText? selectedObj.triggerText :
         selectedObj.text;
@@ -116,6 +129,8 @@
         detail: {value},
         bubbles: false,
       }));
-    },
-  });
+    }
+  }
+
+  customElements.define(GrDropdownList.is, GrDropdownList);
 })();

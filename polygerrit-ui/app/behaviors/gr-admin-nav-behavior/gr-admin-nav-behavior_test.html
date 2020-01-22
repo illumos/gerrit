@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>keyboard-shortcut-behavior</title>
 
-<script src="../../bower_components/webcomponentsjs/webcomponents.min.js"></script>
-<script src="../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../test/common-test-setup.html"/>
 <link rel="import" href="gr-admin-nav-behavior.html">
 
@@ -93,9 +95,8 @@ limitations under the License.
 
             if (expected.pluginGeneratedLinks) {
               for (const link of expected.pluginGeneratedLinks) {
-                const linkMatch = res.links.find(l => {
-                  return (l.url === link.url && l.name === link.text);
-                });
+                const linkMatch = res.links
+                    .find(l => (l.url === link.url && l.name === link.text));
                 assert.isTrue(!!linkMatch);
 
                 // External links should open in new tab.
@@ -303,6 +304,62 @@ limitations under the License.
           projectPageShown: false,
           groupPageShown: true,
           groupSubpageLength: 0,
+        });
+        testAdminLinks(account, options, expected, done);
+      });
+    });
+
+    suite('view plugin screen with plugin capability', () => {
+      const account = {
+        name: 'test-user',
+      };
+      let expected;
+
+      setup(() => {
+        capabilityStub.returns(Promise.resolve({pluginCapability: true}));
+        expected = {};
+      });
+
+      test('with plugin with capabilities', done => {
+        let options;
+        const generatedLinks = [
+          {text: 'without capability', url: '/without'},
+          {text: 'with capability',
+            url: '/with',
+            capability: 'pluginCapability'},
+        ];
+        menuLinkStub.returns(generatedLinks);
+        expected = Object.assign(expected, {
+          totalLength: 4,
+          pluginGeneratedLinks: generatedLinks,
+        });
+        testAdminLinks(account, options, expected, done);
+      });
+    });
+
+    suite('view plugin screen without plugin capability', () => {
+      const account = {
+        name: 'test-user',
+      };
+      let expected;
+
+      setup(() => {
+        capabilityStub.returns(Promise.resolve({}));
+        expected = {};
+      });
+
+      test('with plugin with capabilities', done => {
+        let options;
+        const generatedLinks = [
+          {text: 'without capability', url: '/without'},
+          {text: 'with capability',
+            url: '/with',
+            capability: 'pluginCapability'},
+        ];
+        menuLinkStub.returns(generatedLinks);
+        expected = Object.assign(expected, {
+          totalLength: 3,
+          pluginGeneratedLinks: [generatedLinks[0]],
         });
         testAdminLinks(account, options, expected, done);
       });

@@ -17,10 +17,11 @@ package com.google.gerrit.server.notedb;
 import static com.google.common.base.MoreObjects.firstNonNull;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
-import static com.google.gerrit.reviewdb.client.RefNames.changeMetaRef;
+import static com.google.gerrit.entities.RefNames.changeMetaRef;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_ASSIGNEE;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_BRANCH;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_CHANGE_ID;
+import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_CHERRY_PICK_OF;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_COMMIT;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_CURRENT;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_GROUPS;
@@ -29,7 +30,6 @@ import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_LABEL;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_PATCH_SET;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_PATCH_SET_DESCRIPTION;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_PRIVATE;
-import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_READ_ONLY_UNTIL;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_REAL_USER;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_REVERT_OF;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_STATUS;
@@ -40,7 +40,7 @@ import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_TAG;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_TOPIC;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.FOOTER_WORK_IN_PROGRESS;
 import static com.google.gerrit.server.notedb.NoteDbUtil.sanitizeFooter;
-import static java.util.Comparator.comparing;
+import static java.util.Comparator.naturalOrder;
 import static java.util.Objects.requireNonNull;
 import static org.eclipse.jgit.lib.Constants.OBJ_BLOB;
 
@@ -50,28 +50,22 @@ import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Table;
 import com.google.common.collect.TreeBasedTable;
-import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.data.SubmitRecord;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Comment;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RobotComment;
+import com.google.gerrit.entities.SubmissionId;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.mail.Address;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Comment;
-import com.google.gerrit.reviewdb.client.PatchLineComment;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RevId;
-import com.google.gerrit.reviewdb.client.RobotComment;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.GerritPersonIdent;
-import com.google.gerrit.server.config.GerritServerConfig;
-import com.google.gerrit.server.logging.RequestId;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.util.LabelVote;
-import com.google.gwtorm.client.IntKey;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.assistedinject.Assisted;
 import com.google.inject.assistedinject.AssistedInject;
 import java.io.IOException;
-import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Date;
@@ -84,7 +78,6 @@ import java.util.Optional;
 import java.util.Set;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.CommitBuilder;
-import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.PersonIdent;
@@ -106,17 +99,7 @@ import org.eclipse.jgit.revwalk.RevWalk;
  */
 public class ChangeUpdate extends AbstractChangeUpdate {
   public interface Factory {
-    ChangeUpdate create(ChangeNotes notes, CurrentUser user);
-
     ChangeUpdate create(ChangeNotes notes, CurrentUser user, Date when);
-
-    ChangeUpdate create(
-        Change change,
-        @Assisted("effective") @Nullable Account.Id accountId,
-        @Assisted("real") @Nullable Account.Id realAccountId,
-        PersonIdent authorIdent,
-        Date when,
-        Comparator<String> labelNameComparator);
 
     @VisibleForTesting
     ChangeUpdate create(
@@ -152,10 +135,10 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   private boolean isAllowWriteToNewtRef;
   private String psDescription;
   private boolean currentPatchSet;
-  private Timestamp readOnlyUntil;
   private Boolean isPrivate;
   private Boolean workInProgress;
   private Integer revertOf;
+  private String cherryPickOf;
 
   private ChangeDraftUpdate draftUpdate;
   private RobotCommentUpdate robotCommentUpdate;
@@ -164,37 +147,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
 
   @AssistedInject
   private ChangeUpdate(
-      @GerritServerConfig Config cfg,
       @GerritPersonIdent PersonIdent serverIdent,
-      NotesMigration migration,
-      NoteDbUpdateManager.Factory updateManagerFactory,
-      ChangeDraftUpdate.Factory draftUpdateFactory,
-      RobotCommentUpdate.Factory robotCommentUpdateFactory,
-      DeleteCommentRewriter.Factory deleteCommentRewriterFactory,
-      ProjectCache projectCache,
-      @Assisted ChangeNotes notes,
-      @Assisted CurrentUser user,
-      ChangeNoteUtil noteUtil) {
-    this(
-        cfg,
-        serverIdent,
-        migration,
-        updateManagerFactory,
-        draftUpdateFactory,
-        robotCommentUpdateFactory,
-        deleteCommentRewriterFactory,
-        projectCache,
-        notes,
-        user,
-        serverIdent.getWhen(),
-        noteUtil);
-  }
-
-  @AssistedInject
-  private ChangeUpdate(
-      @GerritServerConfig Config cfg,
-      @GerritPersonIdent PersonIdent serverIdent,
-      NotesMigration migration,
       NoteDbUpdateManager.Factory updateManagerFactory,
       ChangeDraftUpdate.Factory draftUpdateFactory,
       RobotCommentUpdate.Factory robotCommentUpdateFactory,
@@ -205,9 +158,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
       @Assisted Date when,
       ChangeNoteUtil noteUtil) {
     this(
-        cfg,
         serverIdent,
-        migration,
         updateManagerFactory,
         draftUpdateFactory,
         robotCommentUpdateFactory,
@@ -221,14 +172,12 @@ public class ChangeUpdate extends AbstractChangeUpdate {
 
   private static Table<String, Account.Id, Optional<Short>> approvals(
       Comparator<String> nameComparator) {
-    return TreeBasedTable.create(nameComparator, comparing(IntKey::get));
+    return TreeBasedTable.create(nameComparator, naturalOrder());
   }
 
   @AssistedInject
   private ChangeUpdate(
-      @GerritServerConfig Config cfg,
       @GerritPersonIdent PersonIdent serverIdent,
-      NotesMigration migration,
       NoteDbUpdateManager.Factory updateManagerFactory,
       ChangeDraftUpdate.Factory draftUpdateFactory,
       RobotCommentUpdate.Factory robotCommentUpdateFactory,
@@ -238,7 +187,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
       @Assisted Date when,
       @Assisted Comparator<String> labelNameComparator,
       ChangeNoteUtil noteUtil) {
-    super(cfg, migration, notes, user, serverIdent, noteUtil, when);
+    super(notes, user, serverIdent, noteUtil, when);
     this.updateManagerFactory = updateManagerFactory;
     this.draftUpdateFactory = draftUpdateFactory;
     this.robotCommentUpdateFactory = robotCommentUpdateFactory;
@@ -246,44 +195,9 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     this.approvals = approvals(labelNameComparator);
   }
 
-  @AssistedInject
-  private ChangeUpdate(
-      @GerritServerConfig Config cfg,
-      @GerritPersonIdent PersonIdent serverIdent,
-      NotesMigration migration,
-      NoteDbUpdateManager.Factory updateManagerFactory,
-      ChangeDraftUpdate.Factory draftUpdateFactory,
-      RobotCommentUpdate.Factory robotCommentUpdateFactory,
-      DeleteCommentRewriter.Factory deleteCommentRewriterFactory,
-      ChangeNoteUtil noteUtil,
-      @Assisted Change change,
-      @Assisted("effective") @Nullable Account.Id accountId,
-      @Assisted("real") @Nullable Account.Id realAccountId,
-      @Assisted PersonIdent authorIdent,
-      @Assisted Date when,
-      @Assisted Comparator<String> labelNameComparator) {
-    super(
-        cfg,
-        migration,
-        noteUtil,
-        serverIdent,
-        null,
-        change,
-        accountId,
-        realAccountId,
-        authorIdent,
-        when);
-    this.draftUpdateFactory = draftUpdateFactory;
-    this.robotCommentUpdateFactory = robotCommentUpdateFactory;
-    this.updateManagerFactory = updateManagerFactory;
-    this.deleteCommentRewriterFactory = deleteCommentRewriterFactory;
-    this.approvals = approvals(labelNameComparator);
-  }
-
-  public ObjectId commit() throws IOException, OrmException {
+  public ObjectId commit() throws IOException {
     try (NoteDbUpdateManager updateManager = updateManagerFactory.create(getProjectName())) {
       updateManager.add(this);
-      updateManager.stageAndApplyDelta(getChange());
       updateManager.execute();
     }
     return getResult();
@@ -308,8 +222,10 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     this.status = status;
   }
 
-  public void fixStatus(Change.Status status) {
-    this.status = status;
+  public void fixStatusToMerged(SubmissionId submissionId) {
+    checkArgument(submissionId != null, "submission id must be set for merged changes");
+    this.status = Change.Status.MERGED;
+    this.submissionId = submissionId.toString();
   }
 
   public void putApproval(String label, short value) {
@@ -328,16 +244,11 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     approvals.put(label, reviewer, Optional.empty());
   }
 
-  public void merge(RequestId submissionId, Iterable<SubmitRecord> submitRecords) {
+  public void merge(SubmissionId submissionId, Iterable<SubmitRecord> submitRecords) {
     this.status = Change.Status.MERGED;
-    this.submissionId = submissionId.toStringForStorage();
+    this.submissionId = submissionId.toString();
     this.submitRecords = ImmutableList.copyOf(submitRecords);
     checkArgument(!this.submitRecords.isEmpty(), "no submit records specified at submit time");
-  }
-
-  @Deprecated // Only until we improve ChangeRebuilder to call merge().
-  public void setSubmissionId(String submissionId) {
-    this.submissionId = submissionId;
   }
 
   public void setSubjectForCommit(String commitSubject) {
@@ -365,18 +276,14 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     this.psDescription = psDescription;
   }
 
-  public void putComment(PatchLineComment.Status status, Comment c) {
+  public void putComment(Comment.Status status, Comment c) {
     verifyComment(c);
     createDraftUpdateIfNull();
-    if (status == PatchLineComment.Status.DRAFT) {
+    if (status == Comment.Status.DRAFT) {
       draftUpdate.putComment(c);
     } else {
       comments.add(c);
-      // Always delete the corresponding comment from drafts. Published comments
-      // are immutable, meaning in normal operation we only hit this path when
-      // publishing a comment. It's exactly in that case that we have to delete
-      // the draft.
-      draftUpdate.deleteComment(c);
+      draftUpdate.markCommentPublished(c);
     }
   }
 
@@ -396,9 +303,9 @@ public class ChangeUpdate extends AbstractChangeUpdate {
         deleteCommentRewriterFactory.create(getChange().getId(), uuid, newMessage);
   }
 
-  public void deleteChangeMessageByRewritingHistory(int targetMessageIdx, String newMessage) {
+  public void deleteChangeMessageByRewritingHistory(String targetMessageId, String newMessage) {
     deleteChangeMessageRewriter =
-        new DeleteChangeMessageRewriter(getChange().getId(), targetMessageIdx, newMessage);
+        new DeleteChangeMessageRewriter(getChange().getId(), targetMessageId, newMessage);
   }
 
   @VisibleForTesting
@@ -506,15 +413,19 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   }
 
   public void setRevertOf(int revertOf) {
-    int ownId = getChange().getId().get();
+    int ownId = getId().get();
     checkArgument(ownId != revertOf, "A change cannot revert itself");
     this.revertOf = revertOf;
     rootOnly = true;
   }
 
+  public void setCherryPickOf(String cherryPickOf) {
+    this.cherryPickOf = cherryPickOf;
+  }
+
   /** @return the tree id for the updated tree */
   private ObjectId storeRevisionNotes(RevWalk rw, ObjectInserter inserter, ObjectId curr)
-      throws ConfigInvalidException, OrmException, IOException {
+      throws ConfigInvalidException, IOException {
     if (comments.isEmpty() && pushCert == null) {
       return null;
     }
@@ -523,59 +434,51 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     RevisionNoteBuilder.Cache cache = new RevisionNoteBuilder.Cache(rnm);
     for (Comment c : comments) {
       c.tag = tag;
-      cache.get(new RevId(c.revId)).putComment(c);
+      cache.get(c.getCommitId()).putComment(c);
     }
     if (pushCert != null) {
       checkState(commit != null);
-      cache.get(new RevId(commit)).setPushCertificate(pushCert);
+      cache.get(ObjectId.fromString(commit)).setPushCertificate(pushCert);
     }
-    Map<RevId, RevisionNoteBuilder> builders = cache.getBuilders();
+    Map<ObjectId, RevisionNoteBuilder> builders = cache.getBuilders();
     checkComments(rnm.revisionNotes, builders);
 
-    for (Map.Entry<RevId, RevisionNoteBuilder> e : builders.entrySet()) {
+    for (Map.Entry<ObjectId, RevisionNoteBuilder> e : builders.entrySet()) {
       ObjectId data = inserter.insert(OBJ_BLOB, e.getValue().build(noteUtil.getChangeNoteJson()));
-      rnm.noteMap.set(ObjectId.fromString(e.getKey().get()), data);
+      rnm.noteMap.set(e.getKey(), data);
     }
 
     return rnm.noteMap.writeTree(inserter);
   }
 
   private RevisionNoteMap<ChangeRevisionNote> getRevisionNoteMap(RevWalk rw, ObjectId curr)
-      throws ConfigInvalidException, OrmException, IOException {
+      throws ConfigInvalidException, IOException {
     if (curr.equals(ObjectId.zeroId())) {
       return RevisionNoteMap.emptyMap();
     }
-    if (migration.readChanges()) {
-      // If reading from changes is enabled, then the old ChangeNotes may have
-      // already parsed the revision notes. We can reuse them as long as the ref
-      // hasn't advanced.
-      ChangeNotes notes = getNotes();
-      if (notes != null && notes.revisionNoteMap != null) {
-        ObjectId idFromNotes = firstNonNull(notes.load().getRevision(), ObjectId.zeroId());
-        if (idFromNotes.equals(curr)) {
-          return notes.revisionNoteMap;
-        }
+    // The old ChangeNotes may have already parsed the revision notes. We can reuse them as long as
+    // the ref hasn't advanced.
+    ChangeNotes notes = getNotes();
+    if (notes != null && notes.revisionNoteMap != null) {
+      ObjectId idFromNotes = firstNonNull(notes.load().getRevision(), ObjectId.zeroId());
+      if (idFromNotes.equals(curr)) {
+        return notes.revisionNoteMap;
       }
     }
     NoteMap noteMap = NoteMap.read(rw.getObjectReader(), rw.parseCommit(curr));
     // Even though reading from changes might not be enabled, we need to
     // parse any existing revision notes so we can merge them.
     return RevisionNoteMap.parse(
-        noteUtil.getChangeNoteJson(),
-        noteUtil.getLegacyChangeNoteRead(),
-        getId(),
-        rw.getObjectReader(),
-        noteMap,
-        PatchLineComment.Status.PUBLISHED);
+        noteUtil.getChangeNoteJson(), rw.getObjectReader(), noteMap, Comment.Status.PUBLISHED);
   }
 
   private void checkComments(
-      Map<RevId, ChangeRevisionNote> existingNotes, Map<RevId, RevisionNoteBuilder> toUpdate)
-      throws OrmException {
+      Map<ObjectId, ChangeRevisionNote> existingNotes,
+      Map<ObjectId, RevisionNoteBuilder> toUpdate) {
     // Prohibit various kinds of illegal operations on comments.
     Set<Comment.Key> existing = new HashSet<>();
     for (ChangeRevisionNote rn : existingNotes.values()) {
-      for (Comment c : rn.getComments()) {
+      for (Comment c : rn.getEntities()) {
         existing.add(c.key);
         if (draftUpdate != null) {
           // Take advantage of an existing update on All-Users to prune any
@@ -593,7 +496,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
           // separate commit. But note that we don't care much about the commit
           // graph of the draft ref, particularly because the ref is completely
           // deleted when all drafts are gone.
-          draftUpdate.deleteComment(c.revId, c.key);
+          draftUpdate.deleteComment(c.getCommitId(), c.key);
         }
       }
     }
@@ -601,7 +504,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     for (RevisionNoteBuilder b : toUpdate.values()) {
       for (Comment c : b.put.values()) {
         if (existing.contains(c.key)) {
-          throw new OrmException("Cannot update existing published comment: " + c);
+          throw new StorageException("Cannot update existing published comment: " + c);
         }
       }
     }
@@ -613,8 +516,14 @@ public class ChangeUpdate extends AbstractChangeUpdate {
   }
 
   @Override
+  protected boolean bypassMaxUpdates() {
+    // Allow abandoning or submitting a change even if it would exceed the max update count.
+    return status != null && status.isClosed();
+  }
+
+  @Override
   protected CommitBuilder applyImpl(RevWalk rw, ObjectInserter ins, ObjectId curr)
-      throws OrmException, IOException {
+      throws IOException {
     checkState(
         deleteCommentRewriter == null && deleteChangeMessageRewriter == null,
         "cannot update and rewrite ref in one BatchUpdate");
@@ -750,10 +659,6 @@ public class ChangeUpdate extends AbstractChangeUpdate {
       addIdent(msg, realAccountId).append('\n');
     }
 
-    if (readOnlyUntil != null) {
-      addFooter(msg, FOOTER_READ_ONLY_UNTIL, NoteDbUtil.formatTime(serverIdent, readOnlyUntil));
-    }
-
     if (isPrivate != null) {
       addFooter(msg, FOOTER_PRIVATE, isPrivate);
     }
@@ -766,6 +671,10 @@ public class ChangeUpdate extends AbstractChangeUpdate {
       addFooter(msg, FOOTER_REVERT_OF, revertOf);
     }
 
+    if (cherryPickOf != null) {
+      addFooter(msg, FOOTER_CHERRY_PICK_OF, cherryPickOf);
+    }
+
     cb.setMessage(msg.toString());
     try {
       ObjectId treeId = storeRevisionNotes(rw, ins, curr);
@@ -773,7 +682,7 @@ public class ChangeUpdate extends AbstractChangeUpdate {
         cb.setTreeId(treeId);
       }
     } catch (ConfigInvalidException e) {
-      throw new OrmException(e);
+      throw new StorageException(e);
     }
     return cb;
   }
@@ -813,10 +722,10 @@ public class ChangeUpdate extends AbstractChangeUpdate {
         && tag == null
         && psDescription == null
         && !currentPatchSet
-        && readOnlyUntil == null
         && isPrivate == null
         && workInProgress == null
-        && revertOf == null;
+        && revertOf == null
+        && cherryPickOf == null;
   }
 
   ChangeDraftUpdate getDraftUpdate() {
@@ -852,10 +761,6 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     this.workInProgress = workInProgress;
   }
 
-  void setReadOnlyUntil(Timestamp readOnlyUntil) {
-    this.readOnlyUntil = readOnlyUntil;
-  }
-
   private static StringBuilder addFooter(StringBuilder sb, FooterKey footer) {
     return sb.append(footer.getName()).append(": ");
   }
@@ -876,14 +781,5 @@ public class ChangeUpdate extends AbstractChangeUpdate {
     PersonIdent.appendSanitized(sb, ident.getEmailAddress());
     sb.append('>');
     return sb;
-  }
-
-  @Override
-  protected void checkNotReadOnly() throws OrmException {
-    // Allow setting Read-only-until to 0 to release an existing lease.
-    if (readOnlyUntil != null && readOnlyUntil.getTime() == 0) {
-      return;
-    }
-    super.checkNotReadOnly();
   }
 }

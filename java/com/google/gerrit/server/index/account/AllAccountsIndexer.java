@@ -21,8 +21,8 @@ import com.google.common.flogger.FluentLogger;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.index.SiteIndexer;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.account.Accounts;
@@ -39,6 +39,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.jgit.lib.ProgressMonitor;
 import org.eclipse.jgit.lib.TextProgressMonitor;
 
+/**
+ * Implementation that can index all accounts on a host. Used by Gerrit's initialization and upgrade
+ * programs as well as by REST API endpoints that offer this functionality.
+ */
 @Singleton
 public class AllAccountsIndexer extends SiteIndexer<Account.Id, AccountState, AccountIndex> {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
@@ -67,7 +71,7 @@ public class AllAccountsIndexer extends SiteIndexer<Account.Id, AccountState, Ac
       ids = collectAccounts(progress);
     } catch (IOException e) {
       logger.atSevere().withCause(e).log("Error collecting accounts");
-      return new SiteIndexer.Result(sw, false, 0, 0);
+      return SiteIndexer.Result.create(sw, false, 0, 0);
     }
     return reindexAccounts(index, ids, progress);
   }
@@ -109,11 +113,11 @@ public class AllAccountsIndexer extends SiteIndexer<Account.Id, AccountState, Ac
       Futures.successfulAsList(futures).get();
     } catch (ExecutionException | InterruptedException e) {
       logger.atSevere().withCause(e).log("Error waiting on account futures");
-      return new SiteIndexer.Result(sw, false, 0, 0);
+      return SiteIndexer.Result.create(sw, false, 0, 0);
     }
 
     progress.endTask();
-    return new SiteIndexer.Result(sw, ok.get(), done.get(), failed.get());
+    return SiteIndexer.Result.create(sw, ok.get(), done.get(), failed.get());
   }
 
   private List<Account.Id> collectAccounts(ProgressMonitor progress) throws IOException {

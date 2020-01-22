@@ -22,8 +22,14 @@ import static com.google.gerrit.extensions.client.ListChangesOption.CURRENT_REVI
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
+import com.google.gerrit.acceptance.ExtensionRegistry;
+import com.google.gerrit.acceptance.ExtensionRegistry.Registration;
 import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.acceptance.TestProjectInput;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.changes.ActionVisitor;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.client.ListChangesOption;
@@ -31,11 +37,8 @@ import com.google.gerrit.extensions.client.SubmitType;
 import com.google.gerrit.extensions.common.ActionInfo;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.RevisionInfo;
-import com.google.gerrit.extensions.registration.DynamicSet;
-import com.google.gerrit.extensions.registration.RegistrationHandle;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSet;
 import com.google.gerrit.server.change.RevisionJson;
+import com.google.gerrit.server.change.testing.TestChangeETagComputation;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.testing.ConfigSuite;
 import com.google.inject.Inject;
@@ -44,8 +47,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import org.eclipse.jgit.lib.Config;
-import org.junit.After;
-import org.junit.Before;
 import org.junit.Test;
 
 public class ActionsIT extends AbstractDaemonTest {
@@ -54,30 +55,45 @@ public class ActionsIT extends AbstractDaemonTest {
     return submitWholeTopicEnabledConfig();
   }
 
+  @Inject private RequestScopeOperations requestScopeOperations;
   @Inject private RevisionJson.Factory revisionJsonFactory;
-
-  @Inject private DynamicSet<ActionVisitor> actionVisitors;
-
-  private RegistrationHandle visitorHandle;
-
-  @Before
-  public void setUp() {
-    visitorHandle = null;
-  }
-
-  @After
-  public void tearDown() {
-    if (visitorHandle != null) {
-      visitorHandle.remove();
-    }
-  }
+  @Inject private ExtensionRegistry extensionRegistry;
 
   protected Map<String, ActionInfo> getActions(String id) throws Exception {
     return gApi.changes().id(id).revision(1).actions();
   }
 
+  protected Map<String, ActionInfo> getChangeActions(String id) throws Exception {
+    return gApi.changes().id(id).get().actions;
+  }
+
   protected String getETag(String id) throws Exception {
     return gApi.changes().id(id).current().etag();
+  }
+
+  @Test
+  public void changeActionOneMergedChangeHasOnlyNormalRevert() throws Exception {
+    String changeId = createChangeWithTopic().getChangeId();
+    gApi.changes().id(changeId).current().review(ReviewInput.approve());
+    gApi.changes().id(changeId).current().submit();
+    Map<String, ActionInfo> actions = getChangeActions(changeId);
+    assertThat(actions).containsKey("revert");
+    assertThat(actions).doesNotContainKey("revert_submission");
+  }
+
+  @Test
+  public void changeActionTwoMergedChangesHaveReverts() throws Exception {
+    String changeId1 = createChangeWithTopic().getChangeId();
+    String changeId2 = createChangeWithTopic().getChangeId();
+    gApi.changes().id(changeId1).current().review(ReviewInput.approve());
+    gApi.changes().id(changeId2).current().review(ReviewInput.approve());
+    gApi.changes().id(changeId2).current().submit();
+    Map<String, ActionInfo> actions1 = getChangeActions(changeId1);
+    assertThat(actions1).containsKey("revert");
+    assertThat(actions1).containsKey("revert_submission");
+    Map<String, ActionInfo> actions2 = getChangeActions(changeId2);
+    assertThat(actions2).containsKey("revert");
+    assertThat(actions2).containsKey("revert_submission");
   }
 
   @Test
@@ -156,25 +172,25 @@ public class ActionsIT extends AbstractDaemonTest {
     String change = createChangeWithTopic().getChangeId();
     approve(change);
 
-    setApiUserAnonymous();
+    requestScopeOperations.setApiUserAnonymous();
     String etag1 = getETag(change);
 
-    setApiUser(admin);
+    requestScopeOperations.setApiUser(admin.id());
     approve(parent);
 
-    setApiUserAnonymous();
+    requestScopeOperations.setApiUserAnonymous();
     String etag2 = getETag(change);
 
-    setApiUser(admin);
+    requestScopeOperations.setApiUser(admin.id());
     String changeWithSameTopic = createChangeWithTopic().getChangeId();
 
-    setApiUserAnonymous();
+    requestScopeOperations.setApiUserAnonymous();
     String etag3 = getETag(change);
 
-    setApiUser(admin);
+    requestScopeOperations.setApiUser(admin.id());
     approve(changeWithSameTopic);
 
-    setApiUserAnonymous();
+    requestScopeOperations.setApiUserAnonymous();
     String etag4 = getETag(change);
 
     if (isSubmitWholeTopicEnabled()) {
@@ -193,15 +209,54 @@ public class ActionsIT extends AbstractDaemonTest {
     String change = createChange().getChangeId();
     approve(change);
 
-    setApiUserAnonymous();
+    requestScopeOperations.setApiUserAnonymous();
     String etag1 = getETag(change);
 
-    setApiUser(admin);
+    requestScopeOperations.setApiUser(admin.id());
     approve(parent);
 
-    setApiUserAnonymous();
+    requestScopeOperations.setApiUserAnonymous();
     String etag2 = getETag(change);
     assertThat(etag2).isEqualTo(etag1);
+  }
+
+  @Test
+  public void pluginCanContributeToETagComputation() throws Exception {
+    String change = createChange().getChangeId();
+    String oldETag = getETag(change);
+
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(TestChangeETagComputation.withETag("foo"))) {
+      assertThat(getETag(change)).isNotEqualTo(oldETag);
+    }
+
+    assertThat(getETag(change)).isEqualTo(oldETag);
+  }
+
+  @Test
+  public void returningNullFromETagComputationDoesNotBreakGerrit() throws Exception {
+    String change = createChange().getChangeId();
+    String oldETag = getETag(change);
+
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(TestChangeETagComputation.withETag(null))) {
+      assertThat(getETag(change)).isEqualTo(oldETag);
+    }
+  }
+
+  @Test
+  public void throwingExceptionFromETagComputationDoesNotBreakGerrit() throws Exception {
+    String change = createChange().getChangeId();
+    String oldETag = getETag(change);
+
+    try (Registration registration =
+        extensionRegistry
+            .newRegistration()
+            .add(
+                TestChangeETagComputation.withException(
+                    new StorageException("exception during test")))) {
+      assertThat(getETag(change)).isEqualTo(oldETag);
+    }
   }
 
   @Test
@@ -327,22 +382,21 @@ public class ActionsIT extends AbstractDaemonTest {
     }
 
     Map<String, ActionInfo> origActions = origChange.actions;
-    assertThat(origActions.keySet()).containsAllOf("followup", "abandon");
+    assertThat(origActions.keySet()).containsAtLeast("followup", "abandon");
     assertThat(origActions.get("abandon").label).isEqualTo("Abandon");
 
-    Visitor v = new Visitor();
-    visitorHandle = actionVisitors.add("gerrit", v);
+    try (Registration registration = extensionRegistry.newRegistration().add(new Visitor())) {
+      Map<String, ActionInfo> newActions =
+          gApi.changes().id(id).get(EnumSet.of(ListChangesOption.CHANGE_ACTIONS)).actions;
 
-    Map<String, ActionInfo> newActions =
-        gApi.changes().id(id).get(EnumSet.of(ListChangesOption.CHANGE_ACTIONS)).actions;
+      Set<String> expectedNames = new TreeSet<>(origActions.keySet());
+      expectedNames.remove("followup");
+      assertThat(newActions.keySet()).isEqualTo(expectedNames);
 
-    Set<String> expectedNames = new TreeSet<>(origActions.keySet());
-    expectedNames.remove("followup");
-    assertThat(newActions.keySet()).isEqualTo(expectedNames);
-
-    ActionInfo abandon = newActions.get("abandon");
-    assertThat(abandon).isNotNull();
-    assertThat(abandon.label).isEqualTo("Abandon All Hope");
+      ActionInfo abandon = newActions.get("abandon");
+      assertThat(abandon).isNotNull();
+      assertThat(abandon.label).isEqualTo("Abandon All Hope");
+    }
   }
 
   @Test
@@ -350,7 +404,7 @@ public class ActionsIT extends AbstractDaemonTest {
     String id = createChange().getChangeId();
     amendChange(id);
     ChangeInfo origChange = gApi.changes().id(id).get(CHANGE_ACTIONS);
-    Change.Id changeId = new Change.Id(origChange._number);
+    Change.Id changeId = Change.id(origChange._number);
 
     class Visitor implements ActionVisitor {
       @Override
@@ -376,25 +430,25 @@ public class ActionsIT extends AbstractDaemonTest {
     }
 
     Map<String, ActionInfo> origActions = gApi.changes().id(id).current().actions();
-    assertThat(origActions.keySet()).containsAllOf("cherrypick", "rebase");
+    assertThat(origActions.keySet()).containsAtLeast("cherrypick", "rebase");
     assertThat(origActions.get("rebase").label).isEqualTo("Rebase");
 
-    Visitor v = new Visitor();
-    visitorHandle = actionVisitors.add("gerrit", v);
+    try (Registration registration = extensionRegistry.newRegistration().add(new Visitor())) {
+      // Test different codepaths within ActionJson...
+      // ...via revision API.
+      visitedCurrentRevisionActionsAssertions(
+          origActions, gApi.changes().id(id).current().actions());
 
-    // Test different codepaths within ActionJson...
-    // ...via revision API.
-    visitedCurrentRevisionActionsAssertions(origActions, gApi.changes().id(id).current().actions());
+      // ...via change API with option.
+      EnumSet<ListChangesOption> opts = EnumSet.of(CURRENT_ACTIONS, CURRENT_REVISION);
+      ChangeInfo changeInfo = gApi.changes().id(id).get(opts);
+      RevisionInfo revisionInfo = Iterables.getOnlyElement(changeInfo.revisions.values());
+      visitedCurrentRevisionActionsAssertions(origActions, revisionInfo.actions);
 
-    // ...via change API with option.
-    EnumSet<ListChangesOption> opts = EnumSet.of(CURRENT_ACTIONS, CURRENT_REVISION);
-    ChangeInfo changeInfo = gApi.changes().id(id).get(opts);
-    RevisionInfo revisionInfo = Iterables.getOnlyElement(changeInfo.revisions.values());
-    visitedCurrentRevisionActionsAssertions(origActions, revisionInfo.actions);
-
-    // ...via ChangeJson directly.
-    ChangeData cd = changeDataFactory.create(db, project, changeId);
-    revisionJsonFactory.create(opts).getRevisionInfo(cd, cd.patchSet(new PatchSet.Id(changeId, 1)));
+      // ...via ChangeJson directly.
+      ChangeData cd = changeDataFactory.create(project, changeId);
+      revisionJsonFactory.create(opts).getRevisionInfo(cd, cd.patchSet(PatchSet.id(changeId, 1)));
+    }
   }
 
   private void visitedCurrentRevisionActionsAssertions(
@@ -439,18 +493,17 @@ public class ActionsIT extends AbstractDaemonTest {
     assertThat(origActions.keySet()).containsExactly("description");
     assertThat(origActions.get("description").label).isEqualTo("Edit Description");
 
-    Visitor v = new Visitor();
-    visitorHandle = actionVisitors.add("gerrit", v);
+    try (Registration registration = extensionRegistry.newRegistration().add(new Visitor())) {
+      // Unlike for the current revision, actions for old revisions are only available via the
+      // revision API.
+      Map<String, ActionInfo> newActions = gApi.changes().id(id).revision(1).actions();
+      assertThat(newActions).isNotNull();
+      assertThat(newActions.keySet()).isEqualTo(origActions.keySet());
 
-    // Unlike for the current revision, actions for old revisions are only available via the
-    // revision API.
-    Map<String, ActionInfo> newActions = gApi.changes().id(id).revision(1).actions();
-    assertThat(newActions).isNotNull();
-    assertThat(newActions.keySet()).isEqualTo(origActions.keySet());
-
-    ActionInfo description = newActions.get("description");
-    assertThat(description).isNotNull();
-    assertThat(description.label).isEqualTo("Describify");
+      ActionInfo description = newActions.get("description");
+      assertThat(description).isNotNull();
+      assertThat(description.label).isEqualTo("Describify");
+    }
   }
 
   private void commonActionsAssertions(Map<String, ActionInfo> actions) {

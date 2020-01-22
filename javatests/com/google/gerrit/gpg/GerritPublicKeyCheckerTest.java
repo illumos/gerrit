@@ -29,12 +29,10 @@ import static org.eclipse.jgit.lib.RefUpdate.Result.NEW;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterators;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.common.GpgKeyInfo.Status;
 import com.google.gerrit.gpg.testing.TestKey;
 import com.google.gerrit.lifecycle.LifecycleManager;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.server.ReviewDb;
-import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.ServerInitiated;
 import com.google.gerrit.server.account.AccountManager;
@@ -42,16 +40,12 @@ import com.google.gerrit.server.account.AccountsUpdate;
 import com.google.gerrit.server.account.AuthRequest;
 import com.google.gerrit.server.account.externalids.ExternalId;
 import com.google.gerrit.server.schema.SchemaCreator;
-import com.google.gerrit.server.util.RequestContext;
 import com.google.gerrit.server.util.ThreadLocalRequestContext;
-import com.google.gerrit.testing.InMemoryDatabase;
 import com.google.gerrit.testing.InMemoryModule;
-import com.google.gerrit.testing.NoteDbMode;
 import com.google.inject.Guice;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.Provider;
-import com.google.inject.util.Providers;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -78,14 +72,11 @@ public class GerritPublicKeyCheckerTest {
 
   @Inject private IdentifiedUser.GenericFactory userFactory;
 
-  @Inject private InMemoryDatabase schemaFactory;
-
   @Inject private SchemaCreator schemaCreator;
 
   @Inject private ThreadLocalRequestContext requestContext;
 
   private LifecycleManager lifecycle;
-  private ReviewDb db;
   private Account.Id userId;
   private IdentifiedUser user;
   private Repository storeRepo;
@@ -102,16 +93,14 @@ public class GerritPublicKeyCheckerTest {
         ImmutableList.of(
             Fingerprint.toString(keyB().getPublicKey().getFingerprint()),
             Fingerprint.toString(keyD().getPublicKey().getFingerprint())));
-    Injector injector =
-        Guice.createInjector(new InMemoryModule(cfg, NoteDbMode.newNotesMigrationFromEnv()));
+    Injector injector = Guice.createInjector(new InMemoryModule(cfg));
 
     lifecycle = new LifecycleManager();
     lifecycle.add(injector);
     injector.injectMembers(this);
     lifecycle.start();
 
-    db = schemaFactory.open();
-    schemaCreator.create(db);
+    schemaCreator.create();
     userId = accountManager.authenticate(AuthRequest.forUser("user")).getAccountId();
     // Note: does not match any key in TestKeys.
     accountsUpdateProvider
@@ -119,18 +108,7 @@ public class GerritPublicKeyCheckerTest {
         .update("Set Preferred Email", userId, u -> u.setPreferredEmail("user@example.com"));
     user = reloadUser();
 
-    requestContext.setContext(
-        new RequestContext() {
-          @Override
-          public CurrentUser getUser() {
-            return user;
-          }
-
-          @Override
-          public Provider<ReviewDb> getReviewDbProvider() {
-            return Providers.of(db);
-          }
-        });
+    requestContext.setContext(() -> user);
 
     storeRepo = new InMemoryRepository(new DfsRepositoryDescription("repo"));
     store = new PublicKeyStore(storeRepo);
@@ -158,10 +136,6 @@ public class GerritPublicKeyCheckerTest {
     if (lifecycle != null) {
       lifecycle.stop();
     }
-    if (db != null) {
-      db.close();
-    }
-    InMemoryDatabase.drop(schemaFactory);
   }
 
   @Test
@@ -224,7 +198,7 @@ public class GerritPublicKeyCheckerTest {
         .update(
             "Delete External IDs",
             user.getAccountId(),
-            (a, u) -> u.deleteExternalIds(a.getExternalIds()));
+            (a, u) -> u.deleteExternalIds(a.externalIds()));
     reloadUser();
 
     TestKey key = validKeyWithSecondUserId();

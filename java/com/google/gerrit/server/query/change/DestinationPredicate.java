@@ -14,22 +14,21 @@
 
 package com.google.gerrit.server.query.change;
 
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Change;
 import com.google.gerrit.index.query.PostFilterPredicate;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gwtorm.server.OrmException;
 import java.util.Set;
 
 public class DestinationPredicate extends PostFilterPredicate<ChangeData> {
-  protected Set<Branch.NameKey> destinations;
+  protected Set<BranchNameKey> destinations;
 
-  public DestinationPredicate(Set<Branch.NameKey> destinations, String value) {
+  public DestinationPredicate(Set<BranchNameKey> destinations, String value) {
     super(ChangeQueryBuilder.FIELD_DESTINATION, value);
     this.destinations = destinations;
   }
 
   @Override
-  public boolean match(ChangeData object) throws OrmException {
+  public boolean match(ChangeData object) {
     Change change = object.change();
     if (change == null) {
       return false;

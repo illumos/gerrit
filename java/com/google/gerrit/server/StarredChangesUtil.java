@@ -31,24 +31,25 @@ import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
 import com.google.common.primitives.Ints;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
-import com.google.gerrit.reviewdb.server.ReviewDb;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.exceptions.StorageException;
+import com.google.gerrit.git.GitUpdateFailureException;
+import com.google.gerrit.git.LockFailureException;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.GitRepositoryManager;
-import com.google.gerrit.server.git.LockFailureException;
 import com.google.gerrit.server.index.change.ChangeField;
 import com.google.gerrit.server.index.change.ChangeIndexer;
+import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.logging.TraceContext.TraceTimer;
 import com.google.gerrit.server.project.NoSuchChangeException;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -90,7 +91,7 @@ public class StarredChangesUtil {
         if (id == null) {
           return null;
         }
-        Account.Id accountId = new Account.Id(id);
+        Account.Id accountId = Account.id(id);
         String label = s.substring(p + 1);
         return create(accountId, label);
       }
@@ -106,7 +107,7 @@ public class StarredChangesUtil {
     public abstract String label();
 
     @Override
-    public String toString() {
+    public final String toString() {
       return accountId() + SEPARATOR + label();
     }
   }
@@ -168,7 +169,6 @@ public class StarredChangesUtil {
   private final GitRepositoryManager repoManager;
   private final GitReferenceUpdated gitRefUpdated;
   private final AllUsersName allUsers;
-  private final Provider<ReviewDb> dbProvider;
   private final Provider<PersonIdent> serverIdent;
   private final ChangeIndexer indexer;
   private final Provider<InternalChangeQuery> queryProvider;
@@ -178,25 +178,22 @@ public class StarredChangesUtil {
       GitRepositoryManager repoManager,
       GitReferenceUpdated gitRefUpdated,
       AllUsersName allUsers,
-      Provider<ReviewDb> dbProvider,
       @GerritPersonIdent Provider<PersonIdent> serverIdent,
       ChangeIndexer indexer,
       Provider<InternalChangeQuery> queryProvider) {
     this.repoManager = repoManager;
     this.gitRefUpdated = gitRefUpdated;
     this.allUsers = allUsers;
-    this.dbProvider = dbProvider;
     this.serverIdent = serverIdent;
     this.indexer = indexer;
     this.queryProvider = queryProvider;
   }
 
-  public ImmutableSortedSet<String> getLabels(Account.Id accountId, Change.Id changeId)
-      throws OrmException {
+  public ImmutableSortedSet<String> getLabels(Account.Id accountId, Change.Id changeId) {
     try (Repository repo = repoManager.openRepository(allUsers)) {
       return readLabels(repo, RefNames.refsStarredChanges(changeId, accountId)).labels();
     } catch (IOException e) {
-      throw new OrmException(
+      throw new StorageException(
           String.format(
               "Reading stars from change %d for account %d failed",
               changeId.get(), accountId.get()),
@@ -210,7 +207,7 @@ public class StarredChangesUtil {
       Change.Id changeId,
       Set<String> labelsToAdd,
       Set<String> labelsToRemove)
-      throws OrmException, IllegalLabelException {
+      throws IllegalLabelException {
     try (Repository repo = repoManager.openRepository(allUsers)) {
       String refName = RefNames.refsStarredChanges(changeId, accountId);
       StarRef old = readLabels(repo, refName);
@@ -230,16 +227,25 @@ public class StarredChangesUtil {
         updateLabels(repo, refName, old.objectId(), labels);
       }
 
-      indexer.index(dbProvider.get(), project, changeId);
+      indexer.index(project, changeId);
       return ImmutableSortedSet.copyOf(labels);
     } catch (IOException e) {
-      throw new OrmException(
+      throw new StorageException(
           String.format("Star change %d for account %d failed", changeId.get(), accountId.get()),
           e);
     }
   }
 
-  public void unstarAll(Project.NameKey project, Change.Id changeId) throws OrmException {
+  /**
+   * Unstar the given change for all users.
+   *
+   * <p>Intended for use only when we're about to delete a change. For that reason, the change is
+   * not reindexed.
+   *
+   * @param changeId change ID.
+   * @throws IOException if an error occurred.
+   */
+  public void unstarAllForChangeDeletion(Change.Id changeId) throws IOException {
     try (Repository repo = repoManager.openRepository(allUsers);
         RevWalk rw = new RevWalk(repo)) {
       BatchRefUpdate batchUpdate = repo.getRefDatabase().newBatchUpdate();
@@ -248,7 +254,7 @@ public class StarredChangesUtil {
       batchUpdate.setRefLogMessage("Unstar change " + changeId.get(), true);
       for (Account.Id accountId : byChangeFromIndex(changeId).keySet()) {
         String refName = RefNames.refsStarredChanges(changeId, accountId);
-        Ref ref = repo.getRefDatabase().getRef(refName);
+        Ref ref = repo.getRefDatabase().exactRef(refName);
         if (ref != null) {
           batchUpdate.addCommand(new ReceiveCommand(ref.getObjectId(), ObjectId.zeroId(), refName));
         }
@@ -263,16 +269,13 @@ public class StarredChangesUtil {
           if (command.getResult() == ReceiveCommand.Result.LOCK_FAILURE) {
             throw new LockFailureException(message, batchUpdate);
           }
-          throw new IOException(message);
+          throw new GitUpdateFailureException(message, batchUpdate);
         }
       }
-      indexer.index(dbProvider.get(), project, changeId);
-    } catch (IOException e) {
-      throw new OrmException(String.format("Unstar change %d failed", changeId.get()), e);
     }
   }
 
-  public ImmutableMap<Account.Id, StarRef> byChange(Change.Id changeId) throws OrmException {
+  public ImmutableMap<Account.Id, StarRef> byChange(Change.Id changeId) {
     try (Repository repo = repoManager.openRepository(allUsers)) {
       ImmutableMap.Builder<Account.Id, StarRef> builder = ImmutableMap.builder();
       for (String refPart : getRefNames(repo, RefNames.refsStarredChangesPrefix(changeId))) {
@@ -280,18 +283,17 @@ public class StarredChangesUtil {
         if (id == null) {
           continue;
         }
-        Account.Id accountId = new Account.Id(id);
+        Account.Id accountId = Account.id(id);
         builder.put(accountId, readLabels(repo, RefNames.refsStarredChanges(changeId, accountId)));
       }
       return builder.build();
     } catch (IOException e) {
-      throw new OrmException(
+      throw new StorageException(
           String.format("Get accounts that starred change %d failed", changeId.get()), e);
     }
   }
 
-  public ImmutableListMultimap<Account.Id, String> byChangeFromIndex(Change.Id changeId)
-      throws OrmException {
+  public ImmutableListMultimap<Account.Id, String> byChangeFromIndex(Change.Id changeId) {
     List<ChangeData> changeData =
         queryProvider
             .get()
@@ -322,7 +324,7 @@ public class StarredChangesUtil {
     }
   }
 
-  public void ignore(ChangeResource rsrc) throws OrmException, IllegalLabelException {
+  public void ignore(ChangeResource rsrc) throws IllegalLabelException {
     star(
         rsrc.getUser().asIdentifiedUser().getAccountId(),
         rsrc.getProject(),
@@ -331,7 +333,7 @@ public class StarredChangesUtil {
         ImmutableSet.of());
   }
 
-  public void unignore(ChangeResource rsrc) throws OrmException, IllegalLabelException {
+  public void unignore(ChangeResource rsrc) throws IllegalLabelException {
     star(
         rsrc.getUser().asIdentifiedUser().getAccountId(),
         rsrc.getProject(),
@@ -340,11 +342,11 @@ public class StarredChangesUtil {
         ImmutableSet.of(IGNORE_LABEL));
   }
 
-  public boolean isIgnoredBy(Change.Id changeId, Account.Id accountId) throws OrmException {
+  public boolean isIgnoredBy(Change.Id changeId, Account.Id accountId) {
     return getLabels(accountId, changeId).contains(IGNORE_LABEL);
   }
 
-  public boolean isIgnored(ChangeResource rsrc) throws OrmException {
+  public boolean isIgnored(ChangeResource rsrc) {
     return isIgnoredBy(rsrc.getChange().getId(), rsrc.getUser().asIdentifiedUser().getAccountId());
   }
 
@@ -364,7 +366,7 @@ public class StarredChangesUtil {
     return UNREVIEWED_LABEL + "/" + ps;
   }
 
-  public void markAsReviewed(ChangeResource rsrc) throws OrmException, IllegalLabelException {
+  public void markAsReviewed(ChangeResource rsrc) throws IllegalLabelException {
     star(
         rsrc.getUser().asIdentifiedUser().getAccountId(),
         rsrc.getProject(),
@@ -373,7 +375,7 @@ public class StarredChangesUtil {
         ImmutableSet.of(getUnreviewedLabel(rsrc.getChange())));
   }
 
-  public void markAsUnreviewed(ChangeResource rsrc) throws OrmException, IllegalLabelException {
+  public void markAsUnreviewed(ChangeResource rsrc) throws IllegalLabelException {
     star(
         rsrc.getUser().asIdentifiedUser().getAccountId(),
         rsrc.getProject(),
@@ -383,7 +385,9 @@ public class StarredChangesUtil {
   }
 
   public static StarRef readLabels(Repository repo, String refName) throws IOException {
-    try (TraceTimer traceTimer = TraceContext.newTimer("Read star labels from %s", refName)) {
+    try (TraceTimer traceTimer =
+        TraceContext.newTimer(
+            "Read star labels", Metadata.builder().noteDbRefName(refName).build())) {
       Ref ref = repo.exactRef(refName);
       if (ref == null) {
         return StarRef.MISSING;
@@ -455,9 +459,11 @@ public class StarredChangesUtil {
 
   private void updateLabels(
       Repository repo, String refName, ObjectId oldObjectId, Collection<String> labels)
-      throws IOException, OrmException, InvalidLabelsException {
+      throws IOException, InvalidLabelsException {
     try (TraceTimer traceTimer =
-            TraceContext.newTimer("Update star labels in %s (labels=%s)", refName, labels);
+            TraceContext.newTimer(
+                "Update star labels",
+                Metadata.builder().noteDbRefName(refName).resourceCount(labels.size()).build());
         RevWalk rw = new RevWalk(repo)) {
       RefUpdate u = repo.updateRef(refName);
       u.setExpectedOldObjectId(oldObjectId);
@@ -473,8 +479,10 @@ public class StarredChangesUtil {
         case FAST_FORWARD:
           gitRefUpdated.fire(allUsers, u, null);
           return;
-        case IO_FAILURE:
         case LOCK_FAILURE:
+          throw new LockFailureException(
+              String.format("Update star labels on ref %s failed", refName), u);
+        case IO_FAILURE:
         case NOT_ATTEMPTED:
         case REJECTED:
         case REJECTED_CURRENT_BRANCH:
@@ -482,20 +490,21 @@ public class StarredChangesUtil {
         case REJECTED_MISSING_OBJECT:
         case REJECTED_OTHER_REASON:
         default:
-          throw new OrmException(
+          throw new StorageException(
               String.format("Update star labels on ref %s failed: %s", refName, result.name()));
       }
     }
   }
 
-  private void deleteRef(Repository repo, String refName, ObjectId oldObjectId)
-      throws IOException, OrmException {
+  private void deleteRef(Repository repo, String refName, ObjectId oldObjectId) throws IOException {
     if (ObjectId.zeroId().equals(oldObjectId)) {
       // ref doesn't exist
       return;
     }
 
-    try (TraceTimer traceTimer = TraceContext.newTimer("Delete star labels in %s", refName)) {
+    try (TraceTimer traceTimer =
+        TraceContext.newTimer(
+            "Delete star labels", Metadata.builder().noteDbRefName(refName).build())) {
       RefUpdate u = repo.updateRef(refName);
       u.setForceUpdate(true);
       u.setExpectedOldObjectId(oldObjectId);
@@ -506,11 +515,12 @@ public class StarredChangesUtil {
         case FORCED:
           gitRefUpdated.fire(allUsers, u, null);
           return;
+        case LOCK_FAILURE:
+          throw new LockFailureException(String.format("Delete star ref %s failed", refName), u);
         case NEW:
         case NO_CHANGE:
         case FAST_FORWARD:
         case IO_FAILURE:
-        case LOCK_FAILURE:
         case NOT_ATTEMPTED:
         case REJECTED:
         case REJECTED_CURRENT_BRANCH:
@@ -518,7 +528,7 @@ public class StarredChangesUtil {
         case REJECTED_MISSING_OBJECT:
         case REJECTED_OTHER_REASON:
         default:
-          throw new OrmException(
+          throw new StorageException(
               String.format("Delete star ref %s failed: %s", refName, result.name()));
       }
     }

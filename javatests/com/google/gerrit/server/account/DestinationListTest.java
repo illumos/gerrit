@@ -15,19 +15,18 @@
 package com.google.gerrit.server.account;
 
 import static com.google.common.truth.Truth.assertThat;
-import static org.easymock.EasyMock.createNiceMock;
-import static org.easymock.EasyMock.replay;
 
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.git.ValidationError;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
-import junit.framework.TestCase;
 import org.junit.Test;
 
-public class DestinationListTest extends TestCase {
+public class DestinationListTest {
   public static final String R_FOO = "refs/heads/foo";
   public static final String R_BAR = "refs/heads/bar";
 
@@ -55,11 +54,11 @@ public class DestinationListTest extends TestCase {
   public static final String LABEL = "label";
   public static final String LABEL2 = "another";
 
-  public static final Branch.NameKey B_FOO = dest(P_MY, R_FOO);
-  public static final Branch.NameKey B_BAR = dest(P_SLASH, R_BAR);
-  public static final Branch.NameKey B_COMPLEX = dest(P_COMPLEX, R_FOO);
+  public static final BranchNameKey B_FOO = dest(P_MY, R_FOO);
+  public static final BranchNameKey B_BAR = dest(P_SLASH, R_BAR);
+  public static final BranchNameKey B_COMPLEX = dest(P_COMPLEX, R_FOO);
 
-  public static final Set<Branch.NameKey> D_SIMPLE = new HashSet<>();
+  public static final Set<BranchNameKey> D_SIMPLE = new HashSet<>();
 
   static {
     D_SIMPLE.clear();
@@ -67,15 +66,15 @@ public class DestinationListTest extends TestCase {
     D_SIMPLE.add(B_BAR);
   }
 
-  private static Branch.NameKey dest(String project, String ref) {
-    return new Branch.NameKey(new Project.NameKey(project), ref);
+  private static BranchNameKey dest(String project, String ref) {
+    return BranchNameKey.create(Project.nameKey(project), ref);
   }
 
   @Test
   public void testParseSimple() throws Exception {
     DestinationList dl = new DestinationList();
     dl.parseLabel(LABEL, F_SIMPLE, null);
-    Set<Branch.NameKey> branches = dl.getDestinations(LABEL);
+    Set<BranchNameKey> branches = dl.getDestinations(LABEL);
     assertThat(branches).containsExactlyElementsIn(D_SIMPLE);
   }
 
@@ -83,7 +82,7 @@ public class DestinationListTest extends TestCase {
   public void testParseWHeader() throws Exception {
     DestinationList dl = new DestinationList();
     dl.parseLabel(LABEL, HEADER + F_SIMPLE, null);
-    Set<Branch.NameKey> branches = dl.getDestinations(LABEL);
+    Set<BranchNameKey> branches = dl.getDestinations(LABEL);
     assertThat(branches).containsExactlyElementsIn(D_SIMPLE);
   }
 
@@ -91,7 +90,7 @@ public class DestinationListTest extends TestCase {
   public void testParseWComments() throws Exception {
     DestinationList dl = new DestinationList();
     dl.parseLabel(LABEL, C1 + F_SIMPLE + C2, null);
-    Set<Branch.NameKey> branches = dl.getDestinations(LABEL);
+    Set<BranchNameKey> branches = dl.getDestinations(LABEL);
     assertThat(branches).containsExactlyElementsIn(D_SIMPLE);
   }
 
@@ -99,7 +98,7 @@ public class DestinationListTest extends TestCase {
   public void testParseFooComment() throws Exception {
     DestinationList dl = new DestinationList();
     dl.parseLabel(LABEL, "#" + L_FOO + L_BAR, null);
-    Set<Branch.NameKey> branches = dl.getDestinations(LABEL);
+    Set<BranchNameKey> branches = dl.getDestinations(LABEL);
     assertThat(branches).doesNotContain(B_FOO);
     assertThat(branches).contains(B_BAR);
   }
@@ -108,7 +107,7 @@ public class DestinationListTest extends TestCase {
   public void testParsePaddedFronts() throws Exception {
     DestinationList dl = new DestinationList();
     dl.parseLabel(LABEL, F_PAD_F, null);
-    Set<Branch.NameKey> branches = dl.getDestinations(LABEL);
+    Set<BranchNameKey> branches = dl.getDestinations(LABEL);
     assertThat(branches).containsExactlyElementsIn(D_SIMPLE);
   }
 
@@ -116,7 +115,7 @@ public class DestinationListTest extends TestCase {
   public void testParsePaddedEnds() throws Exception {
     DestinationList dl = new DestinationList();
     dl.parseLabel(LABEL, F_PAD_E, null);
-    Set<Branch.NameKey> branches = dl.getDestinations(LABEL);
+    Set<BranchNameKey> branches = dl.getDestinations(LABEL);
     assertThat(branches).containsExactlyElementsIn(D_SIMPLE);
   }
 
@@ -124,22 +123,23 @@ public class DestinationListTest extends TestCase {
   public void testParseComplex() throws Exception {
     DestinationList dl = new DestinationList();
     dl.parseLabel(LABEL, L_COMPLEX, null);
-    Set<Branch.NameKey> branches = dl.getDestinations(LABEL);
+    Set<BranchNameKey> branches = dl.getDestinations(LABEL);
     assertThat(branches).contains(B_COMPLEX);
   }
 
-  @Test(expected = IOException.class)
+  @Test
   public void testParseBad() throws IOException {
-    ValidationError.Sink sink = createNiceMock(ValidationError.Sink.class);
-    replay(sink);
-    new DestinationList().parseLabel(LABEL, L_BAD, sink);
+    List<ValidationError> errors = new ArrayList<>();
+    new DestinationList().parseLabel(LABEL, L_BAD, errors::add);
+    assertThat(errors)
+        .containsExactly(new ValidationError("destinationslabel", 1, "missing tab delimiter"));
   }
 
   @Test
   public void testParse2Labels() throws Exception {
     DestinationList dl = new DestinationList();
     dl.parseLabel(LABEL, F_SIMPLE, null);
-    Set<Branch.NameKey> branches = dl.getDestinations(LABEL);
+    Set<BranchNameKey> branches = dl.getDestinations(LABEL);
     assertThat(branches).containsExactlyElementsIn(D_SIMPLE);
 
     dl.parseLabel(LABEL2, L_COMPLEX, null);

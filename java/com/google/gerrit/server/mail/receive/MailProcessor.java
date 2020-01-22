@@ -17,33 +17,37 @@ package com.google.gerrit.server.mail.receive;
 import static java.util.stream.Collectors.toList;
 
 import com.google.common.base.Strings;
-import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.flogger.FluentLogger;
-import com.google.gerrit.extensions.api.changes.NotifyHandling;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.ChangeMessage;
+import com.google.gerrit.entities.Comment;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.client.Side;
 import com.google.gerrit.extensions.registration.DynamicItem;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.registration.Extension;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
+import com.google.gerrit.extensions.validators.CommentForValidation;
+import com.google.gerrit.extensions.validators.CommentValidationContext;
+import com.google.gerrit.extensions.validators.CommentValidationFailure;
+import com.google.gerrit.extensions.validators.CommentValidator;
 import com.google.gerrit.mail.HtmlParser;
 import com.google.gerrit.mail.MailComment;
 import com.google.gerrit.mail.MailHeaderParser;
 import com.google.gerrit.mail.MailMessage;
 import com.google.gerrit.mail.MailMetadata;
 import com.google.gerrit.mail.TextParser;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.ChangeMessage;
-import com.google.gerrit.reviewdb.client.Comment;
-import com.google.gerrit.reviewdb.client.PatchLineComment.Status;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.CommentsUtil;
 import com.google.gerrit.server.PatchSetUtil;
+import com.google.gerrit.server.PublishCommentUtil;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.account.Emails;
@@ -55,6 +59,7 @@ import com.google.gerrit.server.mail.send.InboundEmailRejectionSender;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.patch.PatchListCache;
 import com.google.gerrit.server.patch.PatchListNotAvailableException;
+import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
 import com.google.gerrit.server.update.BatchUpdate;
@@ -66,7 +71,6 @@ import com.google.gerrit.server.update.UpdateException;
 import com.google.gerrit.server.util.ManualRequestContext;
 import com.google.gerrit.server.util.OneOffRequestContext;
 import com.google.gerrit.server.util.time.TimeUtil;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -85,6 +89,15 @@ import java.util.Set;
 public class MailProcessor {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
+  private static final ImmutableMap<MailComment.CommentType, CommentForValidation.CommentType>
+      MAIL_COMMENT_TYPE_TO_VALIDATION_TYPE =
+          ImmutableMap.of(
+              MailComment.CommentType.CHANGE_MESSAGE,
+                  CommentForValidation.CommentType.CHANGE_MESSAGE,
+              MailComment.CommentType.FILE_COMMENT, CommentForValidation.CommentType.FILE_COMMENT,
+              MailComment.CommentType.INLINE_COMMENT,
+                  CommentForValidation.CommentType.INLINE_COMMENT);
+
   private final Emails emails;
   private final InboundEmailRejectionSender.Factory emailRejectionSender;
   private final RetryHelper retryHelper;
@@ -100,6 +113,7 @@ public class MailProcessor {
   private final ApprovalsUtil approvalsUtil;
   private final AccountCache accountCache;
   private final DynamicItem<UrlFormatter> urlFormatter;
+  private final PluginSetContext<CommentValidator> commentValidators;
 
   @Inject
   public MailProcessor(
@@ -117,7 +131,8 @@ public class MailProcessor {
       ApprovalsUtil approvalsUtil,
       CommentAdded commentAdded,
       AccountCache accountCache,
-      DynamicItem<UrlFormatter> urlFormatter) {
+      DynamicItem<UrlFormatter> urlFormatter,
+      PluginSetContext<CommentValidator> commentValidators) {
     this.emails = emails;
     this.emailRejectionSender = emailRejectionSender;
     this.retryHelper = retryHelper;
@@ -133,6 +148,7 @@ public class MailProcessor {
     this.approvalsUtil = approvalsUtil;
     this.accountCache = accountCache;
     this.urlFormatter = urlFormatter;
+    this.commentValidators = commentValidators;
   }
 
   /**
@@ -141,15 +157,18 @@ public class MailProcessor {
    * @param message {@link MailMessage} to process
    */
   public void process(MailMessage message) throws RestApiException, UpdateException {
-    retryHelper.execute(
-        buf -> {
-          processImpl(buf, message);
-          return null;
-        });
+    retryHelper
+        .changeUpdate(
+            "processCommentsReceivedByEmail",
+            buf -> {
+              processImpl(buf, message);
+              return null;
+            })
+        .call();
   }
 
   private void processImpl(BatchUpdate.Factory buf, MailMessage message)
-      throws OrmException, UpdateException, RestApiException, IOException {
+      throws UpdateException, RestApiException, IOException {
     for (Extension<MailFilter> filter : mailFilters) {
       if (!filter.getProvider().get().shouldProcessMessage(message)) {
         logger.atWarning().log(
@@ -189,7 +208,7 @@ public class MailProcessor {
       logger.atWarning().log("Mail: Account %s doesn't exist. Will delete message.", accountId);
       return;
     }
-    if (!accountState.get().getAccount().isActive()) {
+    if (!accountState.get().account().isActive()) {
       logger.atWarning().log("Mail: Account %s is inactive. Will delete message.", accountId);
       sendRejectionEmail(message, InboundEmailRejectionSender.Error.INACTIVE_ACCOUNT);
       return;
@@ -210,10 +229,10 @@ public class MailProcessor {
 
   private void persistComments(
       BatchUpdate.Factory buf, MailMessage message, MailMetadata metadata, Account.Id sender)
-      throws OrmException, UpdateException, RestApiException {
+      throws UpdateException, RestApiException {
     try (ManualRequestContext ctx = oneOffRequestContext.openAs(sender)) {
       List<ChangeData> changeDataList =
-          queryProvider.get().byLegacyChangeId(new Change.Id(metadata.changeNumber));
+          queryProvider.get().byLegacyChangeId(Change.id(metadata.changeNumber));
       if (changeDataList.size() != 1) {
         logger.atSevere().log(
             "Message %s references unique change %s,"
@@ -261,8 +280,29 @@ public class MailProcessor {
         return;
       }
 
-      Op o = new Op(new PatchSet.Id(cd.getId(), metadata.patchSet), parsedComments, message.id());
-      BatchUpdate batchUpdate = buf.create(cd.db(), project, ctx.getUser(), TimeUtil.nowTs());
+      ImmutableList<CommentForValidation> parsedCommentsForValidation =
+          parsedComments.stream()
+              .map(
+                  comment ->
+                      CommentForValidation.create(
+                          MAIL_COMMENT_TYPE_TO_VALIDATION_TYPE.get(comment.getType()),
+                          comment.getMessage()))
+              .collect(ImmutableList.toImmutableList());
+      CommentValidationContext commentValidationCtx =
+          CommentValidationContext.builder()
+              .changeId(cd.change().getChangeId())
+              .project(cd.change().getProject().get())
+              .build();
+      ImmutableList<CommentValidationFailure> commentValidationFailures =
+          PublishCommentUtil.findInvalidComments(
+              commentValidationCtx, commentValidators, parsedCommentsForValidation);
+      if (!commentValidationFailures.isEmpty()) {
+        sendRejectionEmail(message, InboundEmailRejectionSender.Error.COMMENT_REJECTED);
+        return;
+      }
+
+      Op o = new Op(PatchSet.id(cd.getId(), metadata.patchSet), parsedComments, message.id());
+      BatchUpdate batchUpdate = buf.create(project, ctx.getUser(), TimeUtil.nowTs());
       batchUpdate.addOp(cd.getId(), o);
       batchUpdate.execute();
     }
@@ -285,15 +325,15 @@ public class MailProcessor {
 
     @Override
     public boolean updateChange(ChangeContext ctx)
-        throws OrmException, UnprocessableEntityException, PatchListNotAvailableException {
-      patchSet = psUtil.get(ctx.getDb(), ctx.getNotes(), psId);
+        throws UnprocessableEntityException, PatchListNotAvailableException {
+      patchSet = psUtil.get(ctx.getNotes(), psId);
       notes = ctx.getNotes();
       if (patchSet == null) {
-        throw new OrmException("patch set not found: " + psId);
+        throw new StorageException("patch set not found: " + psId);
       }
 
       changeMessage = generateChangeMessage(ctx);
-      changeMessagesUtil.addChangeMessage(ctx.getDb(), ctx.getUpdate(psId), changeMessage);
+      changeMessagesUtil.addChangeMessage(ctx.getUpdate(psId), changeMessage);
 
       comments = new ArrayList<>();
       for (MailComment c : parsedComments) {
@@ -304,10 +344,7 @@ public class MailProcessor {
             persistentCommentFromMailComment(ctx, c, targetPatchSetForComment(ctx, c, patchSet)));
       }
       commentsUtil.putComments(
-          ctx.getDb(),
-          ctx.getUpdate(ctx.getChange().currentPatchSetId()),
-          Status.PUBLISHED,
-          comments);
+          ctx.getUpdate(ctx.getChange().currentPatchSetId()), Comment.Status.PUBLISHED, comments);
 
       return true;
     }
@@ -321,8 +358,7 @@ public class MailProcessor {
       // Send email notifications
       outgoingMailFactory
           .create(
-              NotifyHandling.ALL,
-              ArrayListMultimap.create(),
+              ctx.getNotify(notes.getChangeId()),
               notes,
               patchSet,
               ctx.getUser().asIdentifiedUser(),
@@ -335,13 +371,8 @@ public class MailProcessor {
       Map<String, Short> approvals = new HashMap<>();
       approvalsUtil
           .byPatchSetUser(
-              ctx.getDb(),
-              notes,
-              psId,
-              ctx.getAccountId(),
-              ctx.getRevWalk(),
-              ctx.getRepoView().getConfig())
-          .forEach(a -> approvals.put(a.getLabel(), a.getValue()));
+              notes, psId, ctx.getAccountId(), ctx.getRevWalk(), ctx.getRepoView().getConfig())
+          .forEach(a -> approvals.put(a.label(), a.value()));
       // Fire Gerrit event. Note that approvals can't be granted via email, so old and new approvals
       // are always the same here.
       commentAdded.fire(
@@ -369,19 +400,18 @@ public class MailProcessor {
     }
 
     private PatchSet targetPatchSetForComment(
-        ChangeContext ctx, MailComment mailComment, PatchSet current) throws OrmException {
+        ChangeContext ctx, MailComment mailComment, PatchSet current) {
       if (mailComment.getInReplyTo() != null) {
         return psUtil.get(
-            ctx.getDb(),
             ctx.getNotes(),
-            new PatchSet.Id(ctx.getChange().getId(), mailComment.getInReplyTo().key.patchSetId));
+            PatchSet.id(ctx.getChange().getId(), mailComment.getInReplyTo().key.patchSetId));
       }
       return current;
     }
 
     private Comment persistentCommentFromMailComment(
         ChangeContext ctx, MailComment mailComment, PatchSet patchSetForComment)
-        throws OrmException, UnprocessableEntityException, PatchListNotAvailableException {
+        throws UnprocessableEntityException, PatchListNotAvailableException {
       String fileName;
       // The patch set that this comment is based on is different if this
       // comment was sent in reply to a comment on a previous patch set.
@@ -398,7 +428,7 @@ public class MailProcessor {
           commentsUtil.newComment(
               ctx,
               fileName,
-              patchSetForComment.getId(),
+              patchSetForComment.id(),
               (short) side.ordinal(),
               mailComment.getMessage(),
               false,
@@ -411,7 +441,7 @@ public class MailProcessor {
         comment.range = mailComment.getInReplyTo().range;
         comment.unresolved = mailComment.getInReplyTo().unresolved;
       }
-      CommentsUtil.setCommentRevId(comment, patchListCache, ctx.getChange(), patchSetForComment);
+      CommentsUtil.setCommentCommitId(comment, patchListCache, ctx.getChange(), patchSetForComment);
       return comment;
     }
   }
@@ -424,7 +454,7 @@ public class MailProcessor {
     return "(" + numComments + (numComments > 1 ? " comments)" : " comment)");
   }
 
-  private Set<String> existingMessageIds(ChangeData cd) throws OrmException {
+  private Set<String> existingMessageIds(ChangeData cd) {
     Set<String> existingMessageIds = new HashSet<>();
     cd.messages().stream()
         .forEach(

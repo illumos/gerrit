@@ -17,17 +17,6 @@
 (function() {
   'use strict';
 
-  const Defs = {};
-
-  /**
-   * @typedef {{
-   *    html: Node,
-   *    position: number,
-   *    length: number,
-   * }}
-   */
-  Defs.CommentLinkItem;
-
   /**
    * Pattern describing URLs with supported protocols.
    *
@@ -40,6 +29,7 @@
    * in the text as well as custom links if any are specified in the linkConfig
    * parameter.
    *
+   * @constructor
    * @param {Object|null|undefined} linkConfig Comment links as specified by the
    *     commentlinks field on a project config.
    * @param {Function} callback The callback to be fired when an intermediate
@@ -73,7 +63,7 @@
    *
    * @param {string} text The chuml of source text over which the outputArray
    *     items range.
-   * @param {!Array<Defs.CommentLinkItem>} outputArray The list of items to add
+   * @param {!Array<Gerrit.CommentLinkItem>} outputArray The list of items to add
    *     resulting from commentlink matches.
    */
   GrLinkTextParser.prototype.processLinks = function(text, outputArray) {
@@ -109,7 +99,7 @@
    * Sort the given array of CommentLinkItems such that the positions are in
    * reverse order.
    *
-   * @param {!Array<Defs.CommentLinkItem>} outputArray
+   * @param {!Array<Gerrit.CommentLinkItem>} outputArray
    */
   GrLinkTextParser.prototype.sortArrayReverse = function(outputArray) {
     outputArray.sort((a, b) => b.position - a.position);
@@ -132,7 +122,7 @@
    *     starts.
    * @param {number} length The number of characters in the source text
    *     represented by the item.
-   * @param {!Array<Defs.CommentLinkItem>} outputArray The array to which the
+   * @param {!Array<Gerrit.CommentLinkItem>} outputArray The array to which the
    *     new item is to be appended.
    */
   GrLinkTextParser.prototype.addItem =
@@ -174,7 +164,7 @@
    *     starts.
    * @param {number} length The number of characters in the source text
    *     represented by the link.
-   * @param {!Array<Defs.CommentLinkItem>} outputArray The array to which the
+   * @param {!Array<Gerrit.CommentLinkItem>} outputArray The array to which the
    *     new item is to be appended.
    */
   GrLinkTextParser.prototype.addLink =
@@ -196,7 +186,7 @@
    *     starts.
    * @param {number} length The number of characters in the source text
    *     represented by the item.
-   * @param {!Array<Defs.CommentLinkItem>} outputArray The array to which the
+   * @param {!Array<Gerrit.CommentLinkItem>} outputArray The array to which the
    *     new item is to be appended.
    */
   GrLinkTextParser.prototype.addHTML =
@@ -214,7 +204,7 @@
    *
    * @param {number} position
    * @param {number} length
-   * @param {!Array<Defs.CommentLinkItem>} outputArray
+   * @param {!Array<Gerrit.CommentLinkItem>} outputArray
    */
   GrLinkTextParser.prototype.hasOverlap =
       function(position, length, outputArray) {
@@ -238,9 +228,11 @@
    * @param {string} text
    */
   GrLinkTextParser.prototype.parse = function(text) {
-    linkify(text, {
-      callback: this.parseChunk.bind(this),
-    });
+    if (text) {
+      linkify(text, {
+        callback: this.parseChunk.bind(this),
+      });
+    }
   };
 
   /**

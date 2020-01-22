@@ -15,7 +15,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 
 <link rel="import" href="../../shared/gr-rest-api-interface/gr-rest-api-interface.html">
 <link rel="import" href="../../shared/gr-tooltip-content/gr-tooltip-content.html">
@@ -25,11 +25,9 @@ limitations under the License.
   <template>
     <style include="shared-styles">
       .chip {
-        border-radius: 4px;
+        border-radius: var(--border-radius);
         background-color: var(--chip-background-color);
-        font-family: var(--font-family);
-        font-size: var(--font-size-normal);
-        padding: .1em .5em;
+        padding: var(--spacing-xxs) var(--spacing-m);
         white-space: nowrap;
       }
       :host(.merged) .chip {
@@ -66,9 +64,9 @@ limitations under the License.
       }
       :host([flat]) .chip {
         background-color: transparent;
-        padding: .1em;
+        padding: var(--spacing-xxs);
       }
-      :host:not([flat]) .chip {
+      :host(:not([flat])) .chip {
         color: white;
       }
     </style>

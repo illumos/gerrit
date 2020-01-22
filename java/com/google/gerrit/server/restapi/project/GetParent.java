@@ -14,8 +14,9 @@
 
 package com.google.gerrit.server.restapi.project;
 
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.config.AllProjectsName;
 import com.google.gerrit.server.project.ProjectResource;
 import com.google.inject.Inject;
@@ -31,9 +32,9 @@ public class GetParent implements RestReadView<ProjectResource> {
   }
 
   @Override
-  public String apply(ProjectResource resource) {
+  public Response<String> apply(ProjectResource resource) {
     Project project = resource.getProjectState().getProject();
     Project.NameKey parentName = project.getParent(allProjectsName);
-    return parentName != null ? parentName.get() : "";
+    return Response.ok(parentName != null ? parentName.get() : "");
   }
 }

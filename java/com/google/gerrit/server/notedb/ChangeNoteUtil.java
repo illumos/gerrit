@@ -16,7 +16,7 @@ package com.google.gerrit.server.notedb;
 
 import com.google.auto.value.AutoValue;
 import com.google.common.annotations.VisibleForTesting;
-import com.google.gerrit.reviewdb.client.Account;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.server.config.GerritServerId;
 import com.google.inject.Inject;
 import java.util.Date;
@@ -39,7 +39,6 @@ public class ChangeNoteUtil {
   public static final FooterKey FOOTER_PATCH_SET_DESCRIPTION =
       new FooterKey("Patch-set-description");
   public static final FooterKey FOOTER_PRIVATE = new FooterKey("Private");
-  public static final FooterKey FOOTER_READ_ONLY_UNTIL = new FooterKey("Read-only-until");
   public static final FooterKey FOOTER_REAL_USER = new FooterKey("Real-user");
   public static final FooterKey FOOTER_STATUS = new FooterKey("Status");
   public static final FooterKey FOOTER_SUBJECT = new FooterKey("Subject");
@@ -49,6 +48,7 @@ public class ChangeNoteUtil {
   public static final FooterKey FOOTER_TAG = new FooterKey("Tag");
   public static final FooterKey FOOTER_WORK_IN_PROGRESS = new FooterKey("Work-in-progress");
   public static final FooterKey FOOTER_REVERT_OF = new FooterKey("Revert-of");
+  public static final FooterKey FOOTER_CHERRY_PICK_OF = new FooterKey("Cherry-pick-of");
 
   static final String AUTHOR = "Author";
   static final String BASE_PATCH_SET = "Base-for-patch-set";
@@ -64,22 +64,13 @@ public class ChangeNoteUtil {
   static final String UNRESOLVED = "Unresolved";
   static final String TAG = FOOTER_TAG.getName();
 
-  private final LegacyChangeNoteRead legacyChangeNoteRead;
   private final ChangeNoteJson changeNoteJson;
   private final String serverId;
 
   @Inject
-  public ChangeNoteUtil(
-      ChangeNoteJson changeNoteJson,
-      LegacyChangeNoteRead legacyChangeNoteRead,
-      @GerritServerId String serverId) {
+  public ChangeNoteUtil(ChangeNoteJson changeNoteJson, @GerritServerId String serverId) {
     this.serverId = serverId;
     this.changeNoteJson = changeNoteJson;
-    this.legacyChangeNoteRead = legacyChangeNoteRead;
-  }
-
-  public LegacyChangeNoteRead getLegacyChangeNoteRead() {
-    return legacyChangeNoteRead;
   }
 
   public ChangeNoteJson getChangeNoteJson() {
@@ -97,8 +88,8 @@ public class ChangeNoteUtil {
   @VisibleForTesting
   public PersonIdent newIdent(Account author, Date when, PersonIdent serverIdent) {
     return new PersonIdent(
-        "Gerrit User " + author.getId(),
-        author.getId().get() + "@" + serverId,
+        "Gerrit User " + author.id(),
+        author.id().get() + "@" + serverId,
         when,
         serverIdent.getTimeZone());
   }

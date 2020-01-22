@@ -17,20 +17,18 @@ package com.google.gerrit.testing;
 import static com.google.common.base.MoreObjects.firstNonNull;
 
 import com.google.common.collect.Ordering;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.PatchSetInfo;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.config.FactoryModule;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.PatchSetInfo;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RevId;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.notedb.AbstractChangeNotes;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ChangeUpdate;
-import com.google.gerrit.server.notedb.NotesMigration;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.inject.Injector;
 import java.util.TimeZone;
@@ -53,13 +51,13 @@ public class TestChanges {
   }
 
   public static Change newChange(Project.NameKey project, Account.Id userId, int id) {
-    Change.Id changeId = new Change.Id(id);
+    Change.Id changeId = Change.id(id);
     Change c =
         new Change(
-            new Change.Key("Iabcd1234abcd1234abcd1234abcd1234abcd1234"),
+            Change.key("Iabcd1234abcd1234abcd1234abcd1234abcd1234"),
             changeId,
             userId,
-            new Branch.NameKey(project, "master"),
+            BranchNameKey.create(project, "master"),
             TimeUtil.nowTs());
     incrementPatchSet(c);
     return c;
@@ -70,15 +68,16 @@ public class TestChanges {
   }
 
   public static PatchSet newPatchSet(PatchSet.Id id, String revision, Account.Id userId) {
-    PatchSet ps = new PatchSet(id);
-    ps.setRevision(new RevId(revision));
-    ps.setUploader(userId);
-    ps.setCreatedOn(TimeUtil.nowTs());
-    return ps;
+    return PatchSet.builder()
+        .id(id)
+        .commitId(ObjectId.fromString(revision))
+        .uploader(userId)
+        .createdOn(TimeUtil.nowTs())
+        .build();
   }
 
-  public static ChangeUpdate newUpdate(Injector injector, Change c, CurrentUser user)
-      throws Exception {
+  public static ChangeUpdate newUpdate(
+      Injector injector, Change c, CurrentUser user, boolean shouldExist) throws Exception {
     injector =
         injector.createChildInjector(
             new FactoryModule() {
@@ -91,23 +90,24 @@ public class TestChanges {
         injector
             .getInstance(ChangeUpdate.Factory.class)
             .create(
-                new ChangeNotes(injector.getInstance(AbstractChangeNotes.Args.class), c).load(),
+                new ChangeNotes(
+                        injector.getInstance(AbstractChangeNotes.Args.class), c, shouldExist, null)
+                    .load(),
                 user,
                 TimeUtil.nowTs(),
-                Ordering.<String>natural());
+                Ordering.natural());
 
     ChangeNotes notes = update.getNotes();
     boolean hasPatchSets = notes.getPatchSets() != null && !notes.getPatchSets().isEmpty();
-    NotesMigration migration = injector.getInstance(NotesMigration.class);
-    if (hasPatchSets || !migration.readChanges()) {
+    if (hasPatchSets) {
       return update;
     }
 
     // Change doesn't exist yet. NoteDb requires that there be a commit for the
     // first patch set, so create one.
     GitRepositoryManager repoManager = injector.getInstance(GitRepositoryManager.class);
-    try (Repository repo = repoManager.openRepository(c.getProject())) {
-      TestRepository<Repository> tr = new TestRepository<>(repo);
+    try (Repository repo = repoManager.openRepository(c.getProject());
+        TestRepository<Repository> tr = new TestRepository<>(repo)) {
       PersonIdent ident =
           user.asIdentifiedUser().newCommitterIdent(update.getWhen(), TimeZone.getDefault());
       TestRepository<Repository>.CommitBuilder cb =
@@ -115,11 +115,11 @@ public class TestChanges {
               .author(ident)
               .committer(ident)
               .message(firstNonNull(c.getSubject(), "Test change"));
-      Ref parent = repo.exactRef(c.getDest().get());
+      Ref parent = repo.exactRef(c.getDest().branch());
       if (parent != null) {
         cb.parent(tr.getRevWalk().parseCommit(parent.getObjectId()));
       }
-      update.setBranch(c.getDest().get());
+      update.setBranch(c.getDest().branch());
       update.setChangeId(c.getKey().get());
       update.setCommit(tr.getRevWalk(), cb.create());
       return update;
@@ -129,7 +129,7 @@ public class TestChanges {
   public static void incrementPatchSet(Change change) {
     PatchSet.Id curr = change.currentPatchSetId();
     PatchSetInfo ps =
-        new PatchSetInfo(new PatchSet.Id(change.getId(), curr != null ? curr.get() + 1 : 1));
+        new PatchSetInfo(PatchSet.id(change.getId(), curr != null ? curr.get() + 1 : 1));
     ps.setSubject("Change subject");
     change.setCurrentPatchSet(ps);
   }

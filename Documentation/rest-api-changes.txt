@@ -1,3 +1,4 @@
+:linkattrs:
 = Gerrit Code Review - /changes/ REST API
 
 This page describes the change related REST endpoints.
@@ -72,7 +73,9 @@ the resulting change.
 Queries changes visible to the caller. The
 link:user-search.html#_search_operators[query string] must be provided
 by the `q` parameter. The `n` parameter can be used to limit the
-returned results.
+returned results. The `no-limit` parameter can be used remove the default
+limit on queries and return all results. This might not be supported by
+all index backends.
 
 As result a list of link:#change-info[ChangeInfo] entries is returned.
 The change output is sorted by the last update time, most recently
@@ -309,6 +312,24 @@ default. Optional fields are:
 * `SKIP_MERGEABLE`: skip the `mergeable` field in
 link:#change-info[ChangeInfo]. For fast moving projects, this field must
 be recomputed often, which is slow for projects with big trees.
++
+When link:config-gerrit.html#change.api.excludeMergeableInChangeInfo[
+`change.api.excludeMergeableInChangeInfo`] is set in the `gerrit.config`,
+the `mergeable` field will always be omitted and `SKIP_MERGEABLE` has no
+effect.
++
+When link:config-gerrit.html#index.change.indexMergeable[
+`index.change.indexMergeable`] is set to `false` in the `gerrit.config`,
+the `mergeable` field will always be omitted when querying changes and
+`SKIP_MERGEABLE` has no effect.
++
+A change's mergeability can be requested separately by calling the
+link:#get-mergeable[get-mergeable] endpoint.
+--
+[[skip_diffstat]]
+--
+* `SKIP_DIFFSTAT`: skip the 'insertions' and 'deletions' field in link:#change-info[ChangeInfo].
+ For large trees, their computation may be expensive.
 --
 
 [[submittable]]
@@ -831,8 +852,10 @@ returned that describes the resulting change.
 Creates a new patch set with a new commit message.
 
 The new commit message must be provided in the request body inside a
-link:#commit-message-input[CommitMessageInput] entity and contain the change ID footer if
-link:project-configuration.html#require-change-id[Require Change-Id] was specified.
+link:#commit-message-input[CommitMessageInput] entity. If a Change-Id
+footer is specified, it must match the current Change-Id footer. If
+the Change-Id footer is absent, the current Change-Id is added to the
+message.
 
 .Request
 ----
@@ -1431,6 +1454,10 @@ response body.
 
 Reverts a change.
 
+The subject of the newly created change will be
+'Revert "<subject-of-reverted-change>"'. If the subject of the change reverted is
+above 63 characters, it will be cut down to 59 characters with "..." in the end.
+
 The request body does not need to include a link:#revert-input[
 RevertInput] entity if no review comment is added.
 
@@ -1469,6 +1496,115 @@ describes the reverting change.
 ----
 
 If the change cannot be reverted because the change state doesn't
+allow reverting the change, the response is "`409 Conflict`" and
+the error message is contained in the response body.
+
+.Response
+----
+  HTTP/1.1 409 Conflict
+  Content-Disposition: attachment
+  Content-Type: text/plain; charset=UTF-8
+
+  change is new
+----
+
+[[revert-submission]]
+=== Revert Submission
+--
+'POST /changes/link:#change-id[\{change-id\}]/revert_submission'
+--
+
+Creates open revert changes for all of the changes of a certain submission.
+
+The subject of each revert change will be 'Revert "<subject-of-reverted-change"'.
+If the subject is above 60 characters, the subject will be cut to 56 characters
+with "..." in the end. However, whenever reverting the submission of a revert
+submission, the subject will be shortened from
+'Revert "Revert "<subject-of-reverted-change""' to
+'Revert^2 "<subject-of-reverted-change"'. Also, for every future revert submission,
+the only difference in the subject will be the number of the revert (instead of
+Revert^2 the subject will change to Revert^3 and so on).
+There are no guarantees about the subjects if the users change the default subjects.
+
+Details for the revert can be specified in the request body inside a link:#revert-input[
+RevertInput] The topic of all created revert changes will be
+`revert-{submission_id}-{random_string_of_size_10}`.
+
+The changes will not be rebased on onto the destination branch so the users may still
+have to manually rebase them to resolve conflicts and make them submittable.
+
+However, the changes that have the same project and branch will be rebased on top
+of each other. E.g, the first revert change will have the original change as a
+parent, and the second revert change will have the first revert change as a
+parent.
+
+There is one special case that involves merge commits; if a user has multiple
+changes in the same project and branch, but not in the same change series, those
+changes can still get submitted together if they have the same topic and
+link:config-gerrit.html#change.submitWholeTopic[`change.submitWholeTopic`] in
+gerrit.config is set to true. In the case, Gerrit may create merge commits on
+submit (depending on the link:config-project-config.html#submit-type[submit types]
+of the project).
+The first parent for the reverts will be the most recent merge commit that was
+created by Gerrit to merge the different change series into the target branch.
+
+.Request
+----
+  POST /changes/myProject~master~I1ffe09a505e25f15ce1521bcfb222e51e62c2a14/revert_submission HTTP/1.0
+----
+
+As response link:#revert-submission-info[RevertSubmissionInfo] entity
+is returned. That entity describes the revert changes.
+
+.Response
+----
+  HTTP/1.1 200 OK
+  Content-Disposition: attachment
+  Content-Type: application/json; charset=UTF-8
+
+  )]}'
+  "revert_changes":
+    [
+      {
+        "id": "myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940",
+        "project": "myProject",
+        "branch": "master",
+        "topic": "revert--1571043962462-3640749-ABCEEZGHIJ",
+        "change_id": "I8473b95934b5732ac55d26311a706c9c2bde9940",
+        "subject": "Revert \"Implementing Feature X\"",
+        "status": "NEW",
+        "created": "2013-02-01 09:59:32.126000000",
+        "updated": "2013-02-21 11:16:36.775000000",
+        "mergeable": true,
+        "insertions": 6,
+        "deletions": 4,
+        "_number": 3965,
+        "owner": {
+          "name": "John Doe"
+        }
+      },
+      {
+        "id": "anyProject~master~1eee2c9d8f352483781e772f35dc586a69ff5646",
+        "project": "anyProject",
+        "branch": "master",
+        "topic": "revert--1571043962462-3640749-ABCEEZGHIJ",
+        "change_id": "I1eee2c9d8f352483781e772f35dc586a69ff5646",
+        "subject": "Revert \"Implementing Feature Y\"",
+        "status": "NEW",
+        "created": "2013-02-04 09:59:33.126000000",
+        "updated": "2013-02-21 11:16:37.775000000",
+        "mergeable": true,
+        "insertions": 62,
+        "deletions": 11,
+        "_number": 3966,
+        "owner": {
+          "name": "Jane Doe"
+        }
+      }
+    ]
+----
+
+If any of the changes cannot be reverted because the change state doesn't
 allow reverting the change, the response is "`409 Conflict`" and
 the error message is contained in the response body.
 
@@ -2200,8 +2336,8 @@ if no review comment is added.
 'POST /changes/link:#change-id[\{change-id\}]/private'
 --
 
-Marks the change to be private. Changes may only be marked private by the
-owner or site administrators.
+Marks the change to be private. Only open changes can be marked private.
+Changes may only be marked private by the owner or site administrators.
 
 A message can be specified in the request body inside a
 link:#private-input[PrivateInput] entity.
@@ -2247,7 +2383,7 @@ If the change was already not private, the response is "`409 Conflict`".
 A message can be specified in the request body inside a
 link:#private-input[PrivateInput] entity. Historically, this method allowed
 a body in the DELETE, but that behavior is
-link:https://www.gerritcodereview.com/releases/2.16.md[deprecated].
+link:https://www.gerritcodereview.com/releases/2.16.md[deprecated,role=external,window=_blank].
 In this case, use a POST request instead:
 
 .Request
@@ -2621,6 +2757,14 @@ content isn't provided, it is wiped out for that file. As response
   HTTP/1.1 204 No Content
 ----
 
+When the change edit is a no-op, for example when providing the same file
+content that the file already has, '409 no changes were made' is returned.
+
+.Response
+----
+  HTTP/1.1 409 no changes were made
+----
+
 [[post-edit]]
 === Restore file content or rename files in Change Edit
 --
@@ -2967,7 +3111,20 @@ As result a list of link:#reviewer-info[ReviewerInfo] entries is returned.
 Suggest the reviewers for a given query `q` and result limit `n`. If result
 limit is not passed, then the default 10 is used.
 
-Groups can be excluded from the results by specifying 'e=f'.
+This REST endpoint only suggests accounts that
+
+* are active
+* can see the change
+* are visible to the calling user
+* are not already reviewer on the change
+* don't own the change
+
+Groups can be excluded from the results by specifying the 'exclude-groups'
+request parameter:
+
+--
+'GET /changes/link:#change-id[\{change-id\}]/suggest_reviewers?q=J&n=5&exclude-groups'
+--
 
 As result a list of link:#suggested-reviewer-info[SuggestedReviewerInfo] entries is returned.
 
@@ -3001,6 +3158,14 @@ As result a list of link:#suggested-reviewer-info[SuggestedReviewerInfo] entries
     }
   ]
 ----
+
+To suggest CCs `reviewer-state=CC` can be specified as additional URL
+parameter. This includes existing reviewers in the result, but excludes
+existing CCs.
+
+--
+'GET /changes/link:#change-id[\{change-id\}]/suggest_reviewers?q=J&reviewer-state=CC'
+--
 
 [[get-reviewer]]
 === Get Reviewer
@@ -3047,6 +3212,12 @@ Adds one user or all members of one group as reviewer to the change.
 The reviewer to be added to the change must be provided in the request
 body as a link:#reviewer-input[ReviewerInput] entity.
 
+Users can be moved from reviewer to CC and vice versa. This means if a
+user is added as CC that is already a reviewer on the change, the
+reviewer state of that user is updated to CC. If a user that is already
+a CC on the change is added as reviewer, the reviewer state of that
+user is updated to reviewer.
+
 .Request
 ----
   POST /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/reviewers HTTP/1.0
@@ -3089,6 +3260,12 @@ members are added as reviewer.
 
 If a group with many members is added as reviewer a confirmation may be
 required.
+
+If a group is added as CC and members of this group are already
+reviewers on the change, these members stay reviewers on the change
+(they are not downgraded to CC). However if a group is added as
+reviewer, all group members become reviewer of the change, even if they
+have been added as CC before.
 
 .Request
 ----
@@ -3192,7 +3369,7 @@ Deletes a reviewer from a change.
 Options can be provided in the request body as a
 link:#delete-reviewer-input[DeleteReviewerInput] entity.
 Historically, this method allowed a body in the DELETE, but that behavior is
-link:https://www.gerritcodereview.com/releases/2.16.md[deprecated].
+link:https://www.gerritcodereview.com/releases/2.16.md[deprecated,role=external,window=_blank].
 In this case, use a POST request instead:
 
 .Request
@@ -3272,7 +3449,7 @@ a reviewer is removed the reviewer itself is still listed on the change.
 Options can be provided in the request body as a
 link:#delete-vote-input[DeleteVoteInput] entity.
 Historically, this method allowed a body in the DELETE, but that behavior is
-link:https://www.gerritcodereview.com/releases/2.16.md[deprecated].
+link:https://www.gerritcodereview.com/releases/2.16.md[deprecated,role=external,window=_blank].
 In this case, use a POST request instead:
 
 .Request
@@ -3735,6 +3912,10 @@ labels, adding reviewers or CCs, and modifying the work in progress property.
 
 The review must be provided in the request body as a
 link:#review-input[ReviewInput] entity.
+
+If the labels are set, the user sending the request will automatically be
+added as a reviewer, otherwise (if they only commented) they are added to
+the CC list.
 
 A review cannot be set on a change edit. Trying to post a review for a
 change edit fails with `409 Conflict`.
@@ -4325,8 +4506,10 @@ a project-specific rule.
     R = label('Any-Label-Name', reject(_)).
 ----
 
-The response is a list of link:#submit-record[SubmitRecord] entries
-describing the permutations that satisfy the tested submit rule.
+The response is a link:#submit-record[SubmitRecord] describing the
+permutations that satisfy the tested submit rule.
+
+If the submit rule was a no-op, the response is "`204 No Content`".
 
 .Response
 ----
@@ -4335,14 +4518,12 @@ describing the permutations that satisfy the tested submit rule.
   Content-Type: application/json; charset=UTF-8
 
   )]}'
-  [
-    {
-      "status": "NOT_READY",
-      "reject": {
-        "Any-Label-Name": {}
-      }
+  {
+    "status": "NOT_READY",
+    "reject": {
+      "Any-Label-Name": {}
     }
-  ]
+  }
 ----
 
 When testing with the `curl` command line client the
@@ -4645,7 +4826,7 @@ global capability are permitted to delete a comment.
 Deletion reason can be provided in the request body as a
 link:#delete-comment-input[DeleteCommentInput] entity.
 Historically, this method allowed a body in the DELETE, but that behavior is
-link:https://www.gerritcodereview.com/releases/2.16.md[deprecated].
+link:https://www.gerritcodereview.com/releases/2.16.md[deprecated,role=external,window=_blank].
 In this case, use a POST request instead:
 
 .Request
@@ -4899,7 +5080,8 @@ should make two requests.
 For merge commits only, the integer-valued request parameter `parent`
 changes the response to return a map of the files which are different
 in this commit compared to the given parent commit. The value is the
-1-based index of the parent's position in the commit object. If not
+1-based index of the parent's position in the commit object,
+with the first parent always belonging to the target branch. If not
 specified, the response contains a map of the files different in the
 auto merge result.
 
@@ -5165,9 +5347,6 @@ parent commit number against which the diff should be generated.  This is useful
 for supporting review of merge commits.  The value is the 1-based index of the
 parent's position in the commit object.
 
-[[weblinks-only]]
-If the `weblinks-only` parameter is specified, only the diff web links are returned.
-
 .Request
 ----
   GET /changes/myProject~master~I8473b95934b5732ac55d26311a706c9c2bde9940/revisions/b6b9c10649b9041884046119ab794374470a1b45/files/gerrit-server%2Fsrc%2Fmain%2Fjava%2Fcom%2Fgoogle%2Fgerrit%2Fserver%2Fproject%2FRefControl.java/diff?base=2 HTTP/1.0
@@ -5206,6 +5385,17 @@ differences are reported in the result.  Valid values are `IGNORE_NONE`,
 
 The `context` parameter can be specified to control the number of lines of surrounding context
 in the diff.  Valid values are `ALL` or number of lines.
+
+[[preview-fix]]
+=== Preview fix
+--
+'GET /changes/<<change-id,\{change-id\}>>/revisions/<<revision-id,\{revision-id\}>>/fixes/<<fix-id,\{fix-id\}>>/preview'
+--
+
+Gets the diffs of all files for a certain <<fix-id,\{fix-id\}>>.
+As response, a map of link:#diff-info[DiffInfo] entities is returned that describes the diffs.
+
+Each link:#diff-info[DiffInfo] is the differences between the patch set indicated by revision-id and a virtual patch set with the applied fix.
 
 [[get-blame]]
 === Get Blame
@@ -5467,7 +5657,7 @@ is still listed on the change.
 Options can be provided in the request body as a
 link:#delete-vote-input[DeleteVoteInput] entity.
 Historically, this method allowed a body in the DELETE, but that behavior is
-link:https://www.gerritcodereview.com/releases/2.16.md[deprecated].
+link:https://www.gerritcodereview.com/releases/2.16.md[deprecated,role=external,window=_blank].
 In this case, use a POST request instead:
 
 .Request
@@ -5770,12 +5960,14 @@ change. The labels are lexicographically sorted.
 Whether the change was reviewed by the calling user.
 Only set if link:#reviewed[reviewed] is requested.
 |`submit_type`        |optional|
-The link:project-configuration.html#submit_type[submit type] of the change. +
+The link:config-project-config.html#submit-type[submit type] of the change. +
 Not set for merged changes.
 |`mergeable`          |optional|
 Whether the change is mergeable. +
 Not set for merged changes, if the change has not yet been tested, or
-if the link:#skip_mergeable[skip_mergeable] option is set.
+if the link:#skip_mergeable[skip_mergeable] option is set or when
+link:config-gerrit.html#change.api.excludeMergeableInChangeInfo[change.api.excludeMergeableInChangeInfo]
+is set.
 |`submittable`        |optional|
 Whether the change has been approved by the project submit rules. +
 Only set if link:#submittable[requested].
@@ -5783,8 +5975,12 @@ Only set if link:#submittable[requested].
 Number of inserted lines.
 |`deletions`          ||
 Number of deleted lines.
+|`total_comment_count`  |optional|
+Total number of inline comments across all patch sets. Not set if the current
+change index doesn't have the data.
 |`unresolved_comment_count`  |optional|
-Number of unresolved comments. Not set if the current change index doesn't have the data.
+Number of unresolved inline comment threads across all patch sets. Not set if
+the current change index doesn't have the data.
 |`_number`            ||The legacy numeric ID of the change.
 |`owner`              ||
 The owner of the change as an link:rest-api-accounts.html#account-info[
@@ -5861,6 +6057,12 @@ When present, change is marked as Work In Progress.
 When present, change has been marked Ready at some point in time.
 |`revert_of`          |optional|
 The numeric Change-Id of the change that this change reverts.
+|`submission_id`      |optional|
+ID of the submission of this change. Only set if the status is `MERGED`.
+This ID is equal to the numeric ID of the change that triggered the submission.
+If the change that triggered the submission also has a topic, it will be
+"<id>-<topic>" of the change that triggered the submission.
+The callers must not rely on the format of the submission ID.
 |==================================
 
 [[change-input]]
@@ -5892,9 +6094,13 @@ A 40-digit hex SHA-1 of the commit which will be the parent commit of the newly
 created change. If set, it must be a merged commit on the destination branch.
 Mutually exclusive with `base_change`.
 |`new_branch`         |optional, default to `false`|
-Allow creating a new branch when set to `true`.
+Allow creating a new branch when set to `true`. Using this option is
+only possible for non-merge commits (if the `merge` field is not set).
 |`merge`              |optional|
 The detail of a merge commit as a link:#merge-input[MergeInput] entity.
+If set, the target branch (see  `branch` field) must exist (it is not
+possible to create it automatically by setting the `new_branch` field
+to `true`.
 |`notify`             |optional|
 Notify handling that defines to whom email notifications should be sent
 after the change is created. +
@@ -5959,7 +6165,9 @@ The `CherryPickInput` entity contains information for cherry-picking a change to
 [options="header",cols="1,^1,5"]
 |===========================
 |Field Name         ||Description
-|`message`          ||Commit message for the cherry-pick change
+|`message`          |optional|
+Commit message for the cherry-pick change. If not set, the commit message of
+the cherry-picked commit is used.
 |`destination`      ||Destination branch
 |`base`             |optional|
 40-hex digit SHA-1 of the commit which will be the parent commit of the newly created change.
@@ -6239,10 +6447,12 @@ in a file.
 |`a`            |optional|Content only in the file on side A (deleted in B).
 |`b`            |optional|Content only in the file on side B (added in B).
 |`ab`           |optional|Content in the file on both sides (unchanged).
-|`edit_a`       |only present during a replace, i.e. both `a` and `b` are present|
+|`edit_a`       |only present when the `intraline` parameter is set and the
+DiffContent is a replace, i.e. both `a` and `b` are present|
 Text sections deleted from side A as a
 link:#diff-intraline-info[DiffIntralineInfo] entity.
-|`edit_b`       |only present during a replace, i.e. both `a` and `b` are present|
+|`edit_b`       |only present when the `intraline` parameter is set and the
+DiffContent is a replace, i.e. both `a` and `b` are present|
 Text sections inserted in side B as a
 link:#diff-intraline-info[DiffIntralineInfo] entity.
 |`due_to_rebase`|not set if `false`|Indicates whether this entry was introduced by a
@@ -6305,11 +6515,12 @@ link:rest-api-changes.html#diff-web-link-info[DiffWebLinkInfo] entries.
 The `DiffIntralineInfo` entity contains information about intraline edits in a
 file.
 
-The information consists of a list of `<skip length, mark length>` pairs, where
+The information consists of a list of `<skip length, edit length>` pairs, where
 the skip length is the number of characters between the end of the previous edit
-and the start of this edit, and the mark length is the number of edited characters
+and the start of this edit, and the edit length is the number of edited characters
 following the skip. The start of the edits is from the beginning of the related
-diff content lines.
+diff content lines. If the list is empty, the entire DiffContent should be considered
+as unedited.
 
 Note that the implied newline character at the end of each line is included in
 the length calculation, and thus it is possible for the edits to span newlines.
@@ -6616,6 +6827,11 @@ The `MergeInput` entity contains information about the merge
 The source to merge from, e.g. a complete or abbreviated commit SHA-1,
 a complete reference name, a short reference name under `refs/heads`, `refs/tags`,
 or `refs/remotes` namespace, etc.
+|`source_branch`  |optional|
+A branch from which `source` is reachable. If specified,
+`source` is checked for visibility and reachability against only this
+branch. This speeds up the operation, especially for large repos with
+many branches.
 |`strategy`     |optional|
 The strategy of the merge, can be `recursive`, `resolve`,
 `simple-two-way-in-core`, `ours` or `theirs`, default will use project settings.
@@ -6632,10 +6848,10 @@ change by creating a new merge commit.
 |`subject`            |optional|
 The new subject for the change, if not specified, will reuse the current patch
 set's subject
-|`inheritParent`      |optional, default to `false`|
+|`inherit_parent`      |optional, default to `false`|
 Use the current patch set's first parent as the merge tip when set to `true`.
 |`base_change`        |optional|
-A link:#change-id[\{change-id\}] that identifies a change. When `inheritParent`
+A link:#change-id[\{change-id\}] that identifies a change. When `inherit_parent`
 is `false`, the merge tip will be the current patch set of the `base_change` if
 it's set. Otherwise, the current branch tip of the destination branch will be used.
 |`merge`              ||
@@ -6856,7 +7072,24 @@ If not set, the default is `ALL`.
 |`notify_details`|optional|
 Additional information about whom to notify about the revert as a map
 of recipient type to link:#notify-info[NotifyInfo] entity.
+|`topic`         |optional|
+Name of the topic for the revert change. If not set, the default for Revert
+endpoint is the topic of the change being reverted, and the default for the
+RevertSubmission endpoint is `revert-{submission_id}-{timestamp.now}`.
 |=============================
+
+[[revert-submission-info]]
+=== RevertSubmissionInfo
+The `RevertSubmissionInfo` entity describes the revert changes.
+
+[options="header",cols="1,6"]
+|==============================
+|Field Name       | Description
+|`revert_changes` |
+A list of link:#change-info[ChangeInfo] that describes the revert changes. Each
+entity in that list is a revert change that was created in that revert
+submission.
+|==============================
 
 [[review-info]]
 === ReviewInfo
@@ -7064,7 +7297,7 @@ entities.
 |`reviewed`     |optional|
 Indicates whether the caller is authenticated and has commented on the
 current revision. Only set if link:#reviewed[REVIEWED] option is requested.
-|`messageWithFooter` |optional|
+|`commit_with_footers` |optional|
 If the link:#commit-footers[COMMIT_FOOTERS] option is requested and
 this is the current patch set, contains the full commit message with
 Gerrit-specific commit footers, as if this revision were submitted

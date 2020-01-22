@@ -22,8 +22,8 @@ import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableTable;
 import com.google.common.collect.Table;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.PatchSetApproval;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.server.notedb.ReviewerStateInternal;
 import java.sql.Timestamp;
 
@@ -34,8 +34,7 @@ import java.sql.Timestamp;
  * state {@link ReviewerStateInternal#REMOVED} are ever exposed by this interface.
  */
 public class ReviewerSet {
-  private static final ReviewerSet EMPTY =
-      new ReviewerSet(ImmutableTable.<ReviewerStateInternal, Account.Id, Timestamp>of());
+  private static final ReviewerSet EMPTY = new ReviewerSet(ImmutableTable.of());
 
   public static ReviewerSet fromApprovals(Iterable<PatchSetApproval> approvals) {
     PatchSetApproval first = null;
@@ -45,18 +44,14 @@ public class ReviewerSet {
         first = psa;
       } else {
         checkArgument(
-            first
-                .getKey()
-                .getParentKey()
-                .getParentKey()
-                .equals(psa.getKey().getParentKey().getParentKey()),
+            first.key().patchSetId().changeId().equals(psa.key().patchSetId().changeId()),
             "multiple change IDs: %s, %s",
-            first.getKey(),
-            psa.getKey());
+            first.key(),
+            psa.key());
       }
-      Account.Id id = psa.getAccountId();
-      reviewers.put(REVIEWER, id, psa.getGranted());
-      if (psa.getValue() != 0) {
+      Account.Id id = psa.accountId();
+      reviewers.put(REVIEWER, id, psa.granted());
+      if (psa.value() != 0) {
         reviewers.remove(CC, id);
       }
     }

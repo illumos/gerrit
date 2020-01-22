@@ -30,7 +30,6 @@ import com.google.gerrit.server.index.account.AccountIndexDefinition;
 import com.google.gerrit.server.index.account.AccountSchemaDefinitions;
 import com.google.gerrit.server.index.account.AllAccountsIndexer;
 import com.google.gerrit.server.index.group.AllGroupsIndexer;
-import com.google.gerrit.server.index.group.GroupIndexCollection;
 import com.google.gerrit.server.index.group.GroupIndexDefinition;
 import com.google.gerrit.server.index.group.GroupSchemaDefinitions;
 import com.google.inject.AbstractModule;
@@ -47,8 +46,7 @@ public class IndexModuleOnInit extends AbstractModule {
   static final String INDEX_MANAGER = "IndexModuleOnInit/IndexManager";
 
   private static final ImmutableCollection<SchemaDefinitions<?>> ALL_SCHEMA_DEFS =
-      ImmutableList.<SchemaDefinitions<?>>of(
-          AccountSchemaDefinitions.INSTANCE, GroupSchemaDefinitions.INSTANCE);
+      ImmutableList.of(AccountSchemaDefinitions.INSTANCE, GroupSchemaDefinitions.INSTANCE);
 
   @Override
   protected void configure() {
@@ -75,11 +73,9 @@ public class IndexModuleOnInit extends AbstractModule {
     // during init, hence we don't need AllGroupsIndexer.
     bind(AllGroupsIndexer.class).toProvider(Providers.of(null));
 
-    bind(GroupIndexCollection.class);
-
     bind(new TypeLiteral<Map<String, Integer>>() {})
         .annotatedWith(Names.named(SingleVersionModule.SINGLE_VERSIONS))
-        .toInstance(ImmutableMap.<String, Integer>of());
+        .toInstance(ImmutableMap.of());
     bind(LifecycleListener.class)
         .annotatedWith(Names.named(INDEX_MANAGER))
         .to(SingleVersionListener.class);
@@ -88,8 +84,7 @@ public class IndexModuleOnInit extends AbstractModule {
   @Provides
   Collection<IndexDefinition<?, ?, ?>> getIndexDefinitions(
       AccountIndexDefinition accounts, GroupIndexDefinition groups) {
-    Collection<IndexDefinition<?, ?, ?>> result =
-        ImmutableList.<IndexDefinition<?, ?, ?>>of(accounts, groups);
+    Collection<IndexDefinition<?, ?, ?>> result = ImmutableList.of(accounts, groups);
     Set<String> expected =
         FluentIterable.from(ALL_SCHEMA_DEFS).transform(SchemaDefinitions::getName).toSet();
     Set<String> actual = FluentIterable.from(result).transform(IndexDefinition::getName).toSet();

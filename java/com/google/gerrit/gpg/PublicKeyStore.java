@@ -15,8 +15,15 @@
 package com.google.gerrit.gpg;
 
 import static com.google.common.base.Preconditions.checkState;
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.eclipse.jgit.lib.Constants.EMPTY_TREE_ID;
 import static org.eclipse.jgit.lib.Constants.OBJ_BLOB;
 
+import com.google.common.base.Preconditions;
+import com.google.common.io.ByteStreams;
+import com.google.gerrit.git.LockFailureException;
+import com.google.gerrit.git.ObjectIds;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -38,8 +45,9 @@ import org.bouncycastle.openpgp.PGPPublicKeyRingCollection;
 import org.bouncycastle.openpgp.PGPSignature;
 import org.bouncycastle.openpgp.bc.BcPGPObjectFactory;
 import org.bouncycastle.openpgp.operator.bc.BcPGPContentVerifierBuilderProvider;
+import org.eclipse.jgit.errors.IncorrectObjectTypeException;
+import org.eclipse.jgit.errors.MissingObjectException;
 import org.eclipse.jgit.lib.CommitBuilder;
-import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.ObjectReader;
@@ -63,13 +71,12 @@ import org.eclipse.jgit.util.NB;
  * matching the ID. Multiple keys are supported because forging a key ID is possible, but such a key
  * cannot be used to verify signatures produced with the correct key.
  *
+ * <p>Subkeys are mapped to the master GPG key in the same NoteMap.
+ *
  * <p>No additional checks are performed on the key after reading; callers should only trust keys
  * after checking with a {@link PublicKeyChecker}.
  */
 public class PublicKeyStore implements AutoCloseable {
-  private static final ObjectId EMPTY_TREE =
-      ObjectId.fromString("4b825dc642cb6eb9a060e54bf8d69288fbee4904");
-
   /** Ref where GPG public keys are stored. */
   public static final String REFS_GPG_KEYS = "refs/meta/gpg-keys";
 
@@ -88,11 +95,19 @@ public class PublicKeyStore implements AutoCloseable {
   public static PGPPublicKey getSigner(
       Iterable<PGPPublicKeyRing> keyRings, PGPSignature sig, byte[] data) throws PGPException {
     for (PGPPublicKeyRing kr : keyRings) {
-      PGPPublicKey k = kr.getPublicKey();
+      // Possibly return a signing subkey in case it differs from the master public key
+      PGPPublicKey k = kr.getPublicKey(sig.getKeyID());
+      if (k == null) {
+        throw new IllegalStateException(
+            "No public key found for ID: " + keyIdToString(sig.getKeyID()));
+      }
       sig.init(new BcPGPContentVerifierBuilderProvider(), k);
       sig.update(data);
       if (sig.verify()) {
-        return k;
+        // If the signature was made using a subkey, return the main public key.
+        // This enables further validity checks, like user ID checks, that can only
+        // be performed using the master public key.
+        return kr.getPublicKey();
       }
     }
     return null;
@@ -207,19 +222,34 @@ public class PublicKeyStore implements AutoCloseable {
     if (notes == null) {
       return Collections.emptyList();
     }
-    Note note = notes.getNote(keyObjectId(keyId));
+
+    return get(keyObjectId(keyId), fp);
+  }
+
+  private List<PGPPublicKeyRing> get(ObjectId keyObjectId, byte[] fp) throws IOException {
+    Note note = notes.getNote(keyObjectId);
     if (note == null) {
       return Collections.emptyList();
     }
 
+    return readKeysFromNote(note, fp);
+  }
+
+  private List<PGPPublicKeyRing> readKeysFromNote(Note note, byte[] fp)
+      throws IOException, MissingObjectException, IncorrectObjectTypeException {
+    boolean foundAtLeastOneKey = false;
     List<PGPPublicKeyRing> keys = new ArrayList<>();
-    try (InputStream in = reader.open(note.getData(), OBJ_BLOB).openStream()) {
+    ObjectId data = note.getData();
+    try (InputStream stream = reader.open(data, OBJ_BLOB).openStream()) {
+      byte[] bytes = ByteStreams.toByteArray(stream);
+      InputStream in = new ByteArrayInputStream(bytes);
       while (true) {
         @SuppressWarnings("unchecked")
         Iterator<Object> it = new BcPGPObjectFactory(new ArmoredInputStream(in)).iterator();
         if (!it.hasNext()) {
           break;
         }
+        foundAtLeastOneKey = true;
         Object obj = it.next();
         if (obj instanceof PGPPublicKeyRing) {
           PGPPublicKeyRing kr = (PGPPublicKeyRing) obj;
@@ -229,7 +259,34 @@ public class PublicKeyStore implements AutoCloseable {
         }
         checkState(!it.hasNext(), "expected one PGP object per ArmoredInputStream");
       }
-      return keys;
+
+      if (foundAtLeastOneKey) {
+        return keys;
+      }
+
+      // Subkey handling
+      String id = new String(bytes, UTF_8);
+      Preconditions.checkArgument(ObjectId.isId(id), "Not valid SHA1: " + id);
+      return get(ObjectId.fromString(id), fp);
+    }
+  }
+
+  public void rebuildSubkeyMasterKeyMap()
+      throws MissingObjectException, IncorrectObjectTypeException, IOException, PGPException {
+    if (reader == null) {
+      load();
+    }
+    if (notes != null) {
+      try (ObjectInserter ins = repo.newObjectInserter()) {
+        for (Note note : notes) {
+          for (PGPPublicKeyRing keyRing :
+              new PGPPublicKeyRingCollection(readKeysFromNote(note, null))) {
+            long masterKeyId = keyRing.getPublicKey().getKeyID();
+            ObjectId masterKeyObjectId = keyObjectId(masterKeyId);
+            saveSubkeyMapping(ins, keyRing, masterKeyId, masterKeyObjectId);
+          }
+        }
+      }
     }
   }
 
@@ -302,7 +359,7 @@ public class PublicKeyStore implements AutoCloseable {
         deleteFromNotes(ins, fp);
       }
       cb.setTreeId(notes.writeTree(ins));
-      if (cb.getTreeId().equals(tip != null ? tip.getTree() : EMPTY_TREE)) {
+      if (cb.getTreeId().equals(tip != null ? tip.getTree() : EMPTY_TREE_ID)) {
         return RefUpdate.Result.NO_CHANGE;
       }
 
@@ -331,9 +388,10 @@ public class PublicKeyStore implements AutoCloseable {
         toAdd.clear();
         toRemove.clear();
         break;
+      case LOCK_FAILURE:
+        throw new LockFailureException("Failed to store public keys", ru);
       case FORCED:
       case IO_FAILURE:
-      case LOCK_FAILURE:
       case NOT_ATTEMPTED:
       case REJECTED:
       case REJECTED_CURRENT_BRANCH:
@@ -348,8 +406,8 @@ public class PublicKeyStore implements AutoCloseable {
 
   private void saveToNotes(ObjectInserter ins, PGPPublicKeyRing keyRing)
       throws PGPException, IOException {
-    long keyId = keyRing.getPublicKey().getKeyID();
-    PGPPublicKeyRingCollection existing = get(keyId);
+    long masterKeyId = keyRing.getPublicKey().getKeyID();
+    PGPPublicKeyRingCollection existing = get(masterKeyId);
     List<PGPPublicKeyRing> toWrite = new ArrayList<>(existing.size() + 1);
     boolean replaced = false;
     for (PGPPublicKeyRing kr : existing) {
@@ -363,7 +421,37 @@ public class PublicKeyStore implements AutoCloseable {
     if (!replaced) {
       toWrite.add(keyRing);
     }
-    notes.set(keyObjectId(keyId), ins.insert(OBJ_BLOB, keysToArmored(toWrite)));
+
+    ObjectId masterKeyObjectId = keyObjectId(masterKeyId);
+    notes.set(masterKeyObjectId, ins.insert(OBJ_BLOB, keysToArmored(toWrite)));
+
+    saveSubkeyMapping(ins, keyRing, masterKeyId, masterKeyObjectId);
+  }
+
+  private void saveSubkeyMapping(
+      ObjectInserter ins, PGPPublicKeyRing keyRing, long masterKeyId, ObjectId masterKeyObjectId)
+      throws IOException {
+    // Subkey handling
+    byte[] masterKeyBytes = masterKeyObjectId.name().getBytes(UTF_8);
+    ObjectId masterKeyObject = null;
+    for (PGPPublicKey key : keyRing) {
+      long subKeyId = key.getKeyID();
+      // Skip master public key
+      if (masterKeyId == subKeyId) {
+        continue;
+      }
+
+      // Insert master key object only once for all subkeys
+      if (masterKeyObject == null) {
+        masterKeyObject = ins.insert(OBJ_BLOB, masterKeyBytes);
+      }
+
+      ObjectId subkeyObjectId = keyObjectId(subKeyId);
+      Preconditions.checkArgument(
+          notes.get(subkeyObjectId) == null || notes.get(subkeyObjectId).equals(masterKeyObject),
+          "Master key differs for subkey: " + subkeyObjectId.name());
+      notes.set(subkeyObjectId, masterKeyObject);
+    }
   }
 
   private void deleteFromNotes(ObjectInserter ins, Fingerprint fp)
@@ -378,10 +466,24 @@ public class PublicKeyStore implements AutoCloseable {
     }
     if (toWrite.size() == existing.size()) {
       return;
-    } else if (!toWrite.isEmpty()) {
-      notes.set(keyObjectId(keyId), ins.insert(OBJ_BLOB, keysToArmored(toWrite)));
+    }
+
+    ObjectId keyObjectId = keyObjectId(keyId);
+    if (!toWrite.isEmpty()) {
+      notes.set(keyObjectId, ins.insert(OBJ_BLOB, keysToArmored(toWrite)));
     } else {
-      notes.remove(keyObjectId(keyId));
+      PGPPublicKeyRing keyRing = get(fp.get());
+
+      for (PGPPublicKey key : keyRing) {
+        long subKeyId = key.getKeyID();
+        // Skip master public key
+        if (keyId == subKeyId) {
+          continue;
+        }
+        notes.remove(keyObjectId(subKeyId));
+      }
+
+      notes.remove(keyObjectId);
     }
   }
 
@@ -414,7 +516,7 @@ public class PublicKeyStore implements AutoCloseable {
   }
 
   static ObjectId keyObjectId(long keyId) {
-    byte[] buf = new byte[Constants.OBJECT_ID_LENGTH];
+    byte[] buf = new byte[ObjectIds.LEN];
     NB.encodeInt64(buf, 0, keyId);
     return ObjectId.fromRaw(buf);
   }

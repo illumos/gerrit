@@ -14,8 +14,9 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 -->
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../behaviors/gr-list-view-behavior/gr-list-view-behavior.html">
 <link rel="import" href="../../../styles/gr-table-styles.html">
 <link rel="import" href="../../../styles/shared-styles.html">
@@ -24,8 +25,12 @@ limitations under the License.
 
 <dom-module id="gr-plugin-list">
   <template>
-    <style include="shared-styles"></style>
-    <style include="gr-table-styles"></style>
+    <style include="shared-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
+    <style include="gr-table-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <gr-list-view
         filter="[[_filter]]"
         items-per-page="[[_pluginsPerPage]]"

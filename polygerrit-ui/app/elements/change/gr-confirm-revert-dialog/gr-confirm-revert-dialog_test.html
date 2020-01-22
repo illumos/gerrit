@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-confirm-revert-dialog</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-confirm-revert-dialog.html">
 
@@ -48,13 +50,14 @@ limitations under the License.
       assert.isNotOk(element.message);
       const alertStub = sandbox.stub();
       element.addEventListener('show-alert', alertStub);
-      element.populateRevertMessage('not a commitHash in sight', undefined);
+      element._populateRevertSingleChangeMessage({},
+          'not a commitHash in sight', undefined);
       assert.isTrue(alertStub.calledOnce);
     });
 
     test('single line', () => {
       assert.isNotOk(element.message);
-      element.populateRevertMessage(
+      element._populateRevertSingleChangeMessage({},
           'one line commit\n\nChange-Id: abcdefg\n',
           'abcd123');
       const expected = 'Revert "one line commit"\n\n' +
@@ -65,7 +68,7 @@ limitations under the License.
 
     test('multi line', () => {
       assert.isNotOk(element.message);
-      element.populateRevertMessage(
+      element._populateRevertSingleChangeMessage({},
           'many lines\ncommit\n\nmessage\n\nChange-Id: abcdefg\n',
           'abcd123');
       const expected = 'Revert "many lines"\n\n' +
@@ -76,7 +79,7 @@ limitations under the License.
 
     test('issue above change id', () => {
       assert.isNotOk(element.message);
-      element.populateRevertMessage(
+      element._populateRevertSingleChangeMessage({},
           'much lines\nvery\n\ncommit\n\nBug: Issue 42\nChange-Id: abcdefg\n',
           'abcd123');
       const expected = 'Revert "much lines"\n\n' +
@@ -87,7 +90,7 @@ limitations under the License.
 
     test('revert a revert', () => {
       assert.isNotOk(element.message);
-      element.populateRevertMessage(
+      element._populateRevertSingleChangeMessage({},
           'Revert "one line commit"\n\nChange-Id: abcdefg\n',
           'abcd123');
       const expected = 'Revert "Revert "one line commit""\n\n' +

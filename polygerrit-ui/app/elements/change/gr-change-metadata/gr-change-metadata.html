@@ -15,9 +15,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 <link rel="import" href="../../../behaviors/rest-client-behavior/rest-client-behavior.html">
 <link rel="import" href="../../../styles/shared-styles.html">
+<link rel="import" href="../../../styles/gr-change-metadata-shared-styles.html">
+<link rel="import" href="../../../styles/gr-change-view-integration-shared-styles.html">
 <link rel="import" href="../../../styles/gr-voting-styles.html">
 <link rel="import" href="../../core/gr-navigation/gr-navigation.html">
 <link rel="import" href="../../plugins/gr-endpoint-decorator/gr-endpoint-decorator.html">
@@ -35,37 +37,18 @@ limitations under the License.
 <link rel="import" href="../gr-change-requirements/gr-change-requirements.html">
 <link rel="import" href="../gr-commit-info/gr-commit-info.html">
 <link rel="import" href="../gr-reviewer-list/gr-reviewer-list.html">
+<link rel="import" href="../../shared/gr-account-list/gr-account-list.html">
+<script src="../../../scripts/gr-display-name-utils/gr-display-name-utils.js"></script>
+<script src="../../../scripts/gr-reviewer-suggestions-provider/gr-reviewer-suggestions-provider.js"></script>
 
 <dom-module id="gr-change-metadata">
   <template>
+    <style include="gr-change-metadata-shared-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <style include="shared-styles">
       :host {
         display: table;
-      }
-      section {
-        display: table-row;
-      }
-      section:not(:first-of-type) .title,
-      section:not(:first-of-type) .value {
-        padding-top: .5em;
-      }
-      section:not(:first-of-type) {
-        margin-top: 1em;
-      }
-      .title,
-      .value {
-        display: table-cell;
-      }
-      .title {
-        color: var(--deemphasized-text-color);
-        font-weight: var(--font-weight-bold);
-        max-width: 20em;
-        padding-left: var(--metadata-horizontal-padding);
-        padding-right: .5em;
-        word-break: break-word;
-      }
-      .value {
-        padding-right: var(--metadata-horizontal-padding);
       }
       gr-change-requirements {
         --requirements-horizontal-padding: var(--metadata-horizontal-padding);
@@ -74,7 +57,7 @@ limitations under the License.
         max-width: 20ch;
         overflow: hidden;
         text-overflow: ellipsis;
-        vertical-align: middle;
+        vertical-align: top;
         white-space: nowrap;
       }
       gr-editable-label {
@@ -99,14 +82,14 @@ limitations under the License.
         pointer-events: none;
       }
       .hashtagChip {
-        margin-bottom: .5em;
+        margin-bottom: var(--spacing-m);
       }
       #externalStyle {
         display: block;
       }
       .parentList.merge {
         list-style-type: decimal;
-        padding-left: 1em;
+        padding-left: var(--spacing-l);
       }
       .parentList gr-commit-info {
         display: inline-block;
@@ -116,7 +99,7 @@ limitations under the License.
         display: none;
       }
       .icon {
-        margin: -.25em 0;
+        margin: -3px 0;
       }
       .icon.help,
       .icon.notTrusted {
@@ -133,9 +116,12 @@ limitations under the License.
         display: inline-block;
       }
       .separatedSection {
-        border-top: 1px solid var(--border-color);
-        margin-top: .5em;
-        padding: .5em 0;
+        margin-top: var(--spacing-l);
+        padding: var(--spacing-m) 0;
+      }
+      .hashtag gr-linked-chip,
+      .topic gr-linked-chip {
+        --linked-chip-text-color: var(--link-color);
       }
     </style>
     <gr-external-style id="externalStyle" name="change-metadata">
@@ -191,47 +177,36 @@ limitations under the License.
         <span class="title">Assignee</span>
         <span class="value">
           <gr-account-list
-              max-count="1"
               id="assigneeValue"
               placeholder="Set assignee..."
+              max-count="1"
+              skip-suggest-on-empty
               accounts="{{_assignee}}"
-              change="[[change]]"
               readonly="[[_computeAssigneeReadOnly(_mutable, change)]]"
-              allow-any-user></gr-account-list>
+              suggestions-provider="[[_getReviewerSuggestionsProvider(change)]]">
+          </gr-account-list>
         </span>
       </section>
-      <template is="dom-if" if="[[_showReviewersByState]]">
-        <section>
-          <span class="title">Reviewers</span>
-          <span class="value">
-            <gr-reviewer-list
-                change="{{change}}"
-                mutable="[[_mutable]]"
-                reviewers-only
-                max-reviewers-displayed="3"></gr-reviewer-list>
-          </span>
-        </section>
-        <section>
-          <span class="title">CC</span>
-          <span class="value">
-            <gr-reviewer-list
-                change="{{change}}"
-                mutable="[[_mutable]]"
-                ccs-only
-                max-reviewers-displayed="3"></gr-reviewer-list>
-          </span>
-        </section>
-      </template>
-      <template is="dom-if" if="[[!_showReviewersByState]]">
-        <section>
-          <span class="title">Reviewers</span>
-          <span class="value">
-            <gr-reviewer-list
-                change="{{change}}"
-                mutable="[[_mutable]]"></gr-reviewer-list>
-          </span>
-        </section>
-      </template>
+      <section>
+        <span class="title">Reviewers</span>
+        <span class="value">
+          <gr-reviewer-list
+              change="{{change}}"
+              mutable="[[_mutable]]"
+              reviewers-only
+              max-reviewers-displayed="3"></gr-reviewer-list>
+        </span>
+      </section>
+      <section>
+        <span class="title">CC</span>
+        <span class="value">
+          <gr-reviewer-list
+              change="{{change}}"
+              mutable="[[_mutable]]"
+              ccs-only
+              max-reviewers-displayed="3"></gr-reviewer-list>
+        </span>
+      </section>
       <section>
         <span class="title">Repo</span>
         <span class="value">
@@ -295,35 +270,46 @@ limitations under the License.
           </template>
         </span>
       </section>
+      <template is="dom-if" if="[[_showCherryPickOf(change.*)]]">
+        <section>
+          <span class="title">Cherry pick of</span>
+          <span class="value">
+            <a href$="[[_computeCherryPickOfURL(change.cherry_pick_of_change, change.cherry_pick_of_patch_set, change.project)]]">
+              <gr-limited-text
+                  text="[[change.cherry_pick_of_change]],[[change.cherry_pick_of_patch_set]]"
+                  limit="40">
+              </gr-limited-text>
+            </a>
+          </span>
+        </section>
+      </template>
       <section class="strategy" hidden$="[[_computeHideStrategy(change)]]" hidden>
         <span class="title">Strategy</span>
         <span class="value">[[_computeStrategy(change)]]</span>
       </section>
-      <template is="dom-if" if="[[serverConfig.note_db_enabled]]">
-        <section class="hashtag">
-          <span class="title">Hashtags</span>
-          <span class="value">
-            <template is="dom-repeat" items="[[change.hashtags]]">
-              <gr-linked-chip
-                  class="hashtagChip"
-                  text="[[item]]"
-                  href="[[_computeHashtagURL(item)]]"
-                  removable="[[!_hashtagReadOnly]]"
-                  on-remove="_handleHashtagRemoved">
-              </gr-linked-chip>
-            </template>
-            <template is="dom-if" if="[[!_hashtagReadOnly]]">
-              <gr-editable-label
-                  uppercase
-                  label-text="Add a hashtag"
-                  value="{{_newHashtag}}"
-                  placeholder="[[_computeHashtagPlaceholder(_hashtagReadOnly)]]"
-                  read-only="[[_hashtagReadOnly]]"
-                  on-changed="_handleHashtagChanged"></gr-editable-label>
-            </template>
-          </span>
-        </section>
-      </template>
+      <section class="hashtag">
+        <span class="title">Hashtags</span>
+        <span class="value">
+          <template is="dom-repeat" items="[[change.hashtags]]">
+            <gr-linked-chip
+                class="hashtagChip"
+                text="[[item]]"
+                href="[[_computeHashtagURL(item)]]"
+                removable="[[!_hashtagReadOnly]]"
+                on-remove="_handleHashtagRemoved">
+            </gr-linked-chip>
+          </template>
+          <template is="dom-if" if="[[!_hashtagReadOnly]]">
+            <gr-editable-label
+                uppercase
+                label-text="Add a hashtag"
+                value="{{_newHashtag}}"
+                placeholder="[[_computeHashtagPlaceholder(_hashtagReadOnly)]]"
+                read-only="[[_hashtagReadOnly]]"
+                on-changed="_handleHashtagChanged"></gr-editable-label>
+          </template>
+        </span>
+      </section>
       <div class="separatedSection">
         <gr-change-requirements
             change="{{change}}"

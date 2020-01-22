@@ -19,64 +19,73 @@
 
   const PROJECT_PLACEHOLDER_PATTERN = /\$\{project\}/g;
 
-  Polymer({
-    is: 'gr-dashboard-view',
-
+  /**
+   * @appliesMixin Gerrit.FireMixin
+   * @appliesMixin Gerrit.RESTClientMixin
+   * @extends Polymer.Element
+   */
+  class GrDashboardView extends Polymer.mixinBehaviors( [
+    Gerrit.FireBehavior,
+    Gerrit.RESTClientBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-dashboard-view'; }
     /**
      * Fired when the title of the page should change.
      *
      * @event title-change
      */
 
-    properties: {
-      account: {
-        type: Object,
-        value: null,
-      },
-      preferences: Object,
-      /** @type {{ selectedChangeIndex: number }} */
-      viewState: Object,
-
-      /** @type {{ project: string, user: string }} */
-      params: {
-        type: Object,
-      },
-
-      createChangeTap: {
-        type: Function,
-        value() {
-          return this._createChangeTap.bind(this);
+    static get properties() {
+      return {
+        account: {
+          type: Object,
+          value: null,
         },
-      },
+        preferences: Object,
+        /** @type {{ selectedChangeIndex: number }} */
+        viewState: Object,
 
-      _results: Array,
+        /** @type {{ project: string, user: string }} */
+        params: {
+          type: Object,
+        },
 
-      /**
-       * For showing a "loading..." string during ajax requests.
-       */
-      _loading: {
-        type: Boolean,
-        value: true,
-      },
+        createChangeTap: {
+          type: Function,
+          value() {
+            return this._createChangeTap.bind(this);
+          },
+        },
 
-      _showDraftsBanner: {
-        type: Boolean,
-        value: false,
-      },
+        _results: Array,
 
-      _showNewUserHelp: {
-        type: Boolean,
-        value: false,
-      },
-    },
+        /**
+         * For showing a "loading..." string during ajax requests.
+         */
+        _loading: {
+          type: Boolean,
+          value: true,
+        },
 
-    observers: [
-      '_paramsChanged(params.*)',
-    ],
+        _showDraftsBanner: {
+          type: Boolean,
+          value: false,
+        },
 
-    behaviors: [
-      Gerrit.RESTClientBehavior,
-    ],
+        _showNewUserHelp: {
+          type: Boolean,
+          value: false,
+        },
+      };
+    }
+
+    static get observers() {
+      return [
+        '_paramsChanged(params.*)',
+      ];
+    }
 
     get options() {
       return this.listChangesOptionsToHex(
@@ -84,11 +93,13 @@
           this.ListChangesOption.DETAILED_ACCOUNTS,
           this.ListChangesOption.REVIEWED
       );
-    },
+    }
 
+    /** @override */
     attached() {
+      super.attached();
       this._loadPreferences();
-    },
+    }
 
     _loadPreferences() {
       return this.$.restAPI.getLoggedIn().then(loggedIn => {
@@ -100,7 +111,7 @@
           this.preferences = {};
         }
       });
-    },
+    }
 
     _getProjectDashboard(project, dashboard) {
       const errFn = response => {
@@ -123,18 +134,18 @@
           }),
         };
       });
-    },
+    }
 
     _computeTitle(user) {
       if (!user || user === 'self') {
         return 'My Reviews';
       }
       return 'Dashboard for ' + user;
-    },
+    }
 
     _isViewActive(params) {
       return params.view === Gerrit.Nav.View.DASHBOARD;
-    },
+    }
 
     _paramsChanged(paramsChangeRecord) {
       const params = paramsChangeRecord.base;
@@ -143,14 +154,8 @@
         return Promise.resolve();
       }
 
-      const user = params.user || 'self';
-
-      // NOTE: This method may be called before attachment. Fire title-change
-      // in an async so that attachment to the DOM can take place first.
-      const title = params.title || this._computeTitle(user);
-      this.async(() => this.fire('title-change', {title}));
       return this._reload();
-    },
+    }
 
     /**
      * Reloads the element.
@@ -169,14 +174,24 @@
 
       const checkForNewUser = !project && user === 'self';
       return dashboardPromise
-          .then(res => this._fetchDashboardChanges(res, checkForNewUser))
+          .then(res => {
+            if (res && res.title) {
+              this.fire('title-change', {title: res.title});
+            }
+            return this._fetchDashboardChanges(res, checkForNewUser);
+          })
           .then(() => {
             this._maybeShowDraftsBanner();
             this.$.reporting.dashboardDisplayed();
-          }).catch(err => {
+          })
+          .catch(err => {
+            this.fire('title-change', {
+              title: title || this._computeTitle(user),
+            });
             console.warn(err);
-          }).then(() => { this._loading = false; });
-    },
+          })
+          .then(() => { this._loading = false; });
+    }
 
     /**
      * Fetches the changes for each dashboard section and sets this._results
@@ -190,12 +205,12 @@
       if (!res) { return Promise.resolve(); }
 
       const queries = res.sections
-          .map(section => section.suffixForDashboard ?
+          .map(section => (section.suffixForDashboard ?
             section.query + ' ' + section.suffixForDashboard :
-            section.query);
+            section.query));
 
       if (checkForNewUser) {
-        queries.push('owner:self');
+        queries.push('owner:self limit:1');
       }
 
       return this.$.restAPI.getChanges(null, queries, null, this.options)
@@ -205,34 +220,47 @@
               const lastResultSet = changes.pop();
               this._showNewUserHelp = lastResultSet.length == 0;
             }
-            this._results = changes.map((results, i) => ({
-              sectionName: res.sections[i].name,
-              query: res.sections[i].query,
-              results,
-              isOutgoing: res.sections[i].isOutgoing,
-            })).filter((section, i) => i < res.sections.length && (
+            this._results = changes.map((results, i) => {
+              return {
+                name: res.sections[i].name,
+                countLabel: this._computeSectionCountLabel(results),
+                query: res.sections[i].query,
+                results,
+                isOutgoing: res.sections[i].isOutgoing,
+              };
+            }).filter((section, i) => i < res.sections.length && (
               !res.sections[i].hideIfEmpty ||
                 section.results.length));
           });
-    },
+    }
+
+    _computeSectionCountLabel(changes) {
+      if (!changes || !changes.length || changes.length == 0) {
+        return '';
+      }
+      const more = changes[changes.length - 1]._more_changes;
+      const numChanges = changes.length;
+      const andMore = more ? ' and more' : '';
+      return `(${numChanges}${andMore})`;
+    }
 
     _computeUserHeaderClass(params) {
-      if (!params || !!params.project || !params.user
-          || params.user === 'self') {
+      if (!params || !!params.project || !params.user ||
+          params.user === 'self') {
         return 'hide';
       }
       return '';
-    },
+    }
 
     _handleToggleStar(e) {
       this.$.restAPI.saveChangeStarred(e.detail.change._number,
           e.detail.starred);
-    },
+    }
 
     _handleToggleReviewed(e) {
       this.$.restAPI.saveChangeReviewed(e.detail.change._number,
           e.detail.reviewed);
-    },
+    }
 
     /**
      * Banner is shown if a user is on their own dashboard and they have draft
@@ -247,19 +275,19 @@
       if (!draftSection || !draftSection.results.length) { return; }
 
       const closedChanges = draftSection.results
-          .filter(change => !this.changeIsOpen(change.status));
+          .filter(change => !this.changeIsOpen(change));
       if (!closedChanges.length) { return; }
 
       this._showDraftsBanner = true;
-    },
+    }
 
     _computeBannerClass(show) {
       return show ? '' : 'hide';
-    },
+    }
 
     _handleOpenDeleteDialog() {
       this.$.confirmDeleteOverlay.open();
-    },
+    }
 
     _handleConfirmDelete() {
       this.$.confirmDeleteDialog.disabled = true;
@@ -267,23 +295,25 @@
         this._closeConfirmDeleteOverlay();
         this._reload();
       });
-    },
+    }
 
     _closeConfirmDeleteOverlay() {
       this.$.confirmDeleteOverlay.close();
-    },
+    }
 
     _computeDraftsLink() {
       return Gerrit.Nav.getUrlForSearchQuery('has:draft -is:open');
-    },
+    }
 
     _createChangeTap(e) {
       this.$.destinationDialog.open();
-    },
+    }
 
     _handleDestinationConfirm(e) {
       this.$.commandsDialog.branch = e.detail.branch;
       this.$.commandsDialog.open();
-    },
-  });
+    }
+  }
+
+  customElements.define(GrDashboardView.is, GrDashboardView);
 })();

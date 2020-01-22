@@ -21,13 +21,13 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.gerrit.extensions.events.LifecycleListener;
-import com.google.gerrit.extensions.registration.DynamicSet;
 import com.google.gerrit.index.Index;
 import com.google.gerrit.index.IndexCollection;
 import com.google.gerrit.index.IndexDefinition;
 import com.google.gerrit.index.IndexDefinition.IndexFactory;
 import com.google.gerrit.index.Schema;
 import com.google.gerrit.server.config.SitePaths;
+import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.inject.ProvisionException;
 import java.io.IOException;
 import java.util.Collection;
@@ -37,6 +37,7 @@ import java.util.TreeMap;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.Config;
 
+/** Trigger for online reindexing in case the index version in use is not the latest. */
 public abstract class VersionManager implements LifecycleListener {
   public static boolean getOnlineUpgrade(Config cfg) {
     return cfg.getBoolean("index", null, "onlineUpgrade", true);
@@ -61,7 +62,7 @@ public abstract class VersionManager implements LifecycleListener {
   protected final String runReindexMsg;
   protected final SitePaths sitePaths;
 
-  private final DynamicSet<OnlineUpgradeListener> listeners;
+  private final PluginSetContext<OnlineUpgradeListener> listeners;
 
   // The following fields must be accessed synchronized on this.
   protected final Map<String, IndexDefinition<?, ?, ?>> defs;
@@ -69,7 +70,7 @@ public abstract class VersionManager implements LifecycleListener {
 
   protected VersionManager(
       SitePaths sitePaths,
-      DynamicSet<OnlineUpgradeListener> listeners,
+      PluginSetContext<OnlineUpgradeListener> listeners,
       Collection<IndexDefinition<?, ?, ?>> defs,
       boolean onlineUpgrade) {
     this.sitePaths = sitePaths;

@@ -20,13 +20,14 @@ import com.google.common.base.CharMatcher;
 import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
 import com.google.gerrit.common.data.ContributorAgreement;
-import com.google.gerrit.extensions.client.UiType;
 import com.google.gerrit.extensions.common.AccountsInfo;
 import com.google.gerrit.extensions.common.AuthInfo;
 import com.google.gerrit.extensions.common.ChangeConfigInfo;
+import com.google.gerrit.extensions.common.ChangeIndexConfigInfo;
 import com.google.gerrit.extensions.common.DownloadInfo;
 import com.google.gerrit.extensions.common.DownloadSchemeInfo;
 import com.google.gerrit.extensions.common.GerritInfo;
+import com.google.gerrit.extensions.common.IndexConfigInfo;
 import com.google.gerrit.extensions.common.PluginConfigInfo;
 import com.google.gerrit.extensions.common.ReceiveInfo;
 import com.google.gerrit.extensions.common.ServerInfo;
@@ -36,6 +37,7 @@ import com.google.gerrit.extensions.common.UserConfigInfo;
 import com.google.gerrit.extensions.config.CloneCommand;
 import com.google.gerrit.extensions.config.DownloadCommand;
 import com.google.gerrit.extensions.config.DownloadScheme;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.extensions.webui.WebUiPlugin;
 import com.google.gerrit.server.EnableSignedPush;
@@ -49,13 +51,11 @@ import com.google.gerrit.server.config.AnonymousCowardName;
 import com.google.gerrit.server.config.AuthConfig;
 import com.google.gerrit.server.config.ConfigResource;
 import com.google.gerrit.server.config.ConfigUtil;
-import com.google.gerrit.server.config.GerritOptions;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.SitePaths;
 import com.google.gerrit.server.documentation.QueryDocumentationExecutor;
 import com.google.gerrit.server.index.change.ChangeField;
 import com.google.gerrit.server.index.change.ChangeIndexCollection;
-import com.google.gerrit.server.notedb.NotesMigration;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.plugincontext.PluginItemContext;
 import com.google.gerrit.server.plugincontext.PluginMapContext;
@@ -67,18 +67,12 @@ import com.google.inject.Inject;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.EnumSet;
 import java.util.HashMap;
-import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import org.eclipse.jgit.lib.Config;
 
 public class GetServerInfo implements RestReadView<ConfigResource> {
-  private static final String URL_ALIAS = "urlAlias";
-  private static final String KEY_MATCH = "match";
-  private static final String KEY_TOKEN = "token";
-
   private final Config config;
   private final AccountVisibilityProvider accountVisibilityProvider;
   private final AuthConfig authConfig;
@@ -94,10 +88,8 @@ public class GetServerInfo implements RestReadView<ConfigResource> {
   private final PluginItemContext<AvatarProvider> avatar;
   private final boolean enableSignedPush;
   private final QueryDocumentationExecutor docSearcher;
-  private final NotesMigration migration;
   private final ProjectCache projectCache;
   private final AgreementJson agreementJson;
-  private final GerritOptions gerritOptions;
   private final ChangeIndexCollection indexes;
   private final SitePaths sitePaths;
 
@@ -118,10 +110,8 @@ public class GetServerInfo implements RestReadView<ConfigResource> {
       PluginItemContext<AvatarProvider> avatar,
       @EnableSignedPush boolean enableSignedPush,
       QueryDocumentationExecutor docSearcher,
-      NotesMigration migration,
       ProjectCache projectCache,
       AgreementJson agreementJson,
-      GerritOptions gerritOptions,
       ChangeIndexCollection indexes,
       SitePaths sitePaths) {
     this.config = config;
@@ -139,34 +129,30 @@ public class GetServerInfo implements RestReadView<ConfigResource> {
     this.avatar = avatar;
     this.enableSignedPush = enableSignedPush;
     this.docSearcher = docSearcher;
-    this.migration = migration;
     this.projectCache = projectCache;
     this.agreementJson = agreementJson;
-    this.gerritOptions = gerritOptions;
     this.indexes = indexes;
     this.sitePaths = sitePaths;
   }
 
   @Override
-  public ServerInfo apply(ConfigResource rsrc) throws PermissionBackendException {
+  public Response<ServerInfo> apply(ConfigResource rsrc) throws PermissionBackendException {
     ServerInfo info = new ServerInfo();
     info.accounts = getAccountsInfo();
     info.auth = getAuthInfo();
     info.change = getChangeInfo();
     info.download = getDownloadInfo();
     info.gerrit = getGerritInfo();
-    info.noteDbEnabled = toBoolean(isNoteDbEnabled());
+    info.index = getIndexInfo();
+    info.noteDbEnabled = true;
     info.plugin = getPluginInfo();
     info.defaultTheme = getDefaultTheme();
     info.sshd = getSshdInfo();
     info.suggest = getSuggestInfo();
 
-    Map<String, String> urlAliases = getUrlAliasesInfo();
-    info.urlAliases = !urlAliases.isEmpty() ? urlAliases : null;
-
     info.user = getUserInfo();
     info.receive = getReceiveInfo();
-    return info;
+    return Response.ok(info);
   }
 
   private AccountsInfo getAccountsInfo() {
@@ -243,7 +229,9 @@ public class GetServerInfo implements RestReadView<ConfigResource> {
             + "\u2026";
     info.updateDelay =
         (int) ConfigUtil.getTimeUnit(config, "change", null, "updateDelay", 300, TimeUnit.SECONDS);
-    info.submitWholeTopic = MergeSuperSet.wholeTopicEnabled(config);
+    info.submitWholeTopic = toBoolean(MergeSuperSet.wholeTopicEnabled(config));
+    info.excludeMergeableInChangeInfo =
+        toBoolean(this.config.getBoolean("change", "api", "excludeMergeableInChangeInfo", false));
     info.disablePrivateChanges =
         toBoolean(this.config.getBoolean("change", null, "disablePrivateChanges", false));
     return info;
@@ -303,18 +291,20 @@ public class GetServerInfo implements RestReadView<ConfigResource> {
     info.allProjects = allProjectsName.get();
     info.allUsers = allUsersName.get();
     info.reportBugUrl = config.getString("gerrit", null, "reportBugUrl");
-    info.reportBugText = config.getString("gerrit", null, "reportBugText");
     info.docUrl = getDocUrl();
     info.docSearch = docSearcher.isAvailable();
     info.editGpgKeys =
         toBoolean(enableSignedPush && config.getBoolean("gerrit", null, "editGpgKeys", true));
-    info.webUis = EnumSet.noneOf(UiType.class);
-    info.webUis.add(UiType.POLYGERRIT);
-    if (gerritOptions.enableGwtUi()) {
-      info.webUis.add(UiType.GWT);
-    }
     info.primaryWeblinkName = config.getString("gerrit", null, "primaryWeblinkName");
     return info;
+  }
+
+  private IndexConfigInfo getIndexInfo() {
+    ChangeIndexConfigInfo change = new ChangeIndexConfigInfo();
+    change.indexMergeable = toBoolean(config.getBoolean("index", "change", "indexMergeable", true));
+    IndexConfigInfo index = new IndexConfigInfo();
+    index.change = change;
+    return index;
   }
 
   private String getDocUrl() {
@@ -323,10 +313,6 @@ public class GetServerInfo implements RestReadView<ConfigResource> {
       return null;
     }
     return CharMatcher.is('/').trimTrailingFrom(docUrl) + '/';
-  }
-
-  private boolean isNoteDbEnabled() {
-    return migration.readChanges();
   }
 
   private PluginConfigInfo getPluginInfo() {
@@ -362,16 +348,6 @@ public class GetServerInfo implements RestReadView<ConfigResource> {
       return DEFAULT_THEME;
     }
     return null;
-  }
-
-  private Map<String, String> getUrlAliasesInfo() {
-    Map<String, String> urlAliases = new HashMap<>();
-    for (String subsection : config.getSubsections(URL_ALIAS)) {
-      urlAliases.put(
-          config.getString(URL_ALIAS, subsection, KEY_MATCH),
-          config.getString(URL_ALIAS, subsection, KEY_TOKEN));
-    }
-    return urlAliases;
   }
 
   private SshdInfo getSshdInfo() {

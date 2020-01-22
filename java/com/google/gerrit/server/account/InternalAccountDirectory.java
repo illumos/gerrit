@@ -20,11 +20,11 @@ import static java.util.stream.Collectors.toSet;
 import com.google.common.base.Strings;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Streams;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.common.AccountInfo;
 import com.google.gerrit.extensions.common.AvatarInfo;
 import com.google.gerrit.extensions.registration.DynamicItem;
 import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.externalids.ExternalId;
@@ -98,15 +98,14 @@ public class InternalAccountDirectory extends AccountDirectory {
 
     Set<FillOptions> fillOptionsWithoutSecondaryEmails =
         Sets.difference(options, EnumSet.of(FillOptions.SECONDARY_EMAILS));
-    Set<Account.Id> ids =
-        Streams.stream(in).map(a -> new Account.Id(a._accountId)).collect(toSet());
+    Set<Account.Id> ids = Streams.stream(in).map(a -> Account.id(a._accountId)).collect(toSet());
     Map<Account.Id, AccountState> accountStates = accountCache.get(ids);
     for (AccountInfo info : in) {
-      Account.Id id = new Account.Id(info._accountId);
+      Account.Id id = Account.id(info._accountId);
       AccountState state = accountStates.get(id);
       if (state != null) {
         if (!options.contains(FillOptions.SECONDARY_EMAILS)
-            || Objects.equals(currentUserId, state.getAccount().getId())
+            || Objects.equals(currentUserId, state.account().id())
             || canModifyAccount) {
           fill(info, accountStates.get(id), options);
         } else {
@@ -121,50 +120,53 @@ public class InternalAccountDirectory extends AccountDirectory {
   }
 
   private void fill(AccountInfo info, AccountState accountState, Set<FillOptions> options) {
-    Account account = accountState.getAccount();
+    Account account = accountState.account();
     if (options.contains(FillOptions.ID)) {
-      info._accountId = account.getId().get();
+      info._accountId = account.id().get();
     } else {
       // Was previously set to look up account for filling.
       info._accountId = null;
     }
     if (options.contains(FillOptions.NAME)) {
-      info.name = Strings.emptyToNull(account.getFullName());
+      info.name = Strings.emptyToNull(account.fullName());
       if (info.name == null) {
-        info.name = accountState.getUserName().orElse(null);
+        info.name = accountState.userName().orElse(null);
       }
     }
     if (options.contains(FillOptions.EMAIL)) {
-      info.email = account.getPreferredEmail();
+      info.email = account.preferredEmail();
     }
     if (options.contains(FillOptions.SECONDARY_EMAILS)) {
-      info.secondaryEmails = getSecondaryEmails(account, accountState.getExternalIds());
+      info.secondaryEmails = getSecondaryEmails(account, accountState.externalIds());
     }
     if (options.contains(FillOptions.USERNAME)) {
-      info.username = accountState.getUserName().orElse(null);
+      info.username = accountState.userName().orElse(null);
     }
 
     if (options.contains(FillOptions.STATUS)) {
-      info.status = account.getStatus();
+      info.status = account.status();
+    }
+
+    if (options.contains(FillOptions.STATE)) {
+      info.inactive = account.inactive() ? true : null;
     }
 
     if (options.contains(FillOptions.AVATARS)) {
       AvatarProvider ap = avatar.get();
       if (ap != null) {
-        info.avatars = new ArrayList<>(3);
-        IdentifiedUser user = userFactory.create(account.getId());
+        info.avatars = new ArrayList<>();
+        IdentifiedUser user = userFactory.create(account.id());
 
-        // GWT UI uses DEFAULT_SIZE (26px).
+        // PolyGerrit UI uses the following sizes for avatars:
+        // - 32px for avatars next to names e.g. on the dashboard. This is also Gerrit's default.
+        // - 56px for the user's own avatar in the menu
+        // - 100ox for other user's avatars on dashboards
+        // - 120px for the user's own profile settings page
         addAvatar(ap, info, user, AvatarInfo.DEFAULT_SIZE);
-
-        // PolyGerrit UI prefers 32px and 100px.
         if (!info.avatars.isEmpty()) {
-          if (32 != AvatarInfo.DEFAULT_SIZE) {
-            addAvatar(ap, info, user, 32);
-          }
-          if (100 != AvatarInfo.DEFAULT_SIZE) {
-            addAvatar(ap, info, user, 100);
-          }
+          addAvatar(ap, info, user, 56);
+          addAvatar(ap, info, user, 100);
+          addAvatar(ap, info, user, 120);
         }
       }
     }
@@ -172,7 +174,7 @@ public class InternalAccountDirectory extends AccountDirectory {
 
   public List<String> getSecondaryEmails(Account account, Collection<ExternalId> externalIds) {
     return ExternalId.getEmails(externalIds)
-        .filter(e -> !e.equals(account.getPreferredEmail()))
+        .filter(e -> !e.equals(account.preferredEmail()))
         .sorted()
         .collect(toList());
   }

@@ -14,25 +14,36 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 -->
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../behaviors/keyboard-shortcut-behavior/keyboard-shortcut-behavior.html">
 <link rel="import" href="../../shared/gr-autocomplete-dropdown/gr-autocomplete-dropdown.html">
 <link rel="import" href="../../shared/gr-cursor-manager/gr-cursor-manager.html">
 <link rel="import" href="../../shared/gr-overlay/gr-overlay.html">
-<link rel="import" href="../../../bower_components/iron-a11y-keys-behavior/iron-a11y-keys-behavior.html">
-<link rel="import" href="../../../bower_components/iron-autogrow-textarea/iron-autogrow-textarea.html">
+<link rel="import" href="/bower_components/iron-a11y-keys-behavior/iron-a11y-keys-behavior.html">
+<link rel="import" href="/bower_components/iron-autogrow-textarea/iron-autogrow-textarea.html">
 <link rel="import" href="../../../styles/shared-styles.html">
+<link rel="import" href="../../core/gr-reporting/gr-reporting.html">
 
 <dom-module id="gr-textarea">
   <template>
     <style include="shared-styles">
       :host {
-        display: block;
+        display: flex;
         position: relative;
       }
       :host(.monospace) {
         font-family: var(--monospace-font-family);
+        font-size: var(--font-size-mono);
+        line-height: var(--line-height-mono);
+        font-weight: var(--font-weight-normal);
+      }
+      :host(.code) {
+        font-family: var(--monospace-font-family);
+        font-size: var(--font-size-code);
+        line-height: var(--line-height-code);
+        font-weight: var(--font-weight-normal);
       }
       #emojiSuggestions {
         font-family: var(--font-family);
@@ -48,12 +59,11 @@ limitations under the License.
         visibility: visible;
         white-space: normal;
       }
-      /*This is needed to not add a scroll bar on the side of gr-textarea
-      since there is 2px of padding in iron-autogrow-textarea for the
-      native textarea*/
       iron-autogrow-textarea {
-        padding: 2px;
         position: relative;
+
+        /** This is needed for firefox */
+        --iron-autogrow-textarea_-_white-space: pre-wrap;
       }
       #textarea.noBorder {
         border: none;
@@ -92,6 +102,7 @@ limitations under the License.
         max-rows="[[maxRows]]"
         value="{{text}}"
         on-bind-value-changed="_onValueChanged"></iron-autogrow-textarea>
+    <gr-reporting id="reporting"></gr-reporting>
   </template>
   <script src="gr-textarea.js"></script>
 </dom-module>

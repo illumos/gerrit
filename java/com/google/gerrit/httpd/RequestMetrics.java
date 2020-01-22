@@ -18,6 +18,7 @@ import com.google.gerrit.metrics.Counter1;
 import com.google.gerrit.metrics.Description;
 import com.google.gerrit.metrics.Field;
 import com.google.gerrit.metrics.MetricMaker;
+import com.google.gerrit.server.logging.Metadata;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 
@@ -28,15 +29,20 @@ public class RequestMetrics {
 
   @Inject
   public RequestMetrics(MetricMaker metricMaker) {
+    Field<Integer> statusCodeField =
+        Field.ofInteger("status", Metadata.Builder::httpStatus)
+            .description("HTTP status code")
+            .build();
+
     errors =
         metricMaker.newCounter(
             "http/server/error_count",
             new Description("Rate of REST API error responses").setRate().setUnit("errors"),
-            Field.ofInteger("status", "HTTP status code"));
+            statusCodeField);
     successes =
         metricMaker.newCounter(
             "http/server/success_count",
             new Description("Rate of REST API success responses").setRate().setUnit("successes"),
-            Field.ofInteger("status", "HTTP status code"));
+            statusCodeField);
   }
 }

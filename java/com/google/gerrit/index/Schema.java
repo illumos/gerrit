@@ -15,19 +15,18 @@
 package com.google.gerrit.index;
 
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.collect.ImmutableList.toImmutableList;
 
-import com.google.common.base.Function;
 import com.google.common.base.MoreObjects;
-import com.google.common.base.Predicates;
-import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.flogger.FluentLogger;
-import com.google.gwtorm.server.OrmException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 /** Specific version of a secondary index schema. */
@@ -36,6 +35,7 @@ public class Schema<T> {
 
   public static class Builder<T> {
     private final List<FieldDef<T, ?>> fields = new ArrayList<>();
+    private boolean useLegacyNumericFields;
 
     public Builder<T> add(Schema<T> schema) {
       this.fields.addAll(schema.getFields().values());
@@ -54,8 +54,13 @@ public class Schema<T> {
       return this;
     }
 
+    public Builder<T> legacyNumericFields(boolean useLegacyNumericFields) {
+      this.useLegacyNumericFields = useLegacyNumericFields;
+      return this;
+    }
+
     public Schema<T> build() {
-      return new Schema<>(ImmutableList.copyOf(fields));
+      return new Schema<>(useLegacyNumericFields, ImmutableList.copyOf(fields));
     }
   }
 
@@ -84,14 +89,15 @@ public class Schema<T> {
 
   private final ImmutableMap<String, FieldDef<T, ?>> fields;
   private final ImmutableMap<String, FieldDef<T, ?>> storedFields;
+  private final boolean useLegacyNumericFields;
 
   private int version;
 
-  public Schema(Iterable<FieldDef<T, ?>> fields) {
-    this(0, fields);
+  public Schema(boolean useLegacyNumericFields, Iterable<FieldDef<T, ?>> fields) {
+    this(0, useLegacyNumericFields, fields);
   }
 
-  public Schema(int version, Iterable<FieldDef<T, ?>> fields) {
+  public Schema(int version, boolean useLegacyNumericFields, Iterable<FieldDef<T, ?>> fields) {
     this.version = version;
     ImmutableMap.Builder<String, FieldDef<T, ?>> b = ImmutableMap.builder();
     ImmutableMap.Builder<String, FieldDef<T, ?>> sb = ImmutableMap.builder();
@@ -103,10 +109,15 @@ public class Schema<T> {
     }
     this.fields = b.build();
     this.storedFields = sb.build();
+    this.useLegacyNumericFields = useLegacyNumericFields;
   }
 
   public final int getVersion() {
     return version;
+  }
+
+  public final boolean useLegacyNumericFields() {
+    return useLegacyNumericFields;
   }
 
   /**
@@ -171,32 +182,35 @@ public class Schema<T> {
    * <p>Null values are omitted, as are fields which cause errors, which are logged.
    *
    * @param obj input object.
+   * @param skipFields set of field names to skip when indexing the document
    * @return all non-null field values from the object.
    */
-  public final Iterable<Values<T>> buildFields(T obj) {
-    return FluentIterable.from(fields.values())
-        .transform(
-            new Function<FieldDef<T, ?>, Values<T>>() {
-              @Override
-              public Values<T> apply(FieldDef<T, ?> f) {
-                Object v;
-                try {
-                  v = f.get(obj);
-                } catch (OrmException e) {
-                  logger.atSevere().withCause(e).log(
-                      "error getting field %s of %s", f.getName(), obj);
-                  return null;
-                }
-                if (v == null) {
-                  return null;
-                } else if (f.isRepeatable()) {
-                  return new Values<>(f, (Iterable<?>) v);
-                } else {
-                  return new Values<>(f, Collections.singleton(v));
-                }
+  public final Iterable<Values<T>> buildFields(T obj, ImmutableSet<String> skipFields) {
+    return fields.values().stream()
+        .map(
+            f -> {
+              if (skipFields.contains(f.getName())) {
+                return null;
+              }
+
+              Object v;
+              try {
+                v = f.get(obj);
+              } catch (RuntimeException e) {
+                logger.atSevere().withCause(e).log(
+                    "error getting field %s of %s", f.getName(), obj);
+                return null;
+              }
+              if (v == null) {
+                return null;
+              } else if (f.isRepeatable()) {
+                return new Values<>(f, (Iterable<?>) v);
+              } else {
+                return new Values<>(f, Collections.singleton(v));
               }
             })
-        .filter(Predicates.notNull());
+        .filter(Objects::nonNull)
+        .collect(toImmutableList());
   }
 
   @Override

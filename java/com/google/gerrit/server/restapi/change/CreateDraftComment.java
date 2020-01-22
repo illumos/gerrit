@@ -14,21 +14,20 @@
 
 package com.google.gerrit.server.restapi.change;
 
-import static com.google.gerrit.server.CommentsUtil.setCommentRevId;
+import static com.google.gerrit.server.CommentsUtil.setCommentCommitId;
 
 import com.google.common.base.Strings;
+import com.google.gerrit.entities.Comment;
+import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.extensions.api.changes.DraftInput;
 import com.google.gerrit.extensions.common.CommentInfo;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
+import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
 import com.google.gerrit.extensions.restapi.Url;
-import com.google.gerrit.reviewdb.client.Comment;
-import com.google.gerrit.reviewdb.client.PatchLineComment.Status;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.CommentsUtil;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.change.RevisionResource;
@@ -38,20 +37,16 @@ import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
-import com.google.gerrit.server.update.RetryHelper;
-import com.google.gerrit.server.update.RetryingRestModifyView;
 import com.google.gerrit.server.update.UpdateException;
 import com.google.gerrit.server.util.time.TimeUtil;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.util.Collections;
 
 @Singleton
-public class CreateDraftComment
-    extends RetryingRestModifyView<RevisionResource, DraftInput, Response<CommentInfo>> {
-  private final Provider<ReviewDb> db;
+public class CreateDraftComment implements RestModifyView<RevisionResource, DraftInput> {
+  private final BatchUpdate.Factory updateFactory;
   private final Provider<CommentJson> commentJson;
   private final CommentsUtil commentsUtil;
   private final PatchSetUtil psUtil;
@@ -59,14 +54,12 @@ public class CreateDraftComment
 
   @Inject
   CreateDraftComment(
-      Provider<ReviewDb> db,
-      RetryHelper retryHelper,
+      BatchUpdate.Factory updateFactory,
       Provider<CommentJson> commentJson,
       CommentsUtil commentsUtil,
       PatchSetUtil psUtil,
       PatchListCache patchListCache) {
-    super(retryHelper);
-    this.db = db;
+    this.updateFactory = updateFactory;
     this.commentJson = commentJson;
     this.commentsUtil = commentsUtil;
     this.psUtil = psUtil;
@@ -74,9 +67,8 @@ public class CreateDraftComment
   }
 
   @Override
-  protected Response<CommentInfo> applyImpl(
-      BatchUpdate.Factory updateFactory, RevisionResource rsrc, DraftInput in)
-      throws RestApiException, UpdateException, OrmException, PermissionBackendException {
+  public Response<CommentInfo> apply(RevisionResource rsrc, DraftInput in)
+      throws RestApiException, UpdateException, PermissionBackendException {
     if (Strings.isNullOrEmpty(in.path)) {
       throw new BadRequestException("path must be non-empty");
     } else if (in.message == null || in.message.trim().isEmpty()) {
@@ -88,8 +80,8 @@ public class CreateDraftComment
     }
 
     try (BatchUpdate bu =
-        updateFactory.create(db.get(), rsrc.getProject(), rsrc.getUser(), TimeUtil.nowTs())) {
-      Op op = new Op(rsrc.getPatchSet().getId(), in);
+        updateFactory.create(rsrc.getProject(), rsrc.getUser(), TimeUtil.nowTs())) {
+      Op op = new Op(rsrc.getPatchSet().id(), in);
       bu.addOp(rsrc.getChange().getId(), op);
       bu.execute();
       return Response.created(
@@ -110,9 +102,9 @@ public class CreateDraftComment
 
     @Override
     public boolean updateChange(ChangeContext ctx)
-        throws ResourceNotFoundException, OrmException, UnprocessableEntityException,
+        throws ResourceNotFoundException, UnprocessableEntityException,
             PatchListNotAvailableException {
-      PatchSet ps = psUtil.get(ctx.getDb(), ctx.getNotes(), psId);
+      PatchSet ps = psUtil.get(ctx.getNotes(), psId);
       if (ps == null) {
         throw new ResourceNotFoundException("patch set not found: " + psId);
       }
@@ -120,15 +112,14 @@ public class CreateDraftComment
 
       comment =
           commentsUtil.newComment(
-              ctx, in.path, ps.getId(), in.side(), in.message.trim(), in.unresolved, parentUuid);
+              ctx, in.path, ps.id(), in.side(), in.message.trim(), in.unresolved, parentUuid);
       comment.setLineNbrAndRange(in.line, in.range);
       comment.tag = in.tag;
 
-      setCommentRevId(comment, patchListCache, ctx.getChange(), ps);
+      setCommentCommitId(comment, patchListCache, ctx.getChange(), ps);
 
       commentsUtil.putComments(
-          ctx.getDb(), ctx.getUpdate(psId), Status.DRAFT, Collections.singleton(comment));
-      ctx.dontBumpLastUpdatedOn();
+          ctx.getUpdate(psId), Comment.Status.DRAFT, Collections.singleton(comment));
       return true;
     }
   }

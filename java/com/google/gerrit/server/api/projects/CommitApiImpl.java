@@ -58,7 +58,7 @@ public class CommitApiImpl implements CommitApi {
   @Override
   public CommitInfo get() throws RestApiException {
     try {
-      return getCommit.apply(commitResource);
+      return getCommit.apply(commitResource).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot get commit info", e);
     }
@@ -67,7 +67,7 @@ public class CommitApiImpl implements CommitApi {
   @Override
   public ChangeApi cherryPick(CherryPickInput input) throws RestApiException {
     try {
-      return changes.id(cherryPickCommit.apply(commitResource, input)._number);
+      return changes.id(cherryPickCommit.apply(commitResource, input).value()._number);
     } catch (Exception e) {
       throw asRestApiException("Cannot cherry pick", e);
     }
@@ -76,7 +76,7 @@ public class CommitApiImpl implements CommitApi {
   @Override
   public IncludedInInfo includedIn() throws RestApiException {
     try {
-      return includedIn.apply(commitResource);
+      return includedIn.apply(commitResource).value();
     } catch (Exception e) {
       throw asRestApiException("Could not extract IncludedIn data", e);
     }

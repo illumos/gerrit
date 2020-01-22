@@ -14,19 +14,17 @@
 
 package com.google.gerrit.server.restapi.change;
 
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.api.changes.ReviewerInfo;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.mail.Address;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.change.ReviewerJson;
 import com.google.gerrit.server.change.ReviewerResource;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -34,29 +32,22 @@ import java.util.Map;
 
 @Singleton
 public class ListReviewers implements RestReadView<ChangeResource> {
-  private final Provider<ReviewDb> dbProvider;
   private final ApprovalsUtil approvalsUtil;
   private final ReviewerJson json;
   private final ReviewerResource.Factory resourceFactory;
 
   @Inject
   ListReviewers(
-      Provider<ReviewDb> dbProvider,
-      ApprovalsUtil approvalsUtil,
-      ReviewerResource.Factory resourceFactory,
-      ReviewerJson json) {
-    this.dbProvider = dbProvider;
+      ApprovalsUtil approvalsUtil, ReviewerResource.Factory resourceFactory, ReviewerJson json) {
     this.approvalsUtil = approvalsUtil;
     this.resourceFactory = resourceFactory;
     this.json = json;
   }
 
   @Override
-  public List<ReviewerInfo> apply(ChangeResource rsrc)
-      throws OrmException, PermissionBackendException {
+  public Response<List<ReviewerInfo>> apply(ChangeResource rsrc) throws PermissionBackendException {
     Map<String, ReviewerResource> reviewers = new LinkedHashMap<>();
-    ReviewDb db = dbProvider.get();
-    for (Account.Id accountId : approvalsUtil.getReviewers(db, rsrc.getNotes()).all()) {
+    for (Account.Id accountId : approvalsUtil.getReviewers(rsrc.getNotes()).all()) {
       if (!reviewers.containsKey(accountId.toString())) {
         reviewers.put(accountId.toString(), resourceFactory.create(rsrc, accountId));
       }
@@ -66,6 +57,6 @@ public class ListReviewers implements RestReadView<ChangeResource> {
         reviewers.put(adr.toString(), new ReviewerResource(rsrc, adr));
       }
     }
-    return json.format(reviewers.values());
+    return Response.ok(json.format(reviewers.values()));
   }
 }

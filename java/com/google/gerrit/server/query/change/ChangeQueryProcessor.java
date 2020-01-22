@@ -17,20 +17,25 @@ package com.google.gerrit.server.query.change;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.gerrit.server.query.change.ChangeQueryBuilder.FIELD_LIMIT;
 
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableListMultimap;
 import com.google.gerrit.extensions.common.PluginDefinedInfo;
-import com.google.gerrit.extensions.registration.DynamicMap;
+import com.google.gerrit.extensions.registration.DynamicSet;
+import com.google.gerrit.extensions.registration.Extension;
 import com.google.gerrit.index.IndexConfig;
 import com.google.gerrit.index.QueryOptions;
 import com.google.gerrit.index.query.IndexPredicate;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryProcessor;
 import com.google.gerrit.metrics.MetricMaker;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.AnonymousUser;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.DynamicOptions;
 import com.google.gerrit.server.DynamicOptions.DynamicBean;
 import com.google.gerrit.server.account.AccountLimits;
+import com.google.gerrit.server.change.ChangeAttributeFactory;
+import com.google.gerrit.server.change.PluginDefinedAttributesFactories;
+import com.google.gerrit.server.change.PluginDefinedAttributesFactory;
 import com.google.gerrit.server.index.change.ChangeIndexCollection;
 import com.google.gerrit.server.index.change.ChangeIndexRewriter;
 import com.google.gerrit.server.index.change.ChangeSchemaDefinitions;
@@ -40,9 +45,7 @@ import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -53,21 +56,10 @@ import java.util.Set;
  * holding on to a single instance.
  */
 public class ChangeQueryProcessor extends QueryProcessor<ChangeData>
-    implements DynamicOptions.BeanReceiver, PluginDefinedAttributesFactory {
-  /**
-   * Register a ChangeAttributeFactory in a config Module like this:
-   *
-   * <p>bind(ChangeAttributeFactory.class) .annotatedWith(Exports.named("export-name"))
-   * .to(YourClass.class);
-   */
-  public interface ChangeAttributeFactory {
-    PluginDefinedInfo create(ChangeData a, ChangeQueryProcessor qp, String plugin);
-  }
-
-  private final Provider<ReviewDb> db;
+    implements DynamicOptions.BeanReceiver, DynamicOptions.BeanProvider {
   private final Provider<CurrentUser> userProvider;
   private final ChangeNotes.Factory notesFactory;
-  private final DynamicMap<ChangeAttributeFactory> attributeFactories;
+  private final ImmutableListMultimap<String, ChangeAttributeFactory> attributeFactoriesByPlugin;
   private final PermissionBackend permissionBackend;
   private final ProjectCache projectCache;
   private final Provider<AnonymousUser> anonymousUserProvider;
@@ -88,9 +80,8 @@ public class ChangeQueryProcessor extends QueryProcessor<ChangeData>
       IndexConfig indexConfig,
       ChangeIndexCollection indexes,
       ChangeIndexRewriter rewriter,
-      Provider<ReviewDb> db,
       ChangeNotes.Factory notesFactory,
-      DynamicMap<ChangeAttributeFactory> attributeFactories,
+      DynamicSet<ChangeAttributeFactory> attributeFactories,
       PermissionBackend permissionBackend,
       ProjectCache projectCache,
       Provider<AnonymousUser> anonymousUserProvider) {
@@ -102,13 +93,18 @@ public class ChangeQueryProcessor extends QueryProcessor<ChangeData>
         rewriter,
         FIELD_LIMIT,
         () -> limitsFactory.create(userProvider.get()).getQueryLimit());
-    this.db = db;
     this.userProvider = userProvider;
     this.notesFactory = notesFactory;
-    this.attributeFactories = attributeFactories;
     this.permissionBackend = permissionBackend;
     this.projectCache = projectCache;
     this.anonymousUserProvider = anonymousUserProvider;
+
+    ImmutableListMultimap.Builder<String, ChangeAttributeFactory> factoriesBuilder =
+        ImmutableListMultimap.builder();
+    // Eagerly call Extension#get() rather than storing Extensions, since that method invokes the
+    // Provider on every call, which could be expensive if we invoke it once for every change.
+    attributeFactories.entries().forEach(e -> factoriesBuilder.put(e.getPluginName(), e.get()));
+    attributeFactoriesByPlugin = factoriesBuilder.build();
   }
 
   @Override
@@ -128,32 +124,21 @@ public class ChangeQueryProcessor extends QueryProcessor<ChangeData>
     dynamicBeans.put(plugin, dynamicBean);
   }
 
+  @Override
   public DynamicBean getDynamicBean(String plugin) {
     return dynamicBeans.get(plugin);
   }
 
-  @Override
-  public List<PluginDefinedInfo> create(ChangeData cd) {
-    List<PluginDefinedInfo> plugins = new ArrayList<>(attributeFactories.plugins().size());
-    for (String plugin : attributeFactories.plugins()) {
-      for (Provider<ChangeAttributeFactory> provider :
-          attributeFactories.byPlugin(plugin).values()) {
-        PluginDefinedInfo pda = null;
-        try {
-          pda = provider.get().create(cd, this, plugin);
-        } catch (RuntimeException e) {
-          /* Eat runtime exceptions so that queries don't fail. */
-        }
-        if (pda != null) {
-          pda.name = plugin;
-          plugins.add(pda);
-        }
-      }
-    }
-    if (plugins.isEmpty()) {
-      plugins = null;
-    }
-    return plugins;
+  public PluginDefinedAttributesFactory getAttributesFactory() {
+    return this::buildPluginInfo;
+  }
+
+  private ImmutableList<PluginDefinedInfo> buildPluginInfo(ChangeData cd) {
+    return PluginDefinedAttributesFactories.createAll(
+        cd,
+        this,
+        attributeFactoriesByPlugin.entries().stream()
+            .map(e -> new Extension<>(e.getKey(), e::getValue)));
   }
 
   @Override
@@ -161,7 +146,6 @@ public class ChangeQueryProcessor extends QueryProcessor<ChangeData>
     return new AndChangeSource(
         pred,
         new ChangeIsVisibleToPredicate(
-            db,
             notesFactory,
             userProvider.get(),
             permissionBackend,

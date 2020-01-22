@@ -16,17 +16,16 @@ package com.google.gerrit.server.query.change;
 
 import static com.google.gerrit.server.index.change.ChangeField.REVIEWEDBY;
 
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.index.query.Predicate;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.index.change.ChangeField;
-import com.google.gwtorm.server.OrmException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
 
 public class IsReviewedPredicate extends ChangeIndexPredicate {
-  protected static final Account.Id NOT_REVIEWED = new Account.Id(ChangeField.NOT_REVIEWED);
+  protected static final Account.Id NOT_REVIEWED = Account.id(ChangeField.NOT_REVIEWED);
 
   public static Predicate<ChangeData> create() {
     return Predicate.not(new IsReviewedPredicate(NOT_REVIEWED));
@@ -48,7 +47,7 @@ public class IsReviewedPredicate extends ChangeIndexPredicate {
   }
 
   @Override
-  public boolean match(ChangeData cd) throws OrmException {
+  public boolean match(ChangeData cd) {
     Set<Account.Id> reviewedBy = cd.reviewedBy();
     return !reviewedBy.isEmpty() ? reviewedBy.contains(id) : id.equals(NOT_REVIEWED);
   }

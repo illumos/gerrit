@@ -15,10 +15,10 @@
 package com.google.gerrit.server.restapi.group;
 
 import com.google.gerrit.extensions.common.GroupInfo;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.server.group.SubgroupResource;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 
@@ -32,7 +32,7 @@ public class GetSubgroup implements RestReadView<SubgroupResource> {
   }
 
   @Override
-  public GroupInfo apply(SubgroupResource rsrc) throws OrmException, PermissionBackendException {
-    return json.format(rsrc.getMemberDescription());
+  public Response<GroupInfo> apply(SubgroupResource rsrc) throws PermissionBackendException {
+    return Response.ok(json.format(rsrc.getMemberDescription()));
   }
 }

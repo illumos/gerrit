@@ -1,3 +1,4 @@
+:linkattrs:
 = Gerrit Code Review for Git
 
 == Quickstarts
@@ -9,11 +10,14 @@
 . link:intro-quick.html[Product Overview]
 . link:intro-how-gerrit-works.html[How Gerrit Works]
 . link:intro-gerrit-walkthrough.html[Basic Gerrit Walkthrough]
+.. link:intro-gerrit-walkthrough-github.html[Basic Gerrit Walkthrough -- For GitHub Users]
+. link:dev-community.html[Gerrit Community]
+.. link:dev-contributing.html[Contributor Guide]
 
 == Guides
 . link:intro-user.html[User Guide]
 . link:intro-project-owner.html[Project Owner Guide]
-. link:https://source.android.com/source/developing[Default Android Workflow] (external)
+. link:https://source.android.com/source/developing[Default Android Workflow,role=external,window=_blank] (external)
 
 == Tutorials
 . Web
@@ -40,7 +44,7 @@
 . link:access-control.html[Access Controls]
 . Multi-project management
 .. link:user-submodules.html[Submodules]
-.. link:https://source.android.com/source/using-repo.html[Repo] (external)
+.. link:https://source.android.com/source/using-repo.html[Repo,role=external,window=_blank] (external)
 . Prolog rules
 .. link:prolog-cookbook.html[Prolog Cookbook]
 .. link:prolog-change-facts.html[Prolog Facts for Gerrit Changes]
@@ -72,27 +76,6 @@
 . link:config-accounts.html[Accounts on NoteDb]
 . link:config-groups.html[Groups on NoteDb]
 
-== Developer
-. Getting Started
-.. link:dev-readme.html[Developer Setup]
-.. link:dev-bazel.html[Building with Bazel]
-.. link:dev-eclipse.html[Eclipse Setup]
-.. link:dev-intellij.html[IntelliJ Setup]
-.. link:dev-contributing.html[Contributing to Gerrit]
-. Plugin Development
-.. link:dev-plugins.html[Developing Plugins]
-.. link:dev-build-plugins.html[Building Gerrit plugins]
-.. link:js-api.html[JavaScript Plugin API]
-.. link:config-validation.html[Validation Interfaces]
-.. link:dev-stars.html[Starring Changes]
-. link:dev-design.html[System Design]
-. link:i18n-readme.html[i18n Support]
-
-== Maintainer
-. link:dev-release.html[Making a Gerrit Release]
-. link:dev-release-subproject.html[Making a Release of a Gerrit Subproject]
-. link:dev-release-jgit.html[Making a Release of JGit]
-
 == Concepts
 . link:config-labels.html[Review Labels]
 . link:access-control.html[Access Controls]
@@ -102,11 +85,11 @@
 
 == Resources
 * link:licenses.html[Licenses and Notices]
-* link:https://www.gerritcodereview.com/[Homepage]
-* link:https://www.gerritcodereview.com/download/index.html[Downloads]
-* link:https://bugs.chromium.org/p/gerrit/issues/list[Issue Tracking]
-* link:https://gerrit.googlesource.com/gerrit[Source Code]
-* link:https://www.gerritcodereview.com/about.md[A History of Gerrit Code Review]
+* link:https://www.gerritcodereview.com/[Homepage,role=external,window=_blank]
+* link:https://gerrit-releases.storage.googleapis.com/index.html[Downloads,role=external,window=_blank]
+* link:https://bugs.chromium.org/p/gerrit/issues/list[Issue Tracking,role=external,window=_blank]
+* link:https://gerrit.googlesource.com/gerrit[Source Code,role=external,window=_blank]
+* link:https://www.gerritcodereview.com/about.md[A History of Gerrit Code Review,role=external,window=_blank]
 
 GERRIT
 ------

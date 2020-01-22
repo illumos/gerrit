@@ -15,12 +15,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 <link rel="import" href="../../shared/gr-overlay/gr-overlay.html">
 
 <dom-module id="gr-plugin-popup">
   <template>
-    <style include="shared-styles"></style>
+    <style include="shared-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <gr-overlay id="overlay" with-backdrop>
       <slot></slot>
     </gr-overlay>

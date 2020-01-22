@@ -15,24 +15,36 @@
 package com.google.gerrit.acceptance.server.change;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.gerrit.acceptance.GitUtil.assertPushOk;
 import static com.google.gerrit.acceptance.GitUtil.pushHead;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allowCapability;
 import static com.google.gerrit.extensions.common.testing.EditInfoSubject.assertThat;
-import static java.util.concurrent.TimeUnit.SECONDS;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
+import com.google.common.truth.Correspondence;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
-import com.google.gerrit.acceptance.GerritConfig;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.PushOneCommit;
+import com.google.gerrit.acceptance.UseClockStep;
+import com.google.gerrit.acceptance.UseTimezone;
+import com.google.gerrit.acceptance.config.GerritConfig;
+import com.google.gerrit.acceptance.testsuite.account.AccountOperations;
+import com.google.gerrit.acceptance.testsuite.group.GroupOperations;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.common.RawInputUtil;
+import com.google.gerrit.common.data.GlobalCapability;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.extensions.api.changes.RelatedChangeAndCommitInfo;
+import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.common.CommitInfo;
 import com.google.gerrit.extensions.common.EditInfo;
 import com.google.gerrit.index.IndexConfig;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSet;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.restapi.change.ChangesCollection;
 import com.google.gerrit.server.restapi.change.GetRelated;
@@ -41,21 +53,22 @@ import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.gerrit.testing.ConfigSuite;
-import com.google.gerrit.testing.TestTimeUtil;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.revwalk.RevCommit;
-import org.junit.After;
-import org.junit.Before;
 import org.junit.Test;
 
 @NoHttpd
+@UseClockStep
+@UseTimezone(timezone = "US/Eastern")
 public class GetRelatedIT extends AbstractDaemonTest {
   private static final int MAX_TERMS = 10;
 
@@ -66,26 +79,17 @@ public class GetRelatedIT extends AbstractDaemonTest {
     return cfg;
   }
 
-  private String systemTimeZone;
-
-  @Before
-  public void setTimeForTesting() {
-    systemTimeZone = System.setProperty("user.timezone", "US/Eastern");
-    TestTimeUtil.resetWithClockStep(1, SECONDS);
-  }
-
-  @After
-  public void resetTime() {
-    TestTimeUtil.useSystemTime();
-    System.setProperty("user.timezone", systemTimeZone);
-  }
+  @Inject private AccountOperations accountOperations;
+  @Inject private GroupOperations groupOperations;
+  @Inject private ProjectOperations projectOperations;
+  @Inject private RequestScopeOperations requestScopeOperations;
 
   @Inject private IndexConfig indexConfig;
   @Inject private ChangesCollection changes;
 
   @Test
   public void getRelatedNoResult() throws Exception {
-    PushOneCommit push = pushFactory.create(db, admin.getIdent(), testRepo);
+    PushOneCommit push = pushFactory.create(admin.newIdent(), testRepo);
     assertRelated(push.to("refs/for/master").getPatchSetId());
   }
 
@@ -112,14 +116,14 @@ public class GetRelatedIT extends AbstractDaemonTest {
     testRepo.reset(c1_1);
     pushHead(testRepo, "refs/for/master", false);
     PatchSet.Id ps1_1 = getPatchSetId(c1_1);
-    String oldETag = changes.parse(ps1_1.getParentKey()).getETag();
+    String oldETag = changes.parse(ps1_1.changeId()).getETag();
 
     testRepo.reset(c2_1);
     pushHead(testRepo, "refs/for/master", false);
     PatchSet.Id ps2_1 = getPatchSetId(c2_1);
 
     // Push of change 2 should not affect groups (or anything else) of change 1.
-    assertThat(changes.parse(ps1_1.getParentKey()).getETag()).isEqualTo(oldETag);
+    assertThat(changes.parse(ps1_1.changeId()).getETag()).isEqualTo(oldETag);
 
     for (PatchSet.Id ps : ImmutableList.of(ps2_1, ps1_1)) {
       assertRelated(ps, changeAndCommit(ps2_1, c2_1, 1), changeAndCommit(ps1_1, c1_1, 1));
@@ -481,7 +485,7 @@ public class GetRelatedIT extends AbstractDaemonTest {
 
     PatchSet.Id ps1_1 = getPatchSetId(c1_1);
     PatchSet.Id ps2_1 = getPatchSetId(c2_1);
-    PatchSet.Id ps2_edit = new PatchSet.Id(ch2.getId(), 0);
+    PatchSet.Id ps2_edit = PatchSet.id(ch2.getId(), 0);
     PatchSet.Id ps3_1 = getPatchSetId(c3_1);
 
     for (PatchSet.Id ps : ImmutableList.of(ps1_1, ps2_1, ps3_1)) {
@@ -495,7 +499,7 @@ public class GetRelatedIT extends AbstractDaemonTest {
     assertRelated(
         ps2_edit,
         changeAndCommit(ps3_1, c3_1, 1),
-        changeAndCommit(new PatchSet.Id(ch2.getId(), 0), editRev, 1),
+        changeAndCommit(PatchSet.id(ch2.getId(), 0), editRev, 1),
         changeAndCommit(ps1_1, c1_1, 1));
   }
 
@@ -516,7 +520,7 @@ public class GetRelatedIT extends AbstractDaemonTest {
 
     // Pretend PS1,1 was pushed before the groups field was added.
     clearGroups(psId1_1);
-    indexer.index(changeDataFactory.create(db, project, psId1_1.getParentKey()));
+    indexer.index(changeDataFactory.create(project, psId1_1.changeId()));
 
     // PS1,1 has no groups, so disappeared from related changes.
     assertRelated(psId2_1);
@@ -551,14 +555,13 @@ public class GetRelatedIT extends AbstractDaemonTest {
 
     PatchSet.Id psId1_1 = getPatchSetId(c1_1);
     PatchSet.Id psId2_1 = getPatchSetId(c2_1);
-    PatchSet.Id psId2_2 = new PatchSet.Id(psId2_1.changeId, psId2_1.get() + 1);
+    PatchSet.Id psId2_2 = PatchSet.id(psId2_1.changeId(), psId2_1.get() + 1);
 
     assertRelated(psId2_2, changeAndCommit(psId2_2, c2_2, 2), changeAndCommit(psId1_1, c1_1, 1));
   }
 
   @Test
   public void getRelatedManyGroups() throws Exception {
-    List<RevCommit> commits = new ArrayList<>();
     RevCommit last = null;
     int n = 2 * MAX_TERMS;
     assertThat(n).isGreaterThan(indexConfig.maxTerms());
@@ -567,22 +570,76 @@ public class GetRelatedIT extends AbstractDaemonTest {
       last = cb.add("a.txt", Integer.toString(i)).message("subject: " + i).create();
       testRepo.reset(last);
       assertPushOk(pushHead(testRepo, "refs/for/master", false), "refs/for/master");
-      commits.add(last);
     }
 
     ChangeData cd = getChange(last);
     assertThat(cd.patchSets()).hasSize(n);
-    assertThat(GetRelated.getAllGroups(cd.notes(), db, psUtil)).hasSize(n);
+    assertThat(GetRelated.getAllGroups(cd.notes(), psUtil)).hasSize(n);
 
     assertRelated(cd.change().currentPatchSetId());
   }
 
-  private List<RelatedChangeAndCommitInfo> getRelated(PatchSet.Id ps) throws Exception {
-    return getRelated(ps.getParentKey(), ps.get());
+  @Test
+  public void getRelatedManyChanges() throws Exception {
+    List<ObjectId> commitIds = new ArrayList<>();
+    for (int i = 1; i <= 5; i++) {
+      commitIds.add(commitBuilder().add(i + ".txt", "i").message("subject: " + i).create().copy());
+    }
+    pushHead(testRepo, "refs/for/master", false);
+
+    List<RelatedChangeAndCommitInfo> expected = new ArrayList<>(commitIds.size());
+    for (ObjectId commitId : commitIds) {
+      expected.add(changeAndCommit(getPatchSetId(commitId), commitId, 1));
+    }
+    Collections.reverse(expected);
+
+    PatchSet.Id lastPsId = getPatchSetId(Iterables.getLast(commitIds));
+    assertRelated(lastPsId, expected);
+
+    Account.Id accountId = accountOperations.newAccount().create();
+    AccountGroup.UUID groupUuid = groupOperations.newGroup().addMember(accountId).create();
+    projectOperations
+        .allProjectsForUpdate()
+        .add(allowCapability(GlobalCapability.QUERY_LIMIT).group(groupUuid).range(0, 2))
+        .update();
+    requestScopeOperations.setApiUser(accountId);
+
+    assertRelated(lastPsId, expected);
   }
 
-  private List<RelatedChangeAndCommitInfo> getRelated(Change.Id changeId, int ps) throws Exception {
-    return gApi.changes().id(changeId.get()).revision(ps).related().changes;
+  @Test
+  public void stateOfRelatedChangesMatchesDocumentedValues() throws Exception {
+    // Set up three related changes, one new, the other abandoned, and the third merged.
+    RevCommit commit1 =
+        commitBuilder().add("a.txt", "File content 1").message("Subject 1").create();
+    RevCommit commit2 =
+        commitBuilder().add("b.txt", "File content 2").message("Subject 2").create();
+    RevCommit commit3 =
+        commitBuilder().add("c.txt", "File content 3").message("Subject 3").create();
+    pushHead(testRepo, "refs/for/master", false);
+    Change change1 = getChange(commit1).change();
+    Change change2 = getChange(commit2).change();
+    Change change3 = getChange(commit3).change();
+    gApi.changes().id(change1.getChangeId()).current().review(ReviewInput.approve());
+    gApi.changes().id(change1.getChangeId()).current().submit();
+    gApi.changes().id(change2.getChangeId()).abandon();
+
+    List<RelatedChangeAndCommitInfo> relatedChanges =
+        gApi.changes().id(change3.getChangeId()).current().related().changes;
+
+    // Ensure that our REST API returns the states exactly as documented (and required by the
+    // frontend).
+    assertThat(relatedChanges)
+        .comparingElementsUsing(getRelatedChangeToStatusCorrespondence())
+        .containsExactly("NEW", "ABANDONED", "MERGED");
+  }
+
+  private static Correspondence<RelatedChangeAndCommitInfo, String>
+      getRelatedChangeToStatusCorrespondence() {
+    return Correspondence.from(
+        (relatedChangeAndCommitInfo, status) ->
+            Objects.equals(relatedChangeAndCommitInfo.status, status),
+        "has status");
   }
 
   private RevCommit parseBody(RevCommit c) throws Exception {
@@ -602,7 +659,7 @@ public class GetRelatedIT extends AbstractDaemonTest {
       PatchSet.Id psId, ObjectId commitId, int currentRevisionNum) {
     RelatedChangeAndCommitInfo result = new RelatedChangeAndCommitInfo();
     result.project = project.get();
-    result._changeNumber = psId.getParentKey().get();
+    result._changeNumber = psId.changeId().get();
     result.commit = new CommitInfo();
     result.commit.commit = commitId.name();
     result._revisionNumber = psId.get();
@@ -612,15 +669,13 @@ public class GetRelatedIT extends AbstractDaemonTest {
   }
 
   private void clearGroups(PatchSet.Id psId) throws Exception {
-    try (BatchUpdate bu = batchUpdateFactory.create(db, project, user(user), TimeUtil.nowTs())) {
+    try (BatchUpdate bu = batchUpdateFactory.create(project, user(user), TimeUtil.nowTs())) {
       bu.addOp(
-          psId.getParentKey(),
+          psId.changeId(),
           new BatchUpdateOp() {
             @Override
-            public boolean updateChange(ChangeContext ctx) throws OrmException {
-              PatchSet ps = psUtil.get(ctx.getDb(), ctx.getNotes(), psId);
-              psUtil.setGroups(ctx.getDb(), ctx.getUpdate(psId), ps, ImmutableList.<String>of());
-              ctx.dontBumpLastUpdatedOn();
+            public boolean updateChange(ChangeContext ctx) {
+              ctx.getUpdate(psId).setGroups(ImmutableList.of());
               return true;
             }
           });
@@ -630,20 +685,27 @@ public class GetRelatedIT extends AbstractDaemonTest {
 
   private void assertRelated(PatchSet.Id psId, RelatedChangeAndCommitInfo... expected)
       throws Exception {
-    List<RelatedChangeAndCommitInfo> actual = getRelated(psId);
-    assertThat(actual).named("related to " + psId).hasSize(expected.length);
+    assertRelated(psId, Arrays.asList(expected));
+  }
+
+  private void assertRelated(PatchSet.Id psId, List<RelatedChangeAndCommitInfo> expected)
+      throws Exception {
+    List<RelatedChangeAndCommitInfo> actual =
+        gApi.changes().id(psId.changeId().get()).revision(psId.get()).related().changes;
+    assertWithMessage("related to " + psId).that(actual).hasSize(expected.size());
     for (int i = 0; i < actual.size(); i++) {
       String name = "index " + i + " related to " + psId;
       RelatedChangeAndCommitInfo a = actual.get(i);
-      RelatedChangeAndCommitInfo e = expected[i];
-      assertThat(a.project).named("project of " + name).isEqualTo(e.project);
-      assertThat(a._changeNumber).named("change ID of " + name).isEqualTo(e._changeNumber);
+      RelatedChangeAndCommitInfo e = expected.get(i);
+      assertWithMessage("project of " + name).that(a.project).isEqualTo(e.project);
+      assertWithMessage("change ID of " + name).that(a._changeNumber).isEqualTo(e._changeNumber);
       // Don't bother checking changeId; assume _changeNumber is sufficient.
-      assertThat(a._revisionNumber).named("revision of " + name).isEqualTo(e._revisionNumber);
-      assertThat(a.commit.commit).named("commit of " + name).isEqualTo(e.commit.commit);
-      assertThat(a._currentRevisionNumber)
-          .named("current revision of " + name)
+      assertWithMessage("revision of " + name).that(a._revisionNumber).isEqualTo(e._revisionNumber);
+      assertWithMessage("commit of " + name).that(a.commit.commit).isEqualTo(e.commit.commit);
+      assertWithMessage("current revision of " + name)
+          .that(a._currentRevisionNumber)
           .isEqualTo(e._currentRevisionNumber);
+      assertThat(a.status).isEqualTo(e.status);
     }
   }
 }

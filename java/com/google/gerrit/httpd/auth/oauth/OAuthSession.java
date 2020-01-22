@@ -19,6 +19,8 @@ import static javax.servlet.http.HttpServletResponse.SC_UNAUTHORIZED;
 import com.google.common.base.CharMatcher;
 import com.google.common.base.Strings;
 import com.google.common.flogger.FluentLogger;
+import com.google.common.io.BaseEncoding;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.auth.oauth.OAuthServiceProvider;
 import com.google.gerrit.extensions.auth.oauth.OAuthToken;
 import com.google.gerrit.extensions.auth.oauth.OAuthUserInfo;
@@ -27,7 +29,6 @@ import com.google.gerrit.extensions.registration.DynamicItem;
 import com.google.gerrit.extensions.restapi.Url;
 import com.google.gerrit.httpd.CanonicalWebUrl;
 import com.google.gerrit.httpd.WebSession;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.AccountException;
 import com.google.gerrit.server.account.AccountManager;
@@ -35,7 +36,6 @@ import com.google.gerrit.server.account.AuthRequest;
 import com.google.gerrit.server.account.AuthResult;
 import com.google.gerrit.server.account.externalids.ExternalId;
 import com.google.gerrit.server.auth.oauth.OAuthTokenCache;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.servlet.SessionScoped;
@@ -46,7 +46,6 @@ import java.util.Optional;
 import javax.servlet.ServletRequest;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
-import org.apache.commons.codec.binary.Base64;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 
 @SessionScoped
@@ -188,7 +187,7 @@ class OAuthSession {
       logger.atInfo().log("OAuth2: linking claimed identity to %s", claimedId.get().toString());
       try {
         accountManager.link(claimedId.get(), req);
-      } catch (OrmException | ConfigInvalidException e) {
+      } catch (ConfigInvalidException e) {
         logger.atSevere().log(
             "Cannot link: %s to user identity:\n  Claimed ID: %s is %s",
             user.getExternalId(), claimedId.get(), claimedIdentifier);
@@ -203,7 +202,7 @@ class OAuthSession {
       throws AccountException, IOException {
     try {
       accountManager.link(identifiedUser.get().getAccountId(), areq);
-    } catch (OrmException | ConfigInvalidException e) {
+    } catch (ConfigInvalidException e) {
       logger.atSevere().log(
           "Cannot link: %s to user identity: %s",
           user.getExternalId(), identifiedUser.get().getAccountId());
@@ -245,7 +244,7 @@ class OAuthSession {
   private static String generateRandomState() {
     byte[] state = new byte[32];
     randomState.nextBytes(state);
-    return Base64.encodeBase64URLSafeString(state);
+    return BaseEncoding.base64Url().encode(state);
   }
 
   @Override

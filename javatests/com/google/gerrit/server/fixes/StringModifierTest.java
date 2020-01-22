@@ -15,16 +15,12 @@
 package com.google.gerrit.server.fixes;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.ExpectedException;
 
 public class StringModifierTest {
-
-  @Rule public ExpectedException expectedException = ExpectedException.none();
-
   private final String originalString = "This is the original, unmodified string.";
   private StringModifier stringModifier;
 
@@ -67,20 +63,20 @@ public class StringModifierTest {
   @Test
   public void replacedPartsMustNotOverlap() {
     stringModifier.replace(0, 9, "");
-    expectedException.expect(StringIndexOutOfBoundsException.class);
-    stringModifier.replace(8, 32, "The modified");
+    assertThrows(
+        StringIndexOutOfBoundsException.class, () -> stringModifier.replace(8, 32, "The modified"));
   }
 
   @Test
   public void startIndexMustNotBeGreaterThanEndIndex() {
-    expectedException.expect(StringIndexOutOfBoundsException.class);
-    stringModifier.replace(10, 9, "something");
+    assertThrows(
+        StringIndexOutOfBoundsException.class, () -> stringModifier.replace(10, 9, "something"));
   }
 
   @Test
   public void startIndexMustNotBeNegative() {
-    expectedException.expect(StringIndexOutOfBoundsException.class);
-    stringModifier.replace(-1, 9, "something");
+    assertThrows(
+        StringIndexOutOfBoundsException.class, () -> stringModifier.replace(-1, 9, "something"));
   }
 
   @Test
@@ -94,13 +90,17 @@ public class StringModifierTest {
 
   @Test
   public void startIndexMustNotBeGreaterThanLengthOfString() {
-    expectedException.expect(StringIndexOutOfBoundsException.class);
-    stringModifier.replace(originalString.length() + 1, originalString.length() + 1, "something");
+    assertThrows(
+        StringIndexOutOfBoundsException.class,
+        () ->
+            stringModifier.replace(
+                originalString.length() + 1, originalString.length() + 1, "something"));
   }
 
   @Test
   public void endIndexMustNotBeGreaterThanLengthOfString() {
-    expectedException.expect(StringIndexOutOfBoundsException.class);
-    stringModifier.replace(8, originalString.length() + 1, "something");
+    assertThrows(
+        StringIndexOutOfBoundsException.class,
+        () -> stringModifier.replace(8, originalString.length() + 1, "something"));
   }
 }

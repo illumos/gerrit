@@ -15,7 +15,7 @@
 package com.google.gerrit.server.mail.send;
 
 import com.google.common.base.Joiner;
-import com.google.gerrit.common.errors.EmailException;
+import com.google.gerrit.exceptions.EmailException;
 import com.google.gerrit.extensions.api.changes.RecipientType;
 import com.google.gerrit.mail.Address;
 import com.google.gerrit.server.IdentifiedUser;
@@ -24,6 +24,7 @@ import com.google.inject.assistedinject.Assisted;
 import com.google.inject.assistedinject.AssistedInject;
 import java.util.List;
 
+/** Sender that informs a user by email about the addition of an SSH or GPG key to their account. */
 public class AddKeySender extends OutgoingEmail {
   public interface Factory {
     AddKeySender create(IdentifiedUser user, AccountSshKey sshKey);
@@ -37,8 +38,8 @@ public class AddKeySender extends OutgoingEmail {
 
   @AssistedInject
   public AddKeySender(
-      EmailArguments ea, @Assisted IdentifiedUser user, @Assisted AccountSshKey sshKey) {
-    super(ea, "addkey");
+      EmailArguments args, @Assisted IdentifiedUser user, @Assisted AccountSshKey sshKey) {
+    super(args, "addkey");
     this.user = user;
     this.sshKey = sshKey;
     this.gpgKeys = null;
@@ -46,8 +47,8 @@ public class AddKeySender extends OutgoingEmail {
 
   @AssistedInject
   public AddKeySender(
-      EmailArguments ea, @Assisted IdentifiedUser user, @Assisted List<String> gpgKeys) {
-    super(ea, "addkey");
+      EmailArguments args, @Assisted IdentifiedUser user, @Assisted List<String> gpgKeys) {
+    super(args, "addkey");
     this.user = user;
     this.sshKey = null;
     this.gpgKeys = gpgKeys;
@@ -78,15 +79,26 @@ public class AddKeySender extends OutgoingEmail {
     }
   }
 
-  public String getEmail() {
-    return user.getAccount().getPreferredEmail();
+  @Override
+  protected void setupSoyContext() {
+    super.setupSoyContext();
+    soyContextEmailData.put("email", getEmail());
+    soyContextEmailData.put("gpgKeys", getGpgKeys());
+    soyContextEmailData.put("keyType", getKeyType());
+    soyContextEmailData.put("sshKey", getSshKey());
+    soyContextEmailData.put("userNameEmail", getUserNameEmailFor(user.getAccountId()));
   }
 
-  public String getUserNameEmail() {
-    return getUserNameEmailFor(user.getAccountId());
+  @Override
+  protected boolean supportsHtml() {
+    return true;
   }
 
-  public String getKeyType() {
+  private String getEmail() {
+    return user.getAccount().preferredEmail();
+  }
+
+  private String getKeyType() {
     if (sshKey != null) {
       return "SSH";
     } else if (gpgKeys != null) {
@@ -95,29 +107,14 @@ public class AddKeySender extends OutgoingEmail {
     return "Unknown";
   }
 
-  public String getSshKey() {
+  private String getSshKey() {
     return (sshKey != null) ? sshKey.sshPublicKey() + "\n" : null;
   }
 
-  public String getGpgKeys() {
+  private String getGpgKeys() {
     if (gpgKeys != null) {
       return Joiner.on("\n").join(gpgKeys);
     }
     return null;
-  }
-
-  @Override
-  protected void setupSoyContext() {
-    super.setupSoyContext();
-    soyContextEmailData.put("email", getEmail());
-    soyContextEmailData.put("gpgKeys", getGpgKeys());
-    soyContextEmailData.put("keyType", getKeyType());
-    soyContextEmailData.put("sshKey", getSshKey());
-    soyContextEmailData.put("userNameEmail", getUserNameEmail());
-  }
-
-  @Override
-  protected boolean supportsHtml() {
-    return true;
   }
 }

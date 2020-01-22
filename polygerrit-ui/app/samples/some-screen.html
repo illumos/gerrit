@@ -38,9 +38,11 @@
   <script>
     Polymer({
       is: 'some-screen-main',
+
       properties: {
         rootUrl: String,
       },
+      /** @override */
       attached() {
         this.rootUrl = `${this.plugin.screenUrl()}`;
       },

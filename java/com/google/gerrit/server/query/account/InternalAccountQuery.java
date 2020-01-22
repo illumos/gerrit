@@ -23,19 +23,17 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.Multimap;
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.common.UsedAt;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.index.FieldDef;
 import com.google.gerrit.index.IndexConfig;
 import com.google.gerrit.index.Schema;
 import com.google.gerrit.index.query.InternalQuery;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.server.UsedAt;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.account.externalids.ExternalId;
 import com.google.gerrit.server.index.account.AccountField;
 import com.google.gerrit.server.index.account.AccountIndexCollection;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 
@@ -45,7 +43,7 @@ import java.util.Set;
  * <p>Instances are one-time-use. Other singleton classes should inject a Provider rather than
  * holding on to a single instance.
  */
-public class InternalAccountQuery extends InternalQuery<AccountState> {
+public class InternalAccountQuery extends InternalQuery<AccountState, InternalAccountQuery> {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
   @Inject
@@ -56,45 +54,20 @@ public class InternalAccountQuery extends InternalQuery<AccountState> {
     super(queryProcessor, indexes, indexConfig);
   }
 
-  @Override
-  public InternalAccountQuery setLimit(int n) {
-    super.setLimit(n);
-    return this;
-  }
-
-  @Override
-  public InternalAccountQuery enforceVisibility(boolean enforce) {
-    super.enforceVisibility(enforce);
-    return this;
-  }
-
-  @SafeVarargs
-  @Override
-  public final InternalAccountQuery setRequestedFields(FieldDef<AccountState, ?>... fields) {
-    super.setRequestedFields(fields);
-    return this;
-  }
-
-  @Override
-  public InternalAccountQuery noFields() {
-    super.noFields();
-    return this;
-  }
-
-  public List<AccountState> byDefault(String query) throws OrmException {
+  public List<AccountState> byDefault(String query) {
     return query(AccountPredicates.defaultPredicate(schema(), true, query));
   }
 
-  public List<AccountState> byExternalId(String scheme, String id) throws OrmException {
+  public List<AccountState> byExternalId(String scheme, String id) {
     return byExternalId(ExternalId.Key.create(scheme, id));
   }
 
-  public List<AccountState> byExternalId(ExternalId.Key externalId) throws OrmException {
+  public List<AccountState> byExternalId(ExternalId.Key externalId) {
     return query(AccountPredicates.externalIdIncludingSecondaryEmails(externalId.toString()));
   }
 
   @UsedAt(UsedAt.Project.COLLABNET)
-  public AccountState oneByExternalId(ExternalId.Key externalId) throws OrmException {
+  public AccountState oneByExternalId(ExternalId.Key externalId) {
     List<AccountState> accountStates = byExternalId(externalId);
     if (accountStates.size() == 1) {
       return accountStates.get(0);
@@ -103,13 +76,13 @@ public class InternalAccountQuery extends InternalQuery<AccountState> {
       msg.append("Ambiguous external ID ").append(externalId).append(" for accounts: ");
       Joiner.on(", ")
           .appendTo(
-              msg, accountStates.stream().map(AccountState.ACCOUNT_ID_FUNCTION).collect(toList()));
+              msg, accountStates.stream().map(a -> a.account().id().toString()).collect(toList()));
       logger.atWarning().log(msg.toString());
     }
     return null;
   }
 
-  public List<AccountState> byFullName(String fullName) throws OrmException {
+  public List<AccountState> byFullName(String fullName) {
     return query(AccountPredicates.fullName(fullName));
   }
 
@@ -118,9 +91,8 @@ public class InternalAccountQuery extends InternalQuery<AccountState> {
    *
    * @param email preferred email by which accounts should be found
    * @return list of accounts that have a preferred email that exactly matches the given email
-   * @throws OrmException if query cannot be parsed
    */
-  public List<AccountState> byPreferredEmail(String email) throws OrmException {
+  public List<AccountState> byPreferredEmail(String email) {
     if (hasPreferredEmailExact()) {
       return query(AccountPredicates.preferredEmailExact(email));
     }
@@ -130,7 +102,7 @@ public class InternalAccountQuery extends InternalQuery<AccountState> {
     }
 
     return query(AccountPredicates.preferredEmail(email)).stream()
-        .filter(a -> a.getAccount().getPreferredEmail().equals(email))
+        .filter(a -> a.account().preferredEmail().equals(email))
         .collect(toList());
   }
 
@@ -140,17 +112,14 @@ public class InternalAccountQuery extends InternalQuery<AccountState> {
    * @param emails preferred emails by which accounts should be found
    * @return multimap of the given emails to accounts that have a preferred email that exactly
    *     matches this email
-   * @throws OrmException if query cannot be parsed
    */
-  public Multimap<String, AccountState> byPreferredEmail(String... emails) throws OrmException {
-    List<String> emailList = Arrays.asList(emails);
-
+  public Multimap<String, AccountState> byPreferredEmail(List<String> emails) {
     if (hasPreferredEmailExact()) {
       List<List<AccountState>> r =
-          query(emailList.stream().map(AccountPredicates::preferredEmailExact).collect(toList()));
+          query(emails.stream().map(AccountPredicates::preferredEmailExact).collect(toList()));
       Multimap<String, AccountState> accountsByEmail = ArrayListMultimap.create();
-      for (int i = 0; i < emailList.size(); i++) {
-        accountsByEmail.putAll(emailList.get(i), r.get(i));
+      for (int i = 0; i < emails.size(); i++) {
+        accountsByEmail.putAll(emails.get(i), r.get(i));
       }
       return accountsByEmail;
     }
@@ -160,20 +129,20 @@ public class InternalAccountQuery extends InternalQuery<AccountState> {
     }
 
     List<List<AccountState>> r =
-        query(emailList.stream().map(AccountPredicates::preferredEmail).collect(toList()));
+        query(emails.stream().map(AccountPredicates::preferredEmail).collect(toList()));
     Multimap<String, AccountState> accountsByEmail = ArrayListMultimap.create();
-    for (int i = 0; i < emailList.size(); i++) {
-      String email = emailList.get(i);
+    for (int i = 0; i < emails.size(); i++) {
+      String email = emails.get(i);
       Set<AccountState> matchingAccounts =
           r.get(i).stream()
-              .filter(a -> a.getAccount().getPreferredEmail().equals(email))
+              .filter(a -> a.account().preferredEmail().equals(email))
               .collect(toSet());
       accountsByEmail.putAll(email, matchingAccounts);
     }
     return accountsByEmail;
   }
 
-  public List<AccountState> byWatchedProject(Project.NameKey project) throws OrmException {
+  public List<AccountState> byWatchedProject(Project.NameKey project) {
     return query(AccountPredicates.watchedProject(project));
   }
 

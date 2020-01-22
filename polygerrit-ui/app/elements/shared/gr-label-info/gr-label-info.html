@@ -15,11 +15,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 
 <link rel="import" href="../../../styles/gr-voting-styles.html">
 <link rel="import" href="../../../styles/shared-styles.html">
 <link rel="import" href="../gr-account-label/gr-account-label.html">
+<link rel="import" href="../gr-account-chip/gr-account-chip.html">
 <link rel="import" href="../gr-button/gr-button.html">
 <link rel="import" href="../gr-icons/gr-icons.html">
 <link rel="import" href="../gr-label/gr-label.html">
@@ -27,11 +28,13 @@ limitations under the License.
 
 <dom-module id="gr-label-info">
   <template strip-whitespace>
-    <style include="gr-voting-styles"></style>
+    <style include="gr-voting-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <style include="shared-styles">
       .placeholder {
         color: var(--deemphasized-text-color);
-        padding-top: .2em;
+        padding-top: var(--spacing-xs);
       }
       .hidden {
         display: none;
@@ -39,9 +42,10 @@ limitations under the License.
       .voteChip {
         display: flex;
         justify-content: center;
-        margin-right: .3em;
-        padding: .05em .85em;
+        margin-right: var(--spacing-s);
+        padding: 0;
         @apply --vote-chip-styles;
+        border-width: 0;
       }
       .max {
         background-color: var(--vote-color-approved);
@@ -59,30 +63,31 @@ limitations under the License.
         display: none;
       }
       td {
-        vertical-align: middle;
+        vertical-align: top;
       }
       tr {
-        min-height: 2.25em;
+        min-height: var(--line-height-normal);
       }
       gr-button {
+        vertical-align: top;
         --gr-button: {
-          height: 2em;
+          height: var(--line-height-normal);
+          width: var(--line-height-normal);
           padding: 0;
-          width: 2em;
         }
       }
       gr-button[disabled] iron-icon {
         color: var(--border-color);
       }
       gr-account-chip {
-        margin-right: .25em;
+        margin-right: var(--spacing-xs);
       }
       iron-icon {
-        height: 1.2em;
-        width: 1.2em;
+        height: calc(var(--line-height-normal) - 2px);
+        width: calc(var(--line-height-normal) - 2px);
       }
       .labelValueContainer:not(:first-of-type) td {
-        padding-top: .3em;
+        padding-top: var(--spacing-s);
       }
     </style>
     <table>
@@ -111,7 +116,7 @@ limitations under the License.
             <gr-button
                 link
                 aria-label="Remove"
-                on-tap="_onDeleteVote"
+                on-click="_onDeleteVote"
                 tooltip="Remove vote"
                 data-account-id$="[[mappedLabel.account._account_id]]"
                 class$="deleteBtn [[_computeDeleteClass(mappedLabel.account, mutable, change)]]">

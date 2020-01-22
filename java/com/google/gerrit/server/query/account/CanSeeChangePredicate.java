@@ -14,41 +14,35 @@
 
 package com.google.gerrit.server.query.account;
 
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.index.query.PostFilterPredicate;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.permissions.ChangePermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gwtorm.server.OrmException;
-import com.google.inject.Provider;
 
 public class CanSeeChangePredicate extends PostFilterPredicate<AccountState> {
-  private final Provider<ReviewDb> db;
   private final PermissionBackend permissionBackend;
   private final ChangeNotes changeNotes;
 
-  CanSeeChangePredicate(
-      Provider<ReviewDb> db, PermissionBackend permissionBackend, ChangeNotes changeNotes) {
+  CanSeeChangePredicate(PermissionBackend permissionBackend, ChangeNotes changeNotes) {
     super(AccountQueryBuilder.FIELD_CAN_SEE, changeNotes.getChangeId().toString());
-    this.db = db;
     this.permissionBackend = permissionBackend;
     this.changeNotes = changeNotes;
   }
 
   @Override
-  public boolean match(AccountState accountState) throws OrmException {
+  public boolean match(AccountState accountState) {
     try {
       permissionBackend
-          .absentUser(accountState.getAccount().getId())
-          .database(db)
+          .absentUser(accountState.account().id())
           .change(changeNotes)
           .check(ChangePermission.READ);
       return true;
     } catch (PermissionBackendException e) {
-      throw new OrmException("Failed to check if account can see change", e);
+      throw new StorageException("Failed to check if account can see change", e);
     } catch (AuthException e) {
       return false;
     }

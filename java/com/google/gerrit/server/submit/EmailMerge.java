@@ -14,27 +14,20 @@
 
 package com.google.gerrit.server.submit;
 
-import com.google.common.collect.ListMultimap;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.extensions.api.changes.NotifyHandling;
-import com.google.gerrit.extensions.api.changes.RecipientType;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.server.ReviewDb;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
+import com.google.gerrit.server.change.NotifyResolver;
 import com.google.gerrit.server.config.SendEmailExecutor;
 import com.google.gerrit.server.mail.send.MergedSender;
 import com.google.gerrit.server.util.RequestContext;
 import com.google.gerrit.server.util.ThreadLocalRequestContext;
-import com.google.gwtorm.server.OrmException;
-import com.google.gwtorm.server.SchemaFactory;
 import com.google.inject.Inject;
 import com.google.inject.OutOfScopeException;
-import com.google.inject.Provider;
-import com.google.inject.ProvisionException;
 import com.google.inject.assistedinject.Assisted;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -47,46 +40,37 @@ class EmailMerge implements Runnable, RequestContext {
         Project.NameKey project,
         Change.Id changeId,
         Account.Id submitter,
-        NotifyHandling notifyHandling,
-        ListMultimap<RecipientType, Account.Id> accountsToNotify);
+        NotifyResolver.Result notify);
   }
 
   private final ExecutorService sendEmailsExecutor;
   private final MergedSender.Factory mergedSenderFactory;
-  private final SchemaFactory<ReviewDb> schemaFactory;
   private final ThreadLocalRequestContext requestContext;
   private final IdentifiedUser.GenericFactory identifiedUserFactory;
 
   private final Project.NameKey project;
   private final Change.Id changeId;
   private final Account.Id submitter;
-  private final NotifyHandling notifyHandling;
-  private final ListMultimap<RecipientType, Account.Id> accountsToNotify;
-
-  private ReviewDb db;
+  private final NotifyResolver.Result notify;
 
   @Inject
   EmailMerge(
       @SendEmailExecutor ExecutorService executor,
       MergedSender.Factory mergedSenderFactory,
-      SchemaFactory<ReviewDb> schemaFactory,
       ThreadLocalRequestContext requestContext,
       IdentifiedUser.GenericFactory identifiedUserFactory,
       @Assisted Project.NameKey project,
       @Assisted Change.Id changeId,
       @Assisted @Nullable Account.Id submitter,
-      @Assisted NotifyHandling notifyHandling,
-      @Assisted ListMultimap<RecipientType, Account.Id> accountsToNotify) {
+      @Assisted NotifyResolver.Result notify) {
     this.sendEmailsExecutor = executor;
     this.mergedSenderFactory = mergedSenderFactory;
-    this.schemaFactory = schemaFactory;
     this.requestContext = requestContext;
     this.identifiedUserFactory = identifiedUserFactory;
     this.project = project;
     this.changeId = changeId;
     this.submitter = submitter;
-    this.notifyHandling = notifyHandling;
-    this.accountsToNotify = accountsToNotify;
+    this.notify = notify;
   }
 
   void sendAsync() {
@@ -102,17 +86,12 @@ class EmailMerge implements Runnable, RequestContext {
       if (submitter != null) {
         cm.setFrom(submitter);
       }
-      cm.setNotify(notifyHandling);
-      cm.setAccountsToNotify(accountsToNotify);
+      cm.setNotify(notify);
       cm.send();
     } catch (Exception e) {
       logger.atSevere().withCause(e).log("Cannot email merged notification for %s", changeId);
     } finally {
       requestContext.setContext(old);
-      if (db != null) {
-        db.close();
-        db = null;
-      }
     }
   }
 
@@ -127,22 +106,5 @@ class EmailMerge implements Runnable, RequestContext {
       return identifiedUserFactory.create(submitter).getRealUser();
     }
     throw new OutOfScopeException("No user on email thread");
-  }
-
-  @Override
-  public Provider<ReviewDb> getReviewDbProvider() {
-    return new Provider<ReviewDb>() {
-      @Override
-      public ReviewDb get() {
-        if (db == null) {
-          try {
-            db = schemaFactory.open();
-          } catch (OrmException e) {
-            throw new ProvisionException("Cannot open ReviewDb", e);
-          }
-        }
-        return db;
-      }
-    };
   }
 }

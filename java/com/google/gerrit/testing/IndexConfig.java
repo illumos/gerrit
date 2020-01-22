@@ -23,6 +23,9 @@ public class IndexConfig {
 
   public static Config createFromExistingConfig(Config cfg) {
     cfg.setInt("index", null, "maxPages", 10);
+    // To avoid this flakiness indexMergeable is switched off for the tests as it incurs background
+    // reindex calls.
+    cfg.setBoolean("index", "change", "indexMergeable", false);
     cfg.setString("trackingid", "query-bug", "footer", "Bug:");
     cfg.setString("trackingid", "query-bug", "match", "QUERY\\d{2,8}");
     cfg.setString("trackingid", "query-bug", "system", "querytests");

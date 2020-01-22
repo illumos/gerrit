@@ -16,12 +16,13 @@ package com.google.gerrit.server.git;
 
 import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.data.GarbageCollectionResult;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.events.GarbageCollectorListener;
-import com.google.gerrit.extensions.registration.DynamicSet;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.config.GcConfig;
 import com.google.gerrit.server.extensions.events.AbstractNoNotifyEvent;
+import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.inject.Inject;
 import java.io.PrintWriter;
 import java.util.List;
@@ -37,13 +38,14 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.TextProgressMonitor;
 import org.eclipse.jgit.storage.pack.PackConfig;
 
+/** Serial execution of GC on a list of repositories. */
 public class GarbageCollection {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
   private final GitRepositoryManager repoManager;
   private final GarbageCollectionQueue gcQueue;
   private final GcConfig gcConfig;
-  private final DynamicSet<GarbageCollectorListener> listeners;
+  private final PluginSetContext<GarbageCollectorListener> listeners;
 
   public interface Factory {
     GarbageCollection create();
@@ -54,7 +56,7 @@ public class GarbageCollection {
       GitRepositoryManager repoManager,
       GarbageCollectionQueue gcQueue,
       GcConfig config,
-      DynamicSet<GarbageCollectorListener> listeners) {
+      PluginSetContext<GarbageCollectorListener> listeners) {
     this.repoManager = repoManager;
     this.gcQueue = gcQueue;
     this.gcConfig = config;
@@ -69,8 +71,9 @@ public class GarbageCollection {
     return run(projectNames, gcConfig.isAggressive(), writer);
   }
 
+  /** Runs GC on the given projects, serially. Progress is written to writer if non-null. */
   public GarbageCollectionResult run(
-      List<Project.NameKey> projectNames, boolean aggressive, PrintWriter writer) {
+      List<Project.NameKey> projectNames, boolean aggressive, @Nullable PrintWriter writer) {
     GarbageCollectionResult result = new GarbageCollectionResult();
     Set<Project.NameKey> projectsToGc = gcQueue.addAll(projectNames);
     for (Project.NameKey projectName :
@@ -113,13 +116,7 @@ public class GarbageCollection {
       return;
     }
     Event event = new Event(p, statistics);
-    for (GarbageCollectorListener l : listeners) {
-      try {
-        l.onGarbageCollected(event);
-      } catch (RuntimeException e) {
-        logger.atWarning().withCause(e).log("Failure in GarbageCollectorListener");
-      }
-    }
+    listeners.runEach(l -> l.onGarbageCollected(event));
   }
 
   private static void logGcInfo(Project.NameKey projectName, String msg) {

@@ -15,9 +15,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
-<link rel="import" href="../../../bower_components/iron-autogrow-textarea/iron-autogrow-textarea.html">
-<link rel="import" href="../../../bower_components/iron-input/iron-input.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/iron-autogrow-textarea/iron-autogrow-textarea.html">
 <link rel="import" href="../../../styles/gr-form-styles.html">
 <link rel="import" href="../../../styles/gr-subpage-styles.html">
 <link rel="import" href="../../../styles/shared-styles.html">
@@ -28,17 +28,21 @@ limitations under the License.
 
 <dom-module id="gr-group">
   <template>
-    <style include="shared-styles"></style>
+    <style include="shared-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <style include="gr-subpage-styles">
       h3.edited:after {
         color: var(--deemphasized-text-color);
         content: ' *';
       }
       .inputUpdateBtn {
-        margin-top: .3em;
+        margin-top: var(--spacing-s);
       }
     </style>
-    <style include="gr-form-styles"></style>
+    <style include="gr-form-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <main class="gr-form-styles read-only">
       <div id="loading" class$="[[_computeLoadingClass(_loading)]]">
         Loading...
@@ -51,7 +55,7 @@ limitations under the License.
             <h3 id="groupUUID">Group UUID</h3>
             <fieldset>
               <gr-copy-clipboard
-                  text="[[_groupConfig.id]]"></gr-copy-clipboard>
+                  text="[[groupId]]"></gr-copy-clipboard>
             </fieldset>
             <h3 id="groupName" class$="[[_computeHeaderClass(_rename)]]">
               Group Name
@@ -66,7 +70,7 @@ limitations under the License.
               <span class="value" disabled$="[[_computeGroupDisabled(_groupOwner, _isAdmin, _groupIsInternal)]]">
                 <gr-button
                     id="inputUpdateNameBtn"
-                    on-tap="_handleSaveName"
+                    on-click="_handleSaveName"
                     disabled="[[!_rename]]">
                   Rename Group</gr-button>
               </span>
@@ -86,7 +90,7 @@ limitations under the License.
               </span>
               <span class="value" disabled$="[[_computeGroupDisabled(_groupOwner, _isAdmin, _groupIsInternal)]]">
                 <gr-button
-                    on-tap="_handleSaveOwner"
+                    on-click="_handleSaveOwner"
                     disabled="[[!_owner]]">
                   Change Owners</gr-button>
               </span>
@@ -104,7 +108,7 @@ limitations under the License.
               </div>
               <span class="value" disabled$="[[_computeGroupDisabled(_groupOwner, _isAdmin, _groupIsInternal)]]">
                 <gr-button
-                    on-tap="_handleSaveDescription"
+                    on-click="_handleSaveDescription"
                     disabled="[[!_description]]">
                   Save Description
                 </gr-button>
@@ -132,7 +136,7 @@ limitations under the License.
               </section>
               <span class="value" disabled$="[[_computeGroupDisabled(_groupOwner, _isAdmin, _groupIsInternal)]]">
                 <gr-button
-                    on-tap="_handleSaveOptions"
+                    on-click="_handleSaveOptions"
                     disabled="[[!_options]]">
                   Save Group Options
                 </gr-button>

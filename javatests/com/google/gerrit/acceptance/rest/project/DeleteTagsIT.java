@@ -15,6 +15,7 @@
 package com.google.gerrit.acceptance.rest.project;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static java.util.stream.Collectors.toList;
 import static org.eclipse.jgit.lib.Constants.R_TAGS;
 
@@ -23,11 +24,14 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.NoHttpd;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.extensions.api.projects.DeleteTagsInput;
 import com.google.gerrit.extensions.api.projects.ProjectApi;
 import com.google.gerrit.extensions.api.projects.TagInfo;
 import com.google.gerrit.extensions.api.projects.TagInput;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
+import com.google.inject.Inject;
 import java.util.HashMap;
 import java.util.List;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -38,6 +42,9 @@ import org.junit.Test;
 public class DeleteTagsIT extends AbstractDaemonTest {
   private static final ImmutableList<String> TAGS =
       ImmutableList.of("refs/tags/test-1", "refs/tags/test-2", "refs/tags/test-3", "test-4");
+
+  @Inject private ProjectOperations projectOperations;
+  @Inject private RequestScopeOperations requestScopeOperations;
 
   @Before
   public void setUp() throws Exception {
@@ -61,14 +68,11 @@ public class DeleteTagsIT extends AbstractDaemonTest {
   public void deleteTagsForbidden() throws Exception {
     DeleteTagsInput input = new DeleteTagsInput();
     input.tags = TAGS;
-    setApiUser(user);
-    try {
-      project().deleteTags(input);
-      fail("Expected ResourceConflictException");
-    } catch (ResourceConflictException e) {
-      assertThat(e).hasMessageThat().isEqualTo(errorMessageForTags(TAGS));
-    }
-    setApiUser(admin);
+    requestScopeOperations.setApiUser(user.id());
+    ResourceConflictException thrown =
+        assertThrows(ResourceConflictException.class, () -> project().deleteTags(input));
+    assertThat(thrown).hasMessageThat().isEqualTo(errorMessageForTags(TAGS));
+    requestScopeOperations.setApiUser(admin.id());
     assertTags(TAGS);
   }
 
@@ -78,14 +82,11 @@ public class DeleteTagsIT extends AbstractDaemonTest {
     List<String> tags = Lists.newArrayList(TAGS);
     tags.add("refs/tags/does-not-exist");
     input.tags = tags;
-    try {
-      project().deleteTags(input);
-      fail("Expected ResourceConflictException");
-    } catch (ResourceConflictException e) {
-      assertThat(e)
-          .hasMessageThat()
-          .isEqualTo(errorMessageForTags(ImmutableList.of("refs/tags/does-not-exist")));
-    }
+    ResourceConflictException thrown =
+        assertThrows(ResourceConflictException.class, () -> project().deleteTags(input));
+    assertThat(thrown)
+        .hasMessageThat()
+        .isEqualTo(errorMessageForTags(ImmutableList.of("refs/tags/does-not-exist")));
     assertTagsDeleted();
   }
 
@@ -97,14 +98,11 @@ public class DeleteTagsIT extends AbstractDaemonTest {
     List<String> tags = Lists.newArrayList("refs/tags/does-not-exist");
     tags.addAll(TAGS);
     input.tags = tags;
-    try {
-      project().deleteTags(input);
-      fail("Expected ResourceConflictException");
-    } catch (ResourceConflictException e) {
-      assertThat(e)
-          .hasMessageThat()
-          .isEqualTo(errorMessageForTags(ImmutableList.of("refs/tags/does-not-exist")));
-    }
+    ResourceConflictException thrown =
+        assertThrows(ResourceConflictException.class, () -> project().deleteTags(input));
+    assertThat(thrown)
+        .hasMessageThat()
+        .isEqualTo(errorMessageForTags(ImmutableList.of("refs/tags/does-not-exist")));
     assertTagsDeleted();
   }
 
@@ -124,7 +122,7 @@ public class DeleteTagsIT extends AbstractDaemonTest {
     HashMap<String, RevCommit> result = new HashMap<>();
     for (String tag : tags) {
       String ref = prefixRef(tag);
-      result.put(ref, getRemoteHead(project, ref));
+      result.put(ref, projectOperations.project(project).getHead(ref));
     }
     return result;
   }
@@ -154,6 +152,6 @@ public class DeleteTagsIT extends AbstractDaemonTest {
   }
 
   private void assertTagsDeleted() throws Exception {
-    assertTags(ImmutableList.<String>of());
+    assertTags(ImmutableList.of());
   }
 }

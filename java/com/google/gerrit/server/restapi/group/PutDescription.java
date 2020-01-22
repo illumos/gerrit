@@ -16,18 +16,17 @@ package com.google.gerrit.server.restapi.group;
 
 import com.google.common.base.Strings;
 import com.google.gerrit.common.data.GroupDescription;
-import com.google.gerrit.common.errors.NoSuchGroupException;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.exceptions.NoSuchGroupException;
 import com.google.gerrit.extensions.common.DescriptionInput;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestModifyView;
-import com.google.gerrit.reviewdb.client.AccountGroup;
 import com.google.gerrit.server.UserInitiated;
 import com.google.gerrit.server.group.GroupResource;
 import com.google.gerrit.server.group.db.GroupsUpdate;
 import com.google.gerrit.server.group.db.InternalGroupUpdate;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -46,8 +45,8 @@ public class PutDescription implements RestModifyView<GroupResource, Description
 
   @Override
   public Response<String> apply(GroupResource resource, DescriptionInput input)
-      throws AuthException, NotInternalGroupException, ResourceNotFoundException, OrmException,
-          IOException, ConfigInvalidException {
+      throws AuthException, NotInternalGroupException, ResourceNotFoundException, IOException,
+          ConfigInvalidException {
     if (input == null) {
       input = new DescriptionInput(); // Delete would set description to null.
     }
@@ -72,7 +71,7 @@ public class PutDescription implements RestModifyView<GroupResource, Description
     }
 
     return Strings.isNullOrEmpty(input.description)
-        ? Response.<String>none()
+        ? Response.none()
         : Response.ok(input.description);
   }
 }

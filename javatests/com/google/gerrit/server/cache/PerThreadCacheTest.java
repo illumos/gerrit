@@ -15,15 +15,12 @@
 package com.google.gerrit.server.cache;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
 import java.util.function.Supplier;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.ExpectedException;
 
 public class PerThreadCacheTest {
-  @Rule public ExpectedException exception = ExpectedException.none();
-
   @Test
   public void key_respectsClass() {
     assertThat(PerThreadCache.Key.create(String.class))
@@ -78,9 +75,9 @@ public class PerThreadCacheTest {
   @Test
   public void doubleInstantiationFails() {
     try (PerThreadCache ignored = PerThreadCache.create()) {
-      exception.expect(IllegalStateException.class);
-      exception.expectMessage("called create() twice on the same request");
-      PerThreadCache.create();
+      IllegalStateException thrown =
+          assertThrows(IllegalStateException.class, () -> PerThreadCache.create());
+      assertThat(thrown).hasMessageThat().contains("called create() twice on the same request");
     }
   }
 

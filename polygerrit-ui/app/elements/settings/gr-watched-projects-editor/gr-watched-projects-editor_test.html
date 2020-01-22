@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-settings-view</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-watched-projects-editor.html">
 
@@ -86,7 +88,7 @@ limitations under the License.
       function getKeysOfRow(row) {
         const boxes = rows[row].querySelectorAll('input[checked]');
         return Array.prototype.map.call(boxes,
-            e => { return e.getAttribute('data-key'); });
+            e => e.getAttribute('data-key'));
       }
 
       let checkedKeys = getKeysOfRow(0);
@@ -187,6 +189,7 @@ limitations under the License.
       element.$.newProject.value = {id: 'project b'};
       element.$.newProject.setText('project b');
       element.$.newFilter.bindValue = 'filter 1';
+      element.$.newFilter.value = 'filter 1';
 
       element._handleAddProject();
 

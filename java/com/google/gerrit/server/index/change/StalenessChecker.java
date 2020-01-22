@@ -16,7 +16,6 @@ package com.google.gerrit.server.index.change;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.joining;
 
 import com.google.auto.value.AutoValue;
@@ -29,21 +28,16 @@ import com.google.common.collect.SetMultimap;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Streams;
 import com.google.common.flogger.FluentLogger;
-import com.google.gerrit.common.Nullable;
+import com.google.gerrit.common.UsedAt;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.restapi.Url;
 import com.google.gerrit.index.IndexConfig;
 import com.google.gerrit.index.RefState;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.server.ReviewDb;
-import com.google.gerrit.server.UsedAt;
 import com.google.gerrit.server.git.GitRepositoryManager;
-import com.google.gerrit.server.notedb.ChangeNotes;
-import com.google.gerrit.server.notedb.NoteDbChangeState.PrimaryStorage;
+import com.google.gerrit.server.index.StalenessCheckResult;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import java.util.List;
@@ -53,6 +47,10 @@ import java.util.regex.Pattern;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 
+/**
+ * Checker that compares values stored in the change index to metadata in NoteDb to detect index
+ * documents that should have been updated (= stale).
+ */
 @Singleton
 public class StalenessChecker {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
@@ -66,59 +64,54 @@ public class StalenessChecker {
   private final ChangeIndexCollection indexes;
   private final GitRepositoryManager repoManager;
   private final IndexConfig indexConfig;
-  private final Provider<ReviewDb> db;
 
   @Inject
   StalenessChecker(
-      ChangeIndexCollection indexes,
-      GitRepositoryManager repoManager,
-      IndexConfig indexConfig,
-      Provider<ReviewDb> db) {
+      ChangeIndexCollection indexes, GitRepositoryManager repoManager, IndexConfig indexConfig) {
     this.indexes = indexes;
     this.repoManager = repoManager;
     this.indexConfig = indexConfig;
-    this.db = db;
   }
 
-  public boolean isStale(Change.Id id) throws IOException, OrmException {
+  /**
+   * Returns a {@link StalenessCheckResult} with structured information about staleness of the
+   * provided {@link com.google.gerrit.entities.Change.Id}.
+   */
+  public StalenessCheckResult check(Change.Id id) {
     ChangeIndex i = indexes.getSearchIndex();
     if (i == null) {
-      return false; // No index; caller couldn't do anything if it is stale.
+      return StalenessCheckResult
+          .notStale(); // No index; caller couldn't do anything if it is stale.
     }
     if (!i.getSchema().hasField(ChangeField.REF_STATE)
         || !i.getSchema().hasField(ChangeField.REF_STATE_PATTERN)) {
-      return false; // Index version not new enough for this check.
+      return StalenessCheckResult.notStale(); // Index version not new enough for this check.
     }
 
     Optional<ChangeData> result =
         i.get(id, IndexedChangeQuery.createOptions(indexConfig, 0, 1, FIELDS));
     if (!result.isPresent()) {
-      return true; // Not in index, but caller wants it to be.
+      return StalenessCheckResult.stale("Document %s missing from index", id);
     }
     ChangeData cd = result.get();
-    return isStale(
-        repoManager,
-        id,
-        cd.change(),
-        ChangeNotes.readOneReviewDbChange(db.get(), id),
-        parseStates(cd),
-        parsePatterns(cd));
+    return check(repoManager, id, parseStates(cd), parsePatterns(cd));
   }
 
+  /**
+   * Returns a {@link StalenessCheckResult} with structured information about staleness of the
+   * provided change.
+   */
   @UsedAt(UsedAt.Project.GOOGLE)
-  public static boolean isStale(
+  public static StalenessCheckResult check(
       GitRepositoryManager repoManager,
       Change.Id id,
-      Change indexChange,
-      @Nullable Change reviewDbChange,
       SetMultimap<Project.NameKey, RefState> states,
       ListMultimap<Project.NameKey, RefStatePattern> patterns) {
-    return reviewDbChangeIsStale(indexChange, reviewDbChange)
-        || refsAreStale(repoManager, id, states, patterns);
+    return refsAreStale(repoManager, id, states, patterns);
   }
 
   @VisibleForTesting
-  static boolean refsAreStale(
+  static StalenessCheckResult refsAreStale(
       GitRepositoryManager repoManager,
       Change.Id id,
       SetMultimap<Project.NameKey, RefState> states,
@@ -126,37 +119,13 @@ public class StalenessChecker {
     Set<Project.NameKey> projects = Sets.union(states.keySet(), patterns.keySet());
 
     for (Project.NameKey p : projects) {
-      if (refsAreStale(repoManager, id, p, states, patterns)) {
-        return true;
+      StalenessCheckResult result = refsAreStale(repoManager, id, p, states, patterns);
+      if (result.isStale()) {
+        return result;
       }
     }
 
-    return false;
-  }
-
-  @VisibleForTesting
-  static boolean reviewDbChangeIsStale(Change indexChange, @Nullable Change reviewDbChange) {
-    requireNonNull(indexChange);
-    PrimaryStorage storageFromIndex = PrimaryStorage.of(indexChange);
-    PrimaryStorage storageFromReviewDb = PrimaryStorage.of(reviewDbChange);
-    if (reviewDbChange == null) {
-      if (storageFromIndex == PrimaryStorage.REVIEW_DB) {
-        return true; // Index says it should have been in ReviewDb, but it wasn't.
-      }
-      return false; // Not in ReviewDb, but that's ok.
-    }
-    checkArgument(
-        indexChange.getId().equals(reviewDbChange.getId()),
-        "mismatched change ID: %s != %s",
-        indexChange.getId(),
-        reviewDbChange.getId());
-    if (storageFromIndex != storageFromReviewDb) {
-      return true; // Primary storage differs, definitely stale.
-    }
-    if (storageFromReviewDb != PrimaryStorage.REVIEW_DB) {
-      return false; // Not a ReviewDb change, don't check rowVersion.
-    }
-    return reviewDbChange.getRowVersion() != indexChange.getRowVersion();
+    return StalenessCheckResult.notStale();
   }
 
   private SetMultimap<Project.NameKey, RefState> parseStates(ChangeData cd) {
@@ -167,6 +136,10 @@ public class StalenessChecker {
     return parsePatterns(cd.getRefStatePatterns());
   }
 
+  /**
+   * Returns a map containing the parsed version of {@link RefStatePattern}. See {@link
+   * RefStatePattern}.
+   */
   public static ListMultimap<Project.NameKey, RefStatePattern> parsePatterns(
       Iterable<byte[]> patterns) {
     RefStatePattern.check(patterns != null, null);
@@ -177,13 +150,12 @@ public class StalenessChecker {
       String s = new String(b, UTF_8);
       List<String> parts = Splitter.on(':').splitToList(s);
       RefStatePattern.check(parts.size() == 2, s);
-      result.put(
-          new Project.NameKey(Url.decode(parts.get(0))), RefStatePattern.create(parts.get(1)));
+      result.put(Project.nameKey(Url.decode(parts.get(0))), RefStatePattern.create(parts.get(1)));
     }
     return result;
   }
 
-  private static boolean refsAreStale(
+  private static StalenessCheckResult refsAreStale(
       GitRepositoryManager repoManager,
       Change.Id id,
       Project.NameKey project,
@@ -193,18 +165,22 @@ public class StalenessChecker {
       Set<RefState> states = allStates.get(project);
       for (RefState state : states) {
         if (!state.match(repo)) {
-          return true;
+          return StalenessCheckResult.stale(
+              "Ref states don't match for document %s (%s != %s)",
+              id, state, repo.exactRef(state.ref()));
         }
       }
       for (RefStatePattern pattern : allPatterns.get(project)) {
         if (!pattern.match(repo, states)) {
-          return true;
+          return StalenessCheckResult.stale(
+              "Ref patterns don't match for document %s. Pattern: %s States: %s",
+              id, pattern, states);
         }
       }
-      return false;
+      return StalenessCheckResult.notStale();
     } catch (IOException e) {
       logger.atWarning().withCause(e).log("error checking staleness of %s in %s", id, project);
-      return true;
+      return StalenessCheckResult.stale("Exceptions while processing document %s", e.getMessage());
     }
   }
 

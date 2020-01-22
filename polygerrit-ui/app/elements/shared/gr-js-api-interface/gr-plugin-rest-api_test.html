@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-plugin-rest-api</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-js-api-interface.html"/>
 
@@ -48,7 +50,6 @@ limitations under the License.
         a[k] = (...args) => restApiStub[k](...args);
         return a;
       }, {}));
-      Gerrit._setPluginsCount(1);
       Gerrit.install(p => { plugin = p; }, '0.1',
           'http://test.com/plugins/testplugin/static/test.js');
       instance = new GrPluginRestApi();
@@ -120,10 +121,11 @@ limitations under the License.
           {status: 400, text() { return Promise.resolve('text'); }}));
       return instance.delete('/url').then(r => {
         throw new Error('Should not resolve');
-      }).catch(err => {
-        assert.isTrue(sendStub.calledWith('DELETE', '/url'));
-        assert.equal('text', err);
-      });
+      })
+          .catch(err => {
+            assert.isTrue(sendStub.calledWith('DELETE', '/url'));
+            assert.equal('text', err.message);
+          });
     });
 
     test('getLoggedIn', () => {

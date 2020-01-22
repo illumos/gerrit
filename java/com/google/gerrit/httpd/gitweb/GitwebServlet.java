@@ -36,10 +36,10 @@ import com.google.common.base.CharMatcher;
 import com.google.common.base.Splitter;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.PageLinks;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.Url;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.AnonymousUser;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
@@ -174,10 +174,8 @@ class GitwebServlet extends HttpServlet {
     }
     Path myconf = Files.createTempFile(site.tmp_dir, "gitweb_config", ".perl");
 
-    // To make our configuration file only readable or writable by us;
-    // this reduces the chances of someone tampering with the file.
-    //
-    // TODO(dborowitz): Is there a portable way to do this with NIO?
+    // To make our configuration file only readable or writable by us; this reduces the chances of
+    // someone tampering with the file.
     File myconfFile = myconf.toFile();
     myconfFile.setWritable(false, false /* all */);
     myconfFile.setReadable(false, false /* all */);
@@ -414,7 +412,7 @@ class GitwebServlet extends HttpServlet {
       name = name.substring(0, name.length() - 4);
     }
 
-    Project.NameKey nameKey = new Project.NameKey(name);
+    Project.NameKey nameKey = Project.nameKey(name);
     ProjectState projectState;
     try {
       projectState = projectCache.checkedGet(nameKey);

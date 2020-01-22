@@ -25,18 +25,21 @@ import com.google.gerrit.extensions.client.EditPreferencesInfo;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo;
 import com.google.gerrit.extensions.common.ServerInfo;
 import com.google.gerrit.extensions.restapi.RestApiException;
+import com.google.gerrit.extensions.webui.TopMenu;
 import com.google.gerrit.server.config.ConfigResource;
 import com.google.gerrit.server.restapi.config.CheckConsistency;
 import com.google.gerrit.server.restapi.config.GetDiffPreferences;
 import com.google.gerrit.server.restapi.config.GetEditPreferences;
 import com.google.gerrit.server.restapi.config.GetPreferences;
 import com.google.gerrit.server.restapi.config.GetServerInfo;
+import com.google.gerrit.server.restapi.config.ListTopMenus;
 import com.google.gerrit.server.restapi.config.SetDiffPreferences;
 import com.google.gerrit.server.restapi.config.SetEditPreferences;
 import com.google.gerrit.server.restapi.config.SetPreferences;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
+import java.util.List;
 
 @Singleton
 public class ServerImpl implements Server {
@@ -48,6 +51,7 @@ public class ServerImpl implements Server {
   private final SetEditPreferences setEditPreferences;
   private final GetServerInfo getServerInfo;
   private final Provider<CheckConsistency> checkConsistency;
+  private final ListTopMenus listTopMenus;
 
   @Inject
   ServerImpl(
@@ -58,7 +62,8 @@ public class ServerImpl implements Server {
       GetEditPreferences getEditPreferences,
       SetEditPreferences setEditPreferences,
       GetServerInfo getServerInfo,
-      Provider<CheckConsistency> checkConsistency) {
+      Provider<CheckConsistency> checkConsistency,
+      ListTopMenus listTopMenus) {
     this.getPreferences = getPreferences;
     this.setPreferences = setPreferences;
     this.getDiffPreferences = getDiffPreferences;
@@ -67,6 +72,7 @@ public class ServerImpl implements Server {
     this.setEditPreferences = setEditPreferences;
     this.getServerInfo = getServerInfo;
     this.checkConsistency = checkConsistency;
+    this.listTopMenus = listTopMenus;
   }
 
   @Override
@@ -77,7 +83,7 @@ public class ServerImpl implements Server {
   @Override
   public ServerInfo getInfo() throws RestApiException {
     try {
-      return getServerInfo.apply(new ConfigResource());
+      return getServerInfo.apply(new ConfigResource()).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot get server info", e);
     }
@@ -86,7 +92,7 @@ public class ServerImpl implements Server {
   @Override
   public GeneralPreferencesInfo getDefaultPreferences() throws RestApiException {
     try {
-      return getPreferences.apply(new ConfigResource());
+      return getPreferences.apply(new ConfigResource()).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot get default general preferences", e);
     }
@@ -96,7 +102,7 @@ public class ServerImpl implements Server {
   public GeneralPreferencesInfo setDefaultPreferences(GeneralPreferencesInfo in)
       throws RestApiException {
     try {
-      return setPreferences.apply(new ConfigResource(), in);
+      return setPreferences.apply(new ConfigResource(), in).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot set default general preferences", e);
     }
@@ -105,7 +111,7 @@ public class ServerImpl implements Server {
   @Override
   public DiffPreferencesInfo getDefaultDiffPreferences() throws RestApiException {
     try {
-      return getDiffPreferences.apply(new ConfigResource());
+      return getDiffPreferences.apply(new ConfigResource()).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot get default diff preferences", e);
     }
@@ -115,7 +121,7 @@ public class ServerImpl implements Server {
   public DiffPreferencesInfo setDefaultDiffPreferences(DiffPreferencesInfo in)
       throws RestApiException {
     try {
-      return setDiffPreferences.apply(new ConfigResource(), in);
+      return setDiffPreferences.apply(new ConfigResource(), in).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot set default diff preferences", e);
     }
@@ -124,7 +130,7 @@ public class ServerImpl implements Server {
   @Override
   public EditPreferencesInfo getDefaultEditPreferences() throws RestApiException {
     try {
-      return getEditPreferences.apply(new ConfigResource());
+      return getEditPreferences.apply(new ConfigResource()).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot get default edit preferences", e);
     }
@@ -134,7 +140,7 @@ public class ServerImpl implements Server {
   public EditPreferencesInfo setDefaultEditPreferences(EditPreferencesInfo in)
       throws RestApiException {
     try {
-      return setEditPreferences.apply(new ConfigResource(), in);
+      return setEditPreferences.apply(new ConfigResource(), in).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot set default edit preferences", e);
     }
@@ -143,9 +149,18 @@ public class ServerImpl implements Server {
   @Override
   public ConsistencyCheckInfo checkConsistency(ConsistencyCheckInput in) throws RestApiException {
     try {
-      return checkConsistency.get().apply(new ConfigResource(), in);
+      return checkConsistency.get().apply(new ConfigResource(), in).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot check consistency", e);
+    }
+  }
+
+  @Override
+  public List<TopMenu.MenuEntry> topMenus() throws RestApiException {
+    try {
+      return listTopMenus.apply(new ConfigResource()).value();
+    } catch (Exception e) {
+      throw asRestApiException("Cannot get top menus", e);
     }
   }
 }

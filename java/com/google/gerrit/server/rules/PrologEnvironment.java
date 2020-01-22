@@ -20,6 +20,7 @@ import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.account.Emails;
 import com.google.gerrit.server.config.GerritServerConfig;
+import com.google.gerrit.server.config.PluginConfigFactory;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.patch.PatchListCache;
 import com.google.gerrit.server.patch.PatchSetInfoFactory;
@@ -171,6 +172,7 @@ public class PrologEnvironment extends BufferingPrologControl {
     private final ProjectCache projectCache;
     private final PermissionBackend permissionBackend;
     private final GitRepositoryManager repositoryManager;
+    private final PluginConfigFactory pluginConfigFactory;
     private final PatchListCache patchListCache;
     private final PatchSetInfoFactory patchSetInfoFactory;
     private final IdentifiedUser.GenericFactory userFactory;
@@ -185,6 +187,7 @@ public class PrologEnvironment extends BufferingPrologControl {
         ProjectCache projectCache,
         PermissionBackend permissionBackend,
         GitRepositoryManager repositoryManager,
+        PluginConfigFactory pluginConfigFactory,
         PatchListCache patchListCache,
         PatchSetInfoFactory patchSetInfoFactory,
         IdentifiedUser.GenericFactory userFactory,
@@ -195,23 +198,15 @@ public class PrologEnvironment extends BufferingPrologControl {
       this.projectCache = projectCache;
       this.permissionBackend = permissionBackend;
       this.repositoryManager = repositoryManager;
+      this.pluginConfigFactory = pluginConfigFactory;
       this.patchListCache = patchListCache;
       this.patchSetInfoFactory = patchSetInfoFactory;
       this.userFactory = userFactory;
       this.anonymousUser = anonymousUser;
       this.patchsetUtil = patchsetUtil;
       this.emails = emails;
-
-      int limit = config.getInt("rules", null, "reductionLimit", 100000);
-      reductionLimit = limit <= 0 ? Integer.MAX_VALUE : limit;
-
-      limit =
-          config.getInt(
-              "rules",
-              null,
-              "compileReductionLimit",
-              (int) Math.min(10L * limit, Integer.MAX_VALUE));
-      compileLimit = limit <= 0 ? Integer.MAX_VALUE : limit;
+      this.reductionLimit = RuleUtil.reductionLimit(config);
+      this.compileLimit = RuleUtil.compileReductionLimit(config);
 
       logger.atInfo().log("reductionLimit: %d, compileLimit: %d", reductionLimit, compileLimit);
     }
@@ -236,6 +231,10 @@ public class PrologEnvironment extends BufferingPrologControl {
 
     public GitRepositoryManager getGitRepositoryManager() {
       return repositoryManager;
+    }
+
+    public PluginConfigFactory getPluginConfigFactory() {
+      return pluginConfigFactory;
     }
 
     public PatchListCache getPatchListCache() {

@@ -17,23 +17,29 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-change-table-editor',
+  /**
+   * @appliesMixin Gerrit.ChangeTableMixin
+   * @extends Polymer.Element
+   */
+  class GrChangeTableEditor extends Polymer.mixinBehaviors( [
+    Gerrit.ChangeTableBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-change-table-editor'; }
 
-    properties: {
-      displayedColumns: {
-        type: Array,
-        notify: true,
-      },
-      showNumber: {
-        type: Boolean,
-        notify: true,
-      },
-    },
-
-    behaviors: [
-      Gerrit.ChangeTableBehavior,
-    ],
+    static get properties() {
+      return {
+        displayedColumns: {
+          type: Array,
+          notify: true,
+        },
+        showNumber: {
+          type: Boolean,
+          notify: true,
+        },
+      };
+    }
 
     /**
      * Get the list of enabled column names from whichever checkboxes are
@@ -42,36 +48,38 @@
      * @return {!Array<string>}
      */
     _getDisplayedColumns() {
-      return Polymer.dom(this.root)
-          .querySelectorAll('.checkboxContainer input:not([name=number])')
+      return Array.from(Polymer.dom(this.root)
+          .querySelectorAll('.checkboxContainer input:not([name=number])'))
           .filter(checkbox => checkbox.checked)
           .map(checkbox => checkbox.name);
-    },
+    }
 
     /**
-     * Handle a tap on a checkbox container and relay the tap to the checkbox it
+     * Handle a click on a checkbox container and relay the click to the checkbox it
      * contains.
      */
-    _handleCheckboxContainerTap(e) {
+    _handleCheckboxContainerClick(e) {
       const checkbox = Polymer.dom(e.target).querySelector('input');
       if (!checkbox) { return; }
       checkbox.click();
-    },
+    }
 
     /**
-     * Handle a tap on the number checkbox and update the showNumber property
+     * Handle a click on the number checkbox and update the showNumber property
      * accordingly.
      */
-    _handleNumberCheckboxTap(e) {
+    _handleNumberCheckboxClick(e) {
       this.showNumber = Polymer.dom(e).rootTarget.checked;
-    },
+    }
 
     /**
-     * Handle a tap on a displayed column checkboxes (excluding number) and
+     * Handle a click on a displayed column checkboxes (excluding number) and
      * update the displayedColumns property accordingly.
      */
-    _handleTargetTap(e) {
+    _handleTargetClick(e) {
       this.set('displayedColumns', this._getDisplayedColumns());
-    },
-  });
+    }
+  }
+
+  customElements.define(GrChangeTableEditor.is, GrChangeTableEditor);
 })();

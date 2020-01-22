@@ -17,36 +17,28 @@ package com.google.gerrit.acceptance.rest.change;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.TruthJUnit.assume;
 
-import com.google.common.collect.Iterables;
 import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.acceptance.TestProjectInput;
-import com.google.gerrit.extensions.api.changes.SubmitInput;
-import com.google.gerrit.extensions.client.ChangeStatus;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.extensions.client.InheritableBoolean;
-import com.google.gerrit.extensions.common.ChangeInfo;
-import com.google.gerrit.extensions.restapi.ResourceConflictException;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.server.change.TestSubmitInput;
-import org.eclipse.jgit.lib.ObjectId;
-import org.eclipse.jgit.lib.Repository;
+import com.google.inject.Inject;
 import org.eclipse.jgit.revwalk.RevCommit;
-import org.eclipse.jgit.revwalk.RevWalk;
 import org.junit.Test;
 
 public abstract class AbstractSubmitByMerge extends AbstractSubmit {
+  @Inject private ProjectOperations projectOperations;
 
   @Test
-  public void submitWithMerge() throws Exception {
-    RevCommit initialHead = getRemoteHead();
+  public void submitWithMerge() throws Throwable {
+    RevCommit initialHead = projectOperations.project(project).getHead("master");
     PushOneCommit.Result change = createChange("Change 1", "a.txt", "content");
     submit(change.getChangeId());
 
-    RevCommit oldHead = getRemoteHead();
+    RevCommit oldHead = projectOperations.project(project).getHead("master");
     testRepo.reset(initialHead);
     PushOneCommit.Result change2 = createChange("Change 2", "b.txt", "other content");
     submit(change2.getChangeId());
-    RevCommit head = getRemoteHead();
+    RevCommit head = projectOperations.project(project).getHead("master");
     assertThat(head.getParentCount()).isEqualTo(2);
     assertThat(head.getParent(0)).isEqualTo(oldHead);
     assertThat(head.getParent(1)).isEqualTo(change2.getCommit());
@@ -54,17 +46,17 @@ public abstract class AbstractSubmitByMerge extends AbstractSubmit {
 
   @Test
   @TestProjectInput(useContentMerge = InheritableBoolean.TRUE)
-  public void submitWithContentMerge() throws Exception {
+  public void submitWithContentMerge() throws Throwable {
     PushOneCommit.Result change = createChange("Change 1", "a.txt", "aaa\nbbb\nccc\n");
     submit(change.getChangeId());
     PushOneCommit.Result change2 = createChange("Change 2", "a.txt", "aaa\nbbb\nccc\nddd\n");
     submit(change2.getChangeId());
 
-    RevCommit oldHead = getRemoteHead();
+    RevCommit oldHead = projectOperations.project(project).getHead("master");
     testRepo.reset(change.getCommit());
     PushOneCommit.Result change3 = createChange("Change 3", "a.txt", "bbb\nccc\n");
     submit(change3.getChangeId());
-    RevCommit head = getRemoteHead();
+    RevCommit head = projectOperations.project(project).getHead("master");
     assertThat(head.getParentCount()).isEqualTo(2);
     assertThat(head.getParent(0)).isEqualTo(oldHead);
     assertThat(head.getParent(1)).isEqualTo(change3.getCommit());
@@ -72,12 +64,12 @@ public abstract class AbstractSubmitByMerge extends AbstractSubmit {
 
   @Test
   @TestProjectInput(useContentMerge = InheritableBoolean.TRUE)
-  public void submitWithContentMerge_Conflict() throws Exception {
-    RevCommit initialHead = getRemoteHead();
+  public void submitWithContentMerge_Conflict() throws Throwable {
+    RevCommit initialHead = projectOperations.project(project).getHead("master");
     PushOneCommit.Result change = createChange("Change 1", "a.txt", "content");
     submit(change.getChangeId());
 
-    RevCommit oldHead = getRemoteHead();
+    RevCommit oldHead = projectOperations.project(project).getHead("master");
     testRepo.reset(initialHead);
     PushOneCommit.Result change2 = createChange("Change 2", "a.txt", "other content");
     submitWithConflict(
@@ -89,93 +81,40 @@ public abstract class AbstractSubmitByMerge extends AbstractSubmit {
             + "Change could not be merged due to a path conflict. "
             + "Please rebase the change locally "
             + "and upload the rebased commit for review.");
-    assertThat(getRemoteHead()).isEqualTo(oldHead);
+    assertThat(projectOperations.project(project).getHead("master")).isEqualTo(oldHead);
   }
 
   @Test
   @TestProjectInput(createEmptyCommit = false)
-  public void submitMultipleCommitsToEmptyRepoAsFastForward() throws Exception {
+  public void submitMultipleCommitsToEmptyRepoAsFastForward() throws Throwable {
     PushOneCommit.Result change1 = createChange();
     PushOneCommit.Result change2 = createChange();
     approve(change1.getChangeId());
     submit(change2.getChangeId());
-    assertThat(getRemoteHead().getId()).isEqualTo(change2.getCommit());
+    assertThat(projectOperations.project(project).getHead("master").getId())
+        .isEqualTo(change2.getCommit());
   }
 
   @Test
   @TestProjectInput(createEmptyCommit = false)
-  public void submitMultipleCommitsToEmptyRepoWithOneMerge() throws Exception {
+  public void submitMultipleCommitsToEmptyRepoWithOneMerge() throws Throwable {
     assume().that(isSubmitWholeTopicEnabled()).isTrue();
     PushOneCommit.Result change1 =
         pushFactory
-            .create(db, admin.getIdent(), testRepo, "Change 1", "a", "a")
-            .to("refs/for/master/" + name("topic"));
+            .create(admin.newIdent(), testRepo, "Change 1", "a", "a")
+            .to("refs/for/master%topic=" + name("topic"));
 
-    PushOneCommit push2 = pushFactory.create(db, admin.getIdent(), testRepo, "Change 2", "b", "b");
+    PushOneCommit push2 = pushFactory.create(admin.newIdent(), testRepo, "Change 2", "b", "b");
     push2.noParents();
-    PushOneCommit.Result change2 = push2.to("refs/for/master/" + name("topic"));
+    PushOneCommit.Result change2 = push2.to("refs/for/master%topic=" + name("topic"));
     change2.assertOkStatus();
 
     approve(change1.getChangeId());
     submit(change2.getChangeId());
 
-    RevCommit head = getRemoteHead();
+    RevCommit head = projectOperations.project(project).getHead("master");
     assertThat(head.getParents()).hasLength(2);
     assertThat(head.getParent(0)).isEqualTo(change1.getCommit());
     assertThat(head.getParent(1)).isEqualTo(change2.getCommit());
-  }
-
-  @Test
-  public void repairChangeStateAfterFailure() throws Exception {
-    // In NoteDb-only mode, repo and meta updates are atomic (at least in InMemoryRepository).
-    assume().that(notesMigration.disableChangeReviewDb()).isFalse();
-
-    RevCommit initialHead = getRemoteHead();
-    PushOneCommit.Result change = createChange("Change 1", "a.txt", "content");
-    submit(change.getChangeId());
-    RevCommit afterChange1Head = getRemoteHead();
-
-    testRepo.reset(initialHead);
-    PushOneCommit.Result change2 = createChange("Change 2", "b.txt", "other content");
-    Change.Id id2 = change2.getChange().getId();
-    TestSubmitInput failInput = new TestSubmitInput();
-    failInput.failAfterRefUpdates = true;
-    submit(
-        change2.getChangeId(),
-        failInput,
-        ResourceConflictException.class,
-        "Failing after ref updates");
-
-    // Bad: ref advanced but change wasn't updated.
-    PatchSet.Id psId1 = new PatchSet.Id(id2, 1);
-    ChangeInfo info = gApi.changes().id(id2.get()).get();
-    assertThat(info.status).isEqualTo(ChangeStatus.NEW);
-    assertThat(info.revisions.get(info.currentRevision)._number).isEqualTo(1);
-
-    RevCommit tip;
-    try (Repository repo = repoManager.openRepository(project);
-        RevWalk rw = new RevWalk(repo)) {
-      ObjectId rev1 = repo.exactRef(psId1.toRefName()).getObjectId();
-      assertThat(rev1).isNotNull();
-
-      tip = rw.parseCommit(repo.exactRef("refs/heads/master").getObjectId());
-      assertThat(tip.getParentCount()).isEqualTo(2);
-      assertThat(tip.getParent(0)).isEqualTo(afterChange1Head);
-      assertThat(tip.getParent(1)).isEqualTo(change2.getCommit());
-    }
-
-    submit(change2.getChangeId(), new SubmitInput(), null, null);
-
-    // Change status and patch set entities were updated, and branch tip stayed
-    // the same.
-    info = gApi.changes().id(id2.get()).get();
-    assertThat(info.status).isEqualTo(ChangeStatus.MERGED);
-    assertThat(info.revisions.get(info.currentRevision)._number).isEqualTo(1);
-    assertThat(Iterables.getLast(info.messages).message)
-        .isEqualTo("Change has been successfully merged by Administrator");
-
-    try (Repository repo = repoManager.openRepository(project)) {
-      assertThat(repo.exactRef("refs/heads/master").getObjectId()).isEqualTo(tip);
-    }
   }
 }

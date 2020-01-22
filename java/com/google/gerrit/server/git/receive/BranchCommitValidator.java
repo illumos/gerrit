@@ -14,27 +14,29 @@
 
 package com.google.gerrit.server.git.receive;
 
+import static com.google.gerrit.git.ObjectIds.abbreviateName;
 import static org.eclipse.jgit.transport.ReceiveCommand.Result.REJECTED_OTHER_REASON;
 
+import com.google.auto.value.AutoValue;
+import com.google.common.collect.ImmutableList;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RevId;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.events.CommitReceivedEvent;
 import com.google.gerrit.server.git.validators.CommitValidationException;
 import com.google.gerrit.server.git.validators.CommitValidationMessage;
 import com.google.gerrit.server.git.validators.CommitValidators;
-import com.google.gerrit.server.git.validators.ValidationMessage;
+import com.google.gerrit.server.logging.TraceContext;
+import com.google.gerrit.server.logging.TraceContext.TraceTimer;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.ssh.SshInfo;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 import java.io.IOException;
-import java.util.List;
 import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.notes.NoteMap;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -48,12 +50,29 @@ public class BranchCommitValidator {
   private final IdentifiedUser user;
   private final PermissionBackend.ForProject permissions;
   private final Project project;
-  private final Branch.NameKey branch;
+  private final BranchNameKey branch;
   private final SshInfo sshInfo;
 
   interface Factory {
     BranchCommitValidator create(
-        ProjectState projectState, Branch.NameKey branch, IdentifiedUser user);
+        ProjectState projectState, BranchNameKey branch, IdentifiedUser user);
+  }
+
+  /** A boolean validation status and a list of additional messages. */
+  @AutoValue
+  abstract static class Result {
+    static Result create(boolean isValid, ImmutableList<CommitValidationMessage> messages) {
+      return new AutoValue_BranchCommitValidator_Result(isValid, messages);
+    }
+
+    /** Whether the commit is valid. */
+    abstract boolean isValid();
+
+    /**
+     * A list of messages related to the validation. Messages may be present regardless of the
+     * {@link #isValid()} status.
+     */
+    abstract ImmutableList<CommitValidationMessage> messages();
   }
 
   @Inject
@@ -62,7 +81,7 @@ public class BranchCommitValidator {
       PermissionBackend permissionBackend,
       SshInfo sshInfo,
       @Assisted ProjectState projectState,
-      @Assisted Branch.NameKey branch,
+      @Assisted BranchNameKey branch,
       @Assisted IdentifiedUser user) {
     this.sshInfo = sshInfo;
     this.user = user;
@@ -80,17 +99,17 @@ public class BranchCommitValidator {
    * @param commit the commit being validated.
    * @param isMerged whether this is a merge commit created by magicBranch --merge option
    * @param change the change for which this is a new patchset.
+   * @return The validation {@link Result}.
    */
-  public boolean validCommit(
+  Result validateCommit(
       ObjectReader objectReader,
       ReceiveCommand cmd,
       RevCommit commit,
       boolean isMerged,
-      List<ValidationMessage> messages,
       NoteMap rejectCommits,
       @Nullable Change change)
       throws IOException {
-    return validCommit(objectReader, cmd, commit, isMerged, messages, rejectCommits, change, false);
+    return validateCommit(objectReader, cmd, commit, isMerged, rejectCommits, change, false);
   }
 
   /**
@@ -102,55 +121,63 @@ public class BranchCommitValidator {
    * @param isMerged whether this is a merge commit created by magicBranch --merge option
    * @param change the change for which this is a new patchset.
    * @param skipValidation whether 'skip-validation' was requested.
+   * @return The validation {@link Result}.
    */
-  public boolean validCommit(
+  Result validateCommit(
       ObjectReader objectReader,
       ReceiveCommand cmd,
       RevCommit commit,
       boolean isMerged,
-      List<ValidationMessage> messages,
       NoteMap rejectCommits,
       @Nullable Change change,
       boolean skipValidation)
       throws IOException {
-    try (CommitReceivedEvent receiveEvent =
-        new CommitReceivedEvent(cmd, project, branch.get(), objectReader, commit, user)) {
-      CommitValidators validators;
-      if (isMerged) {
-        validators =
-            commitValidatorsFactory.forMergedCommits(permissions, branch, user.asIdentifiedUser());
-      } else {
-        validators =
-            commitValidatorsFactory.forReceiveCommits(
-                permissions,
-                branch,
-                user.asIdentifiedUser(),
-                sshInfo,
-                rejectCommits,
-                receiveEvent.revWalk,
-                change,
-                skipValidation);
-      }
+    try (TraceTimer traceTimer = TraceContext.newTimer("BranchCommitValidator#validateCommit")) {
+      ImmutableList.Builder<CommitValidationMessage> messages = new ImmutableList.Builder<>();
+      try (CommitReceivedEvent receiveEvent =
+          new CommitReceivedEvent(cmd, project, branch.branch(), objectReader, commit, user)) {
+        CommitValidators validators;
+        if (isMerged) {
+          validators =
+              commitValidatorsFactory.forMergedCommits(
+                  permissions, branch, user.asIdentifiedUser());
+        } else {
+          validators =
+              commitValidatorsFactory.forReceiveCommits(
+                  permissions,
+                  branch,
+                  user.asIdentifiedUser(),
+                  sshInfo,
+                  rejectCommits,
+                  receiveEvent.revWalk,
+                  change,
+                  skipValidation);
+        }
 
-      for (CommitValidationMessage m : validators.validate(receiveEvent)) {
-        messages.add(
-            new CommitValidationMessage(messageForCommit(commit, m.getMessage()), m.getType()));
+        for (CommitValidationMessage m : validators.validate(receiveEvent)) {
+          messages.add(
+              new CommitValidationMessage(
+                  messageForCommit(commit, m.getMessage(), objectReader), m.getType()));
+        }
+      } catch (CommitValidationException e) {
+        logger.atFine().log("Commit validation failed on %s", commit.name());
+        for (CommitValidationMessage m : e.getMessages()) {
+          // The non-error messages may contain background explanation for the
+          // fatal error, so have to preserve all messages.
+          messages.add(
+              new CommitValidationMessage(
+                  messageForCommit(commit, m.getMessage(), objectReader), m.getType()));
+        }
+        cmd.setResult(
+            REJECTED_OTHER_REASON, messageForCommit(commit, e.getMessage(), objectReader));
+        return Result.create(false, messages.build());
       }
-    } catch (CommitValidationException e) {
-      logger.atFine().log("Commit validation failed on %s", commit.name());
-      for (CommitValidationMessage m : e.getMessages()) {
-        // The non-error messages may contain background explanation for the
-        // fatal error, so have to preserve all messages.
-        messages.add(
-            new CommitValidationMessage(messageForCommit(commit, m.getMessage()), m.getType()));
-      }
-      cmd.setResult(REJECTED_OTHER_REASON, messageForCommit(commit, e.getMessage()));
-      return false;
+      return Result.create(true, messages.build());
     }
-    return true;
   }
 
-  private String messageForCommit(RevCommit c, String msg) {
-    return String.format("commit %s: %s", c.abbreviate(RevId.ABBREV_LEN).name(), msg);
+  private String messageForCommit(RevCommit c, String msg, ObjectReader objectReader)
+      throws IOException {
+    return String.format("commit %s: %s", abbreviateName(c, objectReader), msg);
   }
 }

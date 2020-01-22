@@ -18,13 +18,13 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.MoreObjects;
 import com.google.common.collect.Maps;
 import com.google.common.flogger.FluentLogger;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.server.cache.proto.Cache.TagSetHolderProto.TagSetProto;
 import com.google.gerrit.server.cache.proto.Cache.TagSetHolderProto.TagSetProto.CachedRefProto;
 import com.google.gerrit.server.cache.proto.Cache.TagSetHolderProto.TagSetProto.TagProto;
-import com.google.gerrit.server.cache.serialize.ProtoCacheSerializers.ObjectIdConverter;
+import com.google.gerrit.server.cache.serialize.ObjectIdConverter;
 import com.google.protobuf.ByteString;
 import java.io.IOException;
 import java.util.BitSet;
@@ -232,7 +232,7 @@ class TagSet {
                     new Tag(
                         idConverter.fromByteString(t.getId()),
                         BitSet.valueOf(t.getFlags().asReadOnlyByteBuffer()))));
-    return new TagSet(new Project.NameKey(proto.getProjectName()), refs, tags);
+    return new TagSet(Project.nameKey(proto.getProjectName()), refs, tags);
   }
 
   TagSetProto toProto() {

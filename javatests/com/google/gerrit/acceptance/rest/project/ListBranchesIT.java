@@ -15,32 +15,48 @@
 package com.google.gerrit.acceptance.rest.project;
 
 import static com.google.gerrit.acceptance.rest.project.RefAssert.assertRefs;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.block;
+import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
 import com.google.common.collect.ImmutableList;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.TestProjectInput;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
+import com.google.gerrit.common.data.Permission;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.projects.BranchInfo;
 import com.google.gerrit.extensions.api.projects.ProjectApi.ListRefsRequest;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.inject.Inject;
 import org.junit.Test;
 
 @NoHttpd
 public class ListBranchesIT extends AbstractDaemonTest {
+  @Inject private ProjectOperations projectOperations;
+  @Inject private RequestScopeOperations requestScopeOperations;
+
   @Test
   public void listBranchesOfNonExistingProject_NotFound() throws Exception {
-    exception.expect(ResourceNotFoundException.class);
-    gApi.projects().name("non-existing").branches().get();
+    assertThrows(
+        ResourceNotFoundException.class,
+        () -> gApi.projects().name("non-existing").branches().get());
   }
 
   @Test
   public void listBranchesOfNonVisibleProject_NotFound() throws Exception {
-    blockRead("refs/*");
-    setApiUser(user);
-    exception.expect(ResourceNotFoundException.class);
-    gApi.projects().name(project.get()).branches().get();
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(Permission.READ).ref("refs/*").group(REGISTERED_USERS))
+        .update();
+    requestScopeOperations.setApiUser(user.id());
+    assertThrows(
+        ResourceNotFoundException.class,
+        () -> gApi.projects().name(project.get()).branches().get());
   }
 
   @Test
@@ -55,7 +71,7 @@ public class ListBranchesIT extends AbstractDaemonTest {
   public void listBranches() throws Exception {
     String master = pushTo("refs/heads/master").getCommit().name();
     String dev = pushTo("refs/heads/dev").getCommit().name();
-    String refsConfig = getRemoteHead(project, RefNames.REFS_CONFIG).name();
+    String refsConfig = projectOperations.project(project).getHead(RefNames.REFS_CONFIG).name();
     assertRefs(
         ImmutableList.of(
             branch("HEAD", "master", false),
@@ -67,10 +83,14 @@ public class ListBranchesIT extends AbstractDaemonTest {
 
   @Test
   public void listBranchesSomeHidden() throws Exception {
-    blockRead("refs/heads/dev");
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(Permission.READ).ref("refs/heads/dev").group(REGISTERED_USERS))
+        .update();
     String master = pushTo("refs/heads/master").getCommit().name();
     pushTo("refs/heads/dev");
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     // refs/meta/config is hidden since user is no project owner
     assertRefs(
         ImmutableList.of(
@@ -80,10 +100,14 @@ public class ListBranchesIT extends AbstractDaemonTest {
 
   @Test
   public void listBranchesHeadHidden() throws Exception {
-    blockRead("refs/heads/master");
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(Permission.READ).ref("refs/heads/master").group(REGISTERED_USERS))
+        .update();
     pushTo("refs/heads/master");
     String dev = pushTo("refs/heads/dev").getCommit().name();
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     // refs/meta/config is hidden since user is no project owner
     assertRefs(ImmutableList.of(branch("refs/heads/dev", dev, false)), list().get());
   }
@@ -92,7 +116,10 @@ public class ListBranchesIT extends AbstractDaemonTest {
   public void listBranchesUsingPagination() throws Exception {
     BranchInfo head = branch("HEAD", "master", false);
     BranchInfo refsConfig =
-        branch(RefNames.REFS_CONFIG, getRemoteHead(project, RefNames.REFS_CONFIG).name(), false);
+        branch(
+            RefNames.REFS_CONFIG,
+            projectOperations.project(project).getHead(RefNames.REFS_CONFIG).name(),
+            false);
     BranchInfo master =
         branch("refs/heads/master", pushTo("refs/heads/master").getCommit().getName(), false);
     BranchInfo branch1 =
@@ -166,11 +193,6 @@ public class ListBranchesIT extends AbstractDaemonTest {
   }
 
   private void assertBadRequest(ListRefsRequest<BranchInfo> req) throws Exception {
-    try {
-      req.get();
-      fail("Expected BadRequestException");
-    } catch (BadRequestException e) {
-      // Expected
-    }
+    assertThrows(BadRequestException.class, () -> req.get());
   }
 }

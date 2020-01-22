@@ -71,9 +71,6 @@ rules_closure_dependencies(
 
 rules_closure_toolchains()
 
-# This has to be done after loading of rules_closure, because it loads rules_java
-load("//lib/codemirror:cm.bzl", "CM_VERSION", "DIFF_MATCH_PATCH_VERSION")
-
 # Golang support for PolyGerrit local dev server.
 http_archive(
     name = "io_bazel_rules_go",
@@ -102,15 +99,15 @@ gazelle_dependencies()
 
 # Dependencies for PolyGerrit local dev server.
 go_repository(
-    name = "com_github_robfig_soy",
-    commit = "82face14ebc0883b4ca9c901b5aaf3738b9f6a24",
-    importpath = "github.com/robfig/soy",
-)
-
-go_repository(
     name = "com_github_howeyc_fsnotify",
     commit = "441bbc86b167f3c1f4786afae9931403b99fdacf",
     importpath = "github.com/howeyc/fsnotify",
+)
+
+# JGit external repository consumed from git submodule
+local_repository(
+    name = "jgit",
+    path = "modules/jgit",
 )
 
 ANTLR_VERS = "3.5.2"
@@ -140,24 +137,24 @@ maven_jar(
     sha1 = "83cd2cd674a217ade95a4bb83a8a14f351f48bd0",
 )
 
-GUICE_VERS = "4.2.1"
+GUICE_VERS = "4.2.2"
 
 maven_jar(
     name = "guice-library",
     artifact = "com.google.inject:guice:" + GUICE_VERS,
-    sha1 = "f77dfd89318fe3ff293bafceaa75fbf66e4e4b10",
+    sha1 = "6dacbe18e5eaa7f6c9c36db33b42e7985e94ce77",
 )
 
 maven_jar(
     name = "guice-assistedinject",
     artifact = "com.google.inject.extensions:guice-assistedinject:" + GUICE_VERS,
-    sha1 = "d327e4aee7c96f08cd657c17da231a1f4a8999ac",
+    sha1 = "c33fb10080d58446f752b4fcfff8a5fabb80a449",
 )
 
 maven_jar(
     name = "guice-servlet",
     artifact = "com.google.inject.extensions:guice-servlet:" + GUICE_VERS,
-    sha1 = "3927e462f923b0c672fdb045c5645bca4beab5c0",
+    sha1 = "0d0054bdd812224078357a9b11409e43d182a046",
 )
 
 maven_jar(
@@ -173,75 +170,35 @@ maven_jar(
 )
 
 maven_jar(
-    name = "servlet-api-3_1",
+    name = "servlet-api",
     artifact = "org.apache.tomcat:tomcat-servlet-api:8.5.23",
     sha1 = "021a212688ec94fe77aff74ab34cc74f6f940e60",
 )
 
-GWT_VERS = "2.8.2"
-
+# JGit's transitive dependencies
 maven_jar(
-    name = "user",
-    artifact = "com.google.gwt:gwt-user:" + GWT_VERS,
-    sha1 = "a2b9be2c996a658c4e009ba652a9c6a81c88a797",
+    name = "hamcrest-library",
+    artifact = "org.hamcrest:hamcrest-library:1.3",
+    sha1 = "4785a3c21320980282f9f33d0d1264a69040538f",
 )
 
 maven_jar(
-    name = "dev",
-    artifact = "com.google.gwt:gwt-dev:" + GWT_VERS,
-    sha1 = "7a87e060bbf129386b7ae772459fb9f87297c332",
+    name = "jzlib",
+    artifact = "com.jcraft:jzlib:1.1.1",
+    sha1 = "a1551373315ffc2f96130a0e5704f74e151777ba",
 )
-
-maven_jar(
-    name = "javax-validation",
-    artifact = "javax.validation:validation-api:1.0.0.GA",
-    sha1 = "b6bd7f9d78f6fdaa3c37dae18a4bd298915f328e",
-    src_sha1 = "7a561191db2203550fbfa40d534d4997624cd369",
-)
-
-maven_jar(
-    name = "jsinterop-annotations",
-    artifact = "com.google.jsinterop:jsinterop-annotations:1.0.2",
-    sha1 = "abd7319f53d018e11108a88f599bd16492448dd2",
-    src_sha1 = "33716f8aef043f2f02b78ab4a1acda6cd90a7602",
-)
-
-maven_jar(
-    name = "ant",
-    artifact = "ant:ant:1.6.5",
-    attach_source = False,
-    sha1 = "7d18faf23df1a5c3a43613952e0e8a182664564b",
-)
-
-maven_jar(
-    name = "colt",
-    artifact = "colt:colt:1.2.0",
-    attach_source = False,
-    sha1 = "0abc984f3adc760684d49e0f11ddf167ba516d4f",
-)
-
-maven_jar(
-    name = "tapestry",
-    artifact = "tapestry:tapestry:4.0.2",
-    attach_source = False,
-    sha1 = "e855a807425d522e958cbce8697f21e9d679b1f7",
-)
-
-maven_jar(
-    name = "w3c-css-sac",
-    artifact = "org.w3c.css:sac:1.3",
-    sha1 = "cdb2dcb4e22b83d6b32b93095f644c3462739e82",
-)
-
-load("//lib/jgit:jgit.bzl", "jgit_repos")
-
-jgit_repos()
 
 maven_jar(
     name = "javaewah",
     artifact = "com.googlecode.javaewah:JavaEWAH:1.1.6",
     attach_source = False,
     sha1 = "94ad16d728b374d65bd897625f3fbb3da223a2b6",
+)
+
+maven_jar(
+    name = "error-prone-annotations",
+    artifact = "com.google.errorprone:error_prone_annotations:2.3.3",
+    sha1 = "42aa5155a54a87d70af32d4b0d06bf43779de0e2",
 )
 
 FLOGGER_VERS = "0.4"
@@ -265,23 +222,9 @@ maven_jar(
 )
 
 maven_jar(
-    name = "gwtjsonrpc",
-    artifact = "com.google.gerrit:gwtjsonrpc:1.11",
-    sha1 = "0990e7eec9eec3a15661edcf9232acbac4aeacec",
-    src_sha1 = "a682afc46284fb58197a173cb5818770a1e7834a",
-)
-
-maven_jar(
     name = "gson",
     artifact = "com.google.code.gson:gson:2.8.5",
     sha1 = "f645ed69d595b24d4cf8b3fbb64cc505bede8829",
-)
-
-maven_jar(
-    name = "gwtorm-client",
-    artifact = "com.google.gerrit:gwtorm:1.18",
-    sha1 = "f326dec463439a92ccb32f05b38345e21d0b5ecf",
-    src_sha1 = "e0b973d5cafef3d145fa80cdf032fcead1186d29",
 )
 
 load("//lib:guava.bzl", "GUAVA_BIN_SHA1", "GUAVA_VERSION")
@@ -315,6 +258,12 @@ http_file(
         CAFFEINE_VERS +
         ".jar",
     ],
+)
+
+maven_jar(
+    name = "guava-failureaccess",
+    artifact = "com.google.guava:failureaccess:1.0.1",
+    sha1 = "1dcf1de382a0bf95a3d8b0849546c88bac1292c9",
 )
 
 maven_jar(
@@ -388,8 +337,8 @@ maven_jar(
 # When upgrading commons-compress, also upgrade tukaani-xz
 maven_jar(
     name = "commons-compress",
-    artifact = "org.apache.commons:commons-compress:1.15",
-    sha1 = "b686cd04abaef1ea7bc5e143c080563668eec17e",
+    artifact = "org.apache.commons:commons-compress:1.18",
+    sha1 = "1191f9f2bc0c47a8cce69193feb1ff0a8bcb37d5",
 )
 
 maven_jar(
@@ -400,8 +349,14 @@ maven_jar(
 
 maven_jar(
     name = "commons-lang3",
-    artifact = "org.apache.commons:commons-lang3:3.6",
-    sha1 = "9d28a6b23650e8a7e9063c04588ace6cf7012c17",
+    artifact = "org.apache.commons:commons-lang3:3.8.1",
+    sha1 = "6505a72a097d9270f7a9e7bf42c4238283247755",
+)
+
+maven_jar(
+    name = "commons-text",
+    artifact = "org.apache.commons:commons-text:1.2",
+    sha1 = "74acdec7237f576c4803fff0c1008ab8a3808b2b",
 )
 
 maven_jar(
@@ -434,6 +389,33 @@ maven_jar(
     name = "automaton",
     artifact = "dk.brics:automaton:1.12-1",
     sha1 = "959a0c62f9a5c2309e0ad0b0589c74d69e101241",
+)
+
+COMMONMARK_VERS = "0.10.0"
+
+# commonmark must match the version used in Gitiles
+maven_jar(
+    name = "commonmark",
+    artifact = "com.atlassian.commonmark:commonmark:" + COMMONMARK_VERS,
+    sha1 = "119cb7bedc3570d9ecb64ec69ab7686b5c20559b",
+)
+
+maven_jar(
+    name = "cm-autolink",
+    artifact = "com.atlassian.commonmark:commonmark-ext-autolink:" + COMMONMARK_VERS,
+    sha1 = "a6056a5efbd68f57d420bc51bbc54b28a5d3c56b",
+)
+
+maven_jar(
+    name = "gfm-strikethrough",
+    artifact = "com.atlassian.commonmark:commonmark-ext-gfm-strikethrough:" + COMMONMARK_VERS,
+    sha1 = "40837da951b421b545edddac57012e15fcc9e63c",
+)
+
+maven_jar(
+    name = "gfm-tables",
+    artifact = "com.atlassian.commonmark:commonmark-ext-gfm-tables:" + COMMONMARK_VERS,
+    sha1 = "c075db2a3301100cf70c7dced8ecf86b494458a2",
 )
 
 FLEXMARK_VERS = "0.34.18"
@@ -588,7 +570,7 @@ maven_jar(
     sha1 = "31e2e1fbe8273d7c913506eafeb06b1a7badb062",
 )
 
-# Transitive dependency of flexmark
+# Transitive dependency of flexmark and gitiles
 maven_jar(
     name = "autolink",
     artifact = "org.nibor.autolink:autolink:0.7.0",
@@ -631,50 +613,50 @@ maven_jar(
     sha1 = "5e3bda828a80c7a21dfbe2308d1755759c2fd7b4",
 )
 
-OW2_VERS = "6.2.1"
+OW2_VERS = "7.2"
 
 maven_jar(
     name = "ow2-asm",
     artifact = "org.ow2.asm:asm:" + OW2_VERS,
-    sha1 = "c01b6798f81b0fc2c5faa70cbe468c275d4b50c7",
+    sha1 = "fa637eb67eb7628c915d73762b681ae7ff0b9731",
 )
 
 maven_jar(
     name = "ow2-asm-analysis",
     artifact = "org.ow2.asm:asm-analysis:" + OW2_VERS,
-    sha1 = "e8b876c5ccf226cae2f44ed2c436ad3407d0ec1d",
+    sha1 = "b6e6abe057f23630113f4167c34bda7086691258",
 )
 
 maven_jar(
     name = "ow2-asm-commons",
     artifact = "org.ow2.asm:asm-commons:" + OW2_VERS,
-    sha1 = "eaf31376d741a3e2017248a4c759209fe25c77d3",
+    sha1 = "ca2954e8d92a05bacc28ff465b25c70e0f512497",
 )
 
 maven_jar(
     name = "ow2-asm-tree",
     artifact = "org.ow2.asm:asm-tree:" + OW2_VERS,
-    sha1 = "332b022092ecec53cdb6272dc436884b2d940615",
+    sha1 = "3a23cc36edaf8fc5a89cb100182758ccb5991487",
 )
 
 maven_jar(
     name = "ow2-asm-util",
     artifact = "org.ow2.asm:asm-util:" + OW2_VERS,
-    sha1 = "400d664d7c92a659d988c00cb65150d1b30cf339",
+    sha1 = "a3ae34e57fa8a4040e28247291d0cc3d6b8c7bcf",
 )
 
-AUTO_VALUE_VERSION = "1.6.2"
+AUTO_VALUE_VERSION = "1.7"
 
 maven_jar(
     name = "auto-value",
     artifact = "com.google.auto.value:auto-value:" + AUTO_VALUE_VERSION,
-    sha1 = "e7eae562942315a983eea3e191b72d755c153620",
+    sha1 = "fe8387764ed19460eda4f106849c664f51c07121",
 )
 
 maven_jar(
     name = "auto-value-annotations",
     artifact = "com.google.auto.value:auto-value-annotations:" + AUTO_VALUE_VERSION,
-    sha1 = "ed193d86e0af90cc2342aedbe73c5d86b03fa09b",
+    sha1 = "5be124948ebdc7807df68207f35a0f23ce427f29",
 )
 
 declare_nongoogle_deps()
@@ -718,7 +700,7 @@ maven_jar(
     sha1 = "0c9cfae15c74f62491d4f28def0dff1dabe52a47",
 )
 
-PROLOG_VERS = "1.4.3"
+PROLOG_VERS = "1.4.4"
 
 PROLOG_REPO = GERRIT
 
@@ -727,7 +709,7 @@ maven_jar(
     artifact = "com.googlecode.prolog-cafe:prolog-runtime:" + PROLOG_VERS,
     attach_source = False,
     repository = PROLOG_REPO,
-    sha1 = "d5206556cbc76ffeab21313ffc47b586a1efbcbb",
+    sha1 = "e9a364f4233481cce63239e8e68a6190c8f58acd",
 )
 
 maven_jar(
@@ -735,7 +717,7 @@ maven_jar(
     artifact = "com.googlecode.prolog-cafe:prolog-compiler:" + PROLOG_VERS,
     attach_source = False,
     repository = PROLOG_REPO,
-    sha1 = "f37032cf1dec3e064427745bc59da5a12757a3b2",
+    sha1 = "570295026f6aa7b905e423d107cb2e081eecdc04",
 )
 
 maven_jar(
@@ -743,7 +725,7 @@ maven_jar(
     artifact = "com.googlecode.prolog-cafe:prolog-io:" + PROLOG_VERS,
     attach_source = False,
     repository = PROLOG_REPO,
-    sha1 = "d02b2640b26f64036b6ba2b45e4acc79281cea17",
+    sha1 = "1f25c4e27d22bdbc31481ee0c962a2a2853e4428",
 )
 
 maven_jar(
@@ -751,7 +733,7 @@ maven_jar(
     artifact = "com.googlecode.prolog-cafe:prolog-cafeteria:" + PROLOG_VERS,
     attach_source = False,
     repository = PROLOG_REPO,
-    sha1 = "e3b1860c63e57265e5435f890263ad82dafa724f",
+    sha1 = "0e6c2deeaf5054815a561cbd663566fd59b56c6c",
 )
 
 maven_jar(
@@ -766,25 +748,43 @@ maven_jar(
     sha1 = "f7be08ec23c21485b9b5a1cf1654c2ec8c58168d",
 )
 
+GITILES_VERS = "0.3-7"
+
+GITILES_REPO = GERRIT
+
 maven_jar(
     name = "blame-cache",
-    artifact = "com/google/gitiles:blame-cache:0.2-7.1",
+    artifact = "com.google.gitiles:blame-cache:" + GITILES_VERS,
     attach_source = False,
-    repository = GERRIT,
-    sha1 = "73915991bb7472a730102ab01ca68776a52466fd",
+    repository = GITILES_REPO,
+    sha1 = "af6212a62363906c63d367f8276ae1645f83bf93",
+)
+
+maven_jar(
+    name = "gitiles-servlet",
+    artifact = "com.google.gitiles:gitiles-servlet:" + GITILES_VERS,
+    repository = GITILES_REPO,
+    sha1 = "6a53f722f8572a2f1bcb7d86e5692168844bab76",
+)
+
+# prettify must match the version used in Gitiles
+maven_jar(
+    name = "prettify",
+    artifact = "com.github.twalcari:java-prettify:1.2.2",
+    sha1 = "b8ba1c1eb8b2e45cfd465d01218c6060e887572e",
 )
 
 # Keep this version of Soy synchronized with the version used in Gitiles.
 maven_jar(
     name = "soy",
-    artifact = "com.google.template:soy:2018-03-14",
-    sha1 = "76a1322705ba5a6d6329ee26e7387417725ce4b3",
+    artifact = "com.google.template:soy:2019-10-08",
+    sha1 = "4518bf8bac2dbbed684849bc209c39c4cb546237",
 )
 
 maven_jar(
     name = "html-types",
-    artifact = "com.google.common.html.types:types:1.0.4",
-    sha1 = "2adf4c8bfccc0ff7346f9186ac5aa57d829ad065",
+    artifact = "com.google.common.html.types:types:1.0.8",
+    sha1 = "9e9cf7bc4b2a60efeb5f5581fe46d17c068e0777",
 )
 
 maven_jar(
@@ -794,24 +794,24 @@ maven_jar(
 )
 
 # When updating Bouncy Castle, also update it in bazlets.
-BC_VERS = "1.60"
+BC_VERS = "1.61"
 
 maven_jar(
     name = "bcprov",
     artifact = "org.bouncycastle:bcprov-jdk15on:" + BC_VERS,
-    sha1 = "bd47ad3bd14b8e82595c7adaa143501e60842a84",
+    sha1 = "00df4b474e71be02c1349c3292d98886f888d1f7",
 )
 
 maven_jar(
     name = "bcpg",
     artifact = "org.bouncycastle:bcpg-jdk15on:" + BC_VERS,
-    sha1 = "13c7a199c484127daad298996e95818478431a2c",
+    sha1 = "422656435514ab8a28752b117d5d2646660a0ace",
 )
 
 maven_jar(
     name = "bcpkix",
     artifact = "org.bouncycastle:bcpkix-jdk15on:" + BC_VERS,
-    sha1 = "d0c46320fbc07be3a24eb13a56cee4e3d38e0c75",
+    sha1 = "89bb3aa5b98b48e584eee2a7401b7682a46779b4",
 )
 
 maven_jar(
@@ -822,7 +822,6 @@ maven_jar(
 
 # Note that all of the following org.apache.httpcomponents have newer versions,
 # but 4.4.1 is the only version that is available for all of them.
-# TODO: Check what combination of new versions are compatible.
 HTTPCOMP_VERS = "4.4.1"
 
 maven_jar(
@@ -863,30 +862,30 @@ maven_jar(
     sha1 = "42a25dc3219429f0e5d060061f71acb49bf010a0",
 )
 
-TRUTH_VERS = "0.42"
+TRUTH_VERS = "1.0.1"
 
 maven_jar(
     name = "truth",
     artifact = "com.google.truth:truth:" + TRUTH_VERS,
-    sha1 = "b5768f644b114e6cf5c3962c2ebcb072f788dcbb",
+    sha1 = "361459309085bd9441cb97b62f160e8b353a93c0",
 )
 
 maven_jar(
     name = "truth-java8-extension",
     artifact = "com.google.truth.extensions:truth-java8-extension:" + TRUTH_VERS,
-    sha1 = "4d01dfa5b3780632a3d109e14e101f01d10cce2c",
+    sha1 = "ef07b2cc2201472381fdd3bcf773310e22bb9080",
 )
 
 maven_jar(
     name = "truth-liteproto-extension",
     artifact = "com.google.truth.extensions:truth-liteproto-extension:" + TRUTH_VERS,
-    sha1 = "c231e6735aa6c133c7e411ae1c1c90b124900a8b",
+    sha1 = "bd1f5ac8a5f66e60cd1738f7b95c97a582ffcef9",
 )
 
 maven_jar(
     name = "truth-proto-extension",
     artifact = "com.google.truth.extensions:truth-proto-extension:" + TRUTH_VERS,
-    sha1 = "c41d22e8b4a61b4171e57c44a2959ebee0091a14",
+    sha1 = "039aa2d7c9196b30d367eac7cb467ecaa726e23d",
 )
 
 maven_jar(
@@ -895,99 +894,48 @@ maven_jar(
     sha1 = "7e060dd5b19431e6d198e91ff670644372f60fbd",
 )
 
-# When bumping the easymock version number, make sure to also move powermock to a compatible version
-maven_jar(
-    name = "easymock",
-    artifact = "org.easymock:easymock:3.1",
-    sha1 = "3e127311a86fc2e8f550ef8ee4abe094bbcf7e7e",
-)
-
-maven_jar(
-    name = "derby",
-    artifact = "org.apache.derby:derby:10.12.1.1",
-    attach_source = False,
-    sha1 = "75070c744a8e52a7d17b8b476468580309d5cd09",
-)
-
-JETTY_VERS = "9.4.14.v20181114"
+JETTY_VERS = "9.4.24.v20191120"
 
 maven_jar(
     name = "jetty-servlet",
     artifact = "org.eclipse.jetty:jetty-servlet:" + JETTY_VERS,
-    sha1 = "96f501462af425190ff7b63e387692c1aa3af2c8",
+    sha1 = "ca1803fde51b795c0a8346ca8bc6277d9d04d01d",
 )
 
 maven_jar(
     name = "jetty-security",
     artifact = "org.eclipse.jetty:jetty-security:" + JETTY_VERS,
-    sha1 = "6cbeb2fe9b3cc4f88a7ea040b8a0c4f703cd72ce",
-)
-
-maven_jar(
-    name = "jetty-servlets",
-    artifact = "org.eclipse.jetty:jetty-servlets:" + JETTY_VERS,
-    sha1 = "38cfc07b53e5d285bb2fca78bb2531565ed9c9e5",
+    sha1 = "9fa640d36c088cf55843900043d28aef830ade4d",
 )
 
 maven_jar(
     name = "jetty-server",
     artifact = "org.eclipse.jetty:jetty-server:" + JETTY_VERS,
-    sha1 = "b36a3d52d78a1df6406f6fa236a6eeff48cbfef6",
+    sha1 = "7885cc3d5d7701a444acada7ab97f89846514875",
 )
 
 maven_jar(
     name = "jetty-jmx",
     artifact = "org.eclipse.jetty:jetty-jmx:" + JETTY_VERS,
-    sha1 = "3e02463d2bff175a3231cd3dc26363eaf76a3b17",
-)
-
-maven_jar(
-    name = "jetty-continuation",
-    artifact = "org.eclipse.jetty:jetty-continuation:" + JETTY_VERS,
-    sha1 = "ac4981a61bcaf4e2538de6270300a870224a16b8",
+    sha1 = "22be18a055850a6cf3b0efd56c789c3929c87e98",
 )
 
 maven_jar(
     name = "jetty-http",
     artifact = "org.eclipse.jetty:jetty-http:" + JETTY_VERS,
-    sha1 = "6d0c8ac42e9894ae7b5032438eb4579c2a47f4fe",
+    sha1 = "d3f0b0fb016ef8d35ffb199d928ffbcbfa121c86",
 )
 
 maven_jar(
     name = "jetty-io",
     artifact = "org.eclipse.jetty:jetty-io:" + JETTY_VERS,
-    sha1 = "a8c6a705ddb9f83a75777d89b0be59fcef3f7637",
+    sha1 = "dcb6d4d505ef74898e3a64a38c40195c01e97119",
 )
 
 maven_jar(
     name = "jetty-util",
     artifact = "org.eclipse.jetty:jetty-util:" + JETTY_VERS,
-    sha1 = "5bb3d7a38f7ea54138336591d89dd5867b806c02",
-)
-
-maven_jar(
-    name = "postgresql",
-    artifact = "org.postgresql:postgresql:42.2.5",
-    sha1 = "951b7eda125f3137538a94e2cbdcf744088ad4c2",
-)
-
-maven_jar(
-    name = "codemirror-minified-gwt",
-    artifact = "org.webjars.npm:codemirror-minified:" + CM_VERSION,
-    sha1 = "36558ea3b8e30782e1e09c0e7bd781e09614f139",
-)
-
-maven_jar(
-    name = "codemirror-original-gwt",
-    artifact = "org.webjars.npm:codemirror:" + CM_VERSION,
-    sha1 = "f1f8fbbc3e2d224fdccc43d2f4180658a92320f9",
-)
-
-maven_jar(
-    name = "diff-match-patch",
-    artifact = "org.webjars:google-diff-match-patch:" + DIFF_MATCH_PATCH_VERSION,
-    attach_source = False,
-    sha1 = "0cf1782dbcb8359d95070da9176059a5a9d37709",
+    sha1 = "3095acb088f4ff9e3fd9aedf98db73e3c18ea849",
 )
 
 maven_jar(
@@ -1006,6 +954,38 @@ maven_jar(
     name = "javax-activation",
     artifact = "javax.activation:activation:1.1.1",
     sha1 = "485de3a253e23f645037828c07f1d7f1af40763a",
+)
+
+maven_jar(
+    name = "javax-annotation",
+    artifact = "javax.annotation:javax.annotation-api:1.3.2",
+    sha1 = "934c04d3cfef185a8008e7bf34331b79730a9d43",
+)
+
+maven_jar(
+    name = "mockito",
+    artifact = "org.mockito:mockito-core:2.24.0",
+    sha1 = "969a7bcb6f16e076904336ebc7ca171d412cc1f9",
+)
+
+BYTE_BUDDY_VERSION = "1.9.7"
+
+maven_jar(
+    name = "bytebuddy",
+    artifact = "net.bytebuddy:byte-buddy:" + BYTE_BUDDY_VERSION,
+    sha1 = "8fea78fea6449e1738b675cb155ce8422661e237",
+)
+
+maven_jar(
+    name = "bytebuddy-agent",
+    artifact = "net.bytebuddy:byte-buddy-agent:" + BYTE_BUDDY_VERSION,
+    sha1 = "8e7d1b599f4943851ffea125fd9780e572727fc0",
+)
+
+maven_jar(
+    name = "objenesis",
+    artifact = "org.objenesis:objenesis:2.6",
+    sha1 = "639033469776fd37c08358c6b92a4761feb2af4b",
 )
 
 load("//tools/bzl:js.bzl", "bower_archive", "npm_binary")
@@ -1032,8 +1012,8 @@ npm_binary(
 bower_archive(
     name = "iron-autogrow-textarea",
     package = "polymerelements/iron-autogrow-textarea",
-    sha1 = "68f0ece9b1e56ac26f8ce31d9938c504f6951bca",
-    version = "2.1.0",
+    sha1 = "2f04c7e2a72d462de36093ab2b4889db20f699f6",
+    version = "2.2.0",
 )
 
 bower_archive(
@@ -1053,64 +1033,64 @@ bower_archive(
 bower_archive(
     name = "iron-dropdown",
     package = "polymerelements/iron-dropdown",
-    sha1 = "ac96fe31cdf203a63426fa75131b43c98c0597d3",
-    version = "1.5.5",
+    sha1 = "3902ba164552b1bfc59e6fa692efa4a1fd8dd4ea",
+    version = "2.2.1",
 )
 
 bower_archive(
     name = "iron-input",
     package = "polymerelements/iron-input",
-    sha1 = "9bc0c8e81de2527125383cbcf74dd9f27e7fa9ac",
-    version = "1.0.10",
+    sha1 = "f79952ff4f6f103c0a2cbd3dacf25935257ff392",
+    version = "2.1.3",
 )
 
 bower_archive(
     name = "iron-overlay-behavior",
     package = "polymerelements/iron-overlay-behavior",
-    sha1 = "74cda9d7bf98e7a5e5004bc7ebdb6d208d49e11e",
-    version = "2.0.0",
+    sha1 = "c2d2eac1b162420d9475ade2f16d5db8959b93fc",
+    version = "2.3.4",
 )
 
 bower_archive(
     name = "iron-selector",
     package = "polymerelements/iron-selector",
-    sha1 = "e0ee46c28523bf17730318c3b481a8ed4331c3b2",
-    version = "2.0.0",
+    sha1 = "3f3fcb55f6bd606ea493f99eab9daae21f7a6139",
+    version = "2.1.0",
 )
 
 bower_archive(
     name = "paper-button",
     package = "polymerelements/paper-button",
-    sha1 = "3b01774f58a8085d3c903fc5a32944b26ab7be72",
-    version = "2.0.0",
+    sha1 = "bcb783d74e1177c1d0836340e7c0280699d1438c",
+    version = "2.1.3",
 )
 
 bower_archive(
     name = "paper-input",
     package = "polymerelements/paper-input",
-    sha1 = "6c934805e80ab201e143406edc73ea0ef35abf80",
-    version = "1.1.18",
+    sha1 = "c1a81a4173d22e72e8ab609eb3715a75273396b3",
+    version = "2.2.3",
 )
 
 bower_archive(
     name = "paper-tabs",
     package = "polymerelements/paper-tabs",
-    sha1 = "b6dd2fbd7ee887534334057a29eb545b940fc5cf",
-    version = "2.0.0",
+    sha1 = "589b8e6efa0f171c93233137c8ea013dcea0ffc7",
+    version = "2.1.1",
 )
 
 bower_archive(
     name = "iron-icon",
     package = "polymerelements/iron-icon",
-    sha1 = "7da49a0d33cd56017740e0dbcf41d2b71532023f",
-    version = "2.0.0",
+    sha1 = "d21e7d4f1bdc6de881390f888e28d53155eeb551",
+    version = "2.1.0",
 )
 
 bower_archive(
     name = "iron-iconset-svg",
     package = "polymerelements/iron-iconset-svg",
-    sha1 = "4d0c406239cad2ff2975c6dd95fa189de0fe6b50",
-    version = "2.1.0",
+    sha1 = "07c0ce02ce6479856758893416a3709009db7f22",
+    version = "2.2.1",
 )
 
 bower_archive(
@@ -1123,36 +1103,36 @@ bower_archive(
 bower_archive(
     name = "page",
     package = "visionmedia/page.js",
-    sha1 = "51a05428dd4f68fae1df5f12d0e2b61ba67f7757",
-    version = "1.7.1",
+    sha1 = "4a31889cd75cc5e7f68a4c7f256eecaf27102eee",
+    version = "1.11.4",
 )
 
 bower_archive(
     name = "paper-item",
     package = "polymerelements/paper-item",
-    sha1 = "803273ceb9ffebec8ecc9373ea638af4cd34af58",
-    version = "1.1.4",
+    sha1 = "c3bad022cf182d2bf1c8a44374c7fcb1409afbfa",
+    version = "2.1.1",
 )
 
 bower_archive(
     name = "paper-listbox",
     package = "polymerelements/paper-listbox",
-    sha1 = "ccc1a90ab0a96878c7bf7c9c4cfe47c85b09c8e3",
-    version = "2.0.0",
+    sha1 = "78247cc32bb776f204efef17cff3095878036a40",
+    version = "2.1.1",
 )
 
 bower_archive(
     name = "paper-toggle-button",
     package = "polymerelements/paper-toggle-button",
-    sha1 = "4a2edbdb52c4531d39fe091f12de650bccda270f",
-    version = "1.2.0",
+    sha1 = "9927960afb0062726ec1b585ef3e32764c3bbac9",
+    version = "2.1.1",
 )
 
 bower_archive(
     name = "polymer",
     package = "polymer/polymer",
-    sha1 = "158443ab05ade5e2cdc24ebc01f1deef9aebac1b",
-    version = "1.11.3",
+    sha1 = "d06e17a1d8dc6187ee5aa8c5b3501da10901c82f",
+    version = "2.7.2",
 )
 
 bower_archive(
@@ -1160,13 +1140,6 @@ bower_archive(
     package = "polymer/polymer-resin",
     sha1 = "94c29926c20ea3a9b636f26b3e0d689ead8137e5",
     version = "2.0.1",
-)
-
-bower_archive(
-    name = "promise-polyfill",
-    package = "polymerlabs/promise-polyfill",
-    sha1 = "a3b598c06cbd7f441402e666ff748326030905d6",
-    version = "1.0.0",
 )
 
 bower_archive(
@@ -1179,8 +1152,8 @@ bower_archive(
 bower_archive(
     name = "codemirror-minified",
     package = "Dominator008/codemirror-minified",
-    sha1 = "1524e19087d8223edfe4a5b1ccf04c1e3707235d",
-    version = "5.37.0",
+    sha1 = "e6bda82afc7cf3493f4282c6f17265d40e1485e5",
+    version = "5.43.0",
 )
 
 # bower test stuff
@@ -1188,15 +1161,15 @@ bower_archive(
 bower_archive(
     name = "iron-test-helpers",
     package = "polymerelements/iron-test-helpers",
-    sha1 = "433b03b106f5ff32049b84150cd70938e18b67ac",
-    version = "1.2.5",
+    sha1 = "882be2d4c8714b39299b5f7bf25253c4e8a40761",
+    version = "2.0.1",
 )
 
 bower_archive(
     name = "test-fixture",
     package = "polymerelements/test-fixture",
-    sha1 = "e373bd21c069163c3a754e234d52c07c77b20d3c",
-    version = "1.1.1",
+    sha1 = "7d72ddfebf555a2dd1fc60a85427d9026b509723",
+    version = "3.0.0",
 )
 
 bower_archive(

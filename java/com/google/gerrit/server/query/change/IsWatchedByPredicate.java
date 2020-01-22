@@ -81,7 +81,7 @@ public class IsWatchedByPredicate extends AndPredicate<ChangeData> {
       }
     }
     if (r.isEmpty()) {
-      return none();
+      return ImmutableList.of(ChangeIndexPredicate.none());
     } else if (checkIsVisible) {
       return ImmutableList.of(or(r), builder.is_visible());
     } else {
@@ -93,14 +93,9 @@ public class IsWatchedByPredicate extends AndPredicate<ChangeData> {
       throws QueryParseException {
     CurrentUser user = args.getUser();
     if (user.isIdentifiedUser()) {
-      return user.asIdentifiedUser().state().getProjectWatches().keySet();
+      return user.asIdentifiedUser().state().projectWatches().keySet();
     }
-    return Collections.<ProjectWatchKey>emptySet();
-  }
-
-  protected static List<Predicate<ChangeData>> none() {
-    Predicate<ChangeData> any = any();
-    return ImmutableList.of(not(any));
+    return Collections.emptySet();
   }
 
   @Override

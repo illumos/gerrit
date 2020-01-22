@@ -16,6 +16,7 @@ package com.google.gerrit.server.restapi.account;
 
 import com.google.gerrit.extensions.client.ProjectWatchInfo;
 import com.google.gerrit.extensions.restapi.BadRequestException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.server.IdentifiedUser;
@@ -29,7 +30,6 @@ import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.restapi.project.ProjectsCollection;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -41,6 +41,12 @@ import java.util.Map;
 import java.util.Set;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 
+/**
+ * REST endpoint to set project watches for an account.
+ *
+ * <p>This REST endpoint handles {@code POST /accounts/<account-identifier>/watched.projects}
+ * requests.
+ */
 @Singleton
 public class PostWatchedProjects
     implements RestModifyView<AccountResource, List<ProjectWatchInfo>> {
@@ -65,9 +71,8 @@ public class PostWatchedProjects
   }
 
   @Override
-  public List<ProjectWatchInfo> apply(AccountResource rsrc, List<ProjectWatchInfo> input)
-      throws OrmException, RestApiException, IOException, ConfigInvalidException,
-          PermissionBackendException {
+  public Response<List<ProjectWatchInfo>> apply(AccountResource rsrc, List<ProjectWatchInfo> input)
+      throws RestApiException, IOException, ConfigInvalidException, PermissionBackendException {
     if (!self.get().hasSameAccountId(rsrc.getUser())) {
       permissionBackend.currentUser().check(GlobalPermission.ADMINISTRATE_SERVER);
     }

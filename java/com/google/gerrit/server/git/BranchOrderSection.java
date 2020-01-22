@@ -15,9 +15,16 @@
 package com.google.gerrit.server.git;
 
 import com.google.common.collect.ImmutableList;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.gerrit.entities.RefNames;
 import java.util.List;
 
+/**
+ * An ordering of branches by stability.
+ *
+ * <p>The REST API supports automatically checking if changes on development branches can be merged
+ * into stable branches. This is configured by the {@code branchOrder.branch} project setting. This
+ * class represents the ordered list of branches, by increasing stability.
+ */
 public class BranchOrderSection {
 
   /**

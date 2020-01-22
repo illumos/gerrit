@@ -16,20 +16,27 @@ package com.google.gerrit.acceptance.git;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
-import static com.google.common.truth.TruthJUnit.assume;
 import static com.google.gerrit.acceptance.GitUtil.getChangeId;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
 import com.google.common.collect.ImmutableList;
 import com.google.gerrit.acceptance.NoHttpd;
+import com.google.gerrit.acceptance.testsuite.ThrowingConsumer;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.common.data.Permission;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.client.ChangeStatus;
 import com.google.gerrit.extensions.client.SubmitType;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.server.change.TestSubmitInput;
 import com.google.gerrit.testing.ConfigSuite;
+import com.google.inject.Inject;
 import java.util.ArrayDeque;
 import java.util.Map;
+import org.apache.commons.lang.RandomStringUtils;
 import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.ObjectId;
@@ -66,14 +73,12 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
     return submitByRebaseIfNecessaryConfig();
   }
 
+  @Inject private ProjectOperations projectOperations;
+
   @Test
   public void subscriptionUpdateOfManyChanges() throws Exception {
-    TestRepository<?> superRepo = createProjectWithPush("super-project");
-    TestRepository<?> subRepo = createProjectWithPush("subscribed-to-project");
-    allowMatchingSubmoduleSubscription(
-        "subscribed-to-project", "refs/heads/master", "super-project", "refs/heads/master");
-
-    createSubmoduleSubscription(superRepo, "master", "subscribed-to-project", "master");
+    allowMatchingSubmoduleSubscription(subKey, "refs/heads/master", superKey, "refs/heads/master");
+    createSubmoduleSubscription(superRepo, "master", subKey, "master");
 
     ObjectId subHEAD =
         subRepo
@@ -104,7 +109,7 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
         .git()
         .push()
         .setRemote("origin")
-        .setRefSpecs(new RefSpec("HEAD:refs/for/master/" + name("topic-foo")))
+        .setRefSpecs(new RefSpec("HEAD:refs/for/master%topic=" + name("topic-foo")))
         .call();
 
     subRepo.reset(c.getId());
@@ -129,7 +134,7 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
         .git()
         .push()
         .setRemote("origin")
-        .setRefSpecs(new RefSpec("HEAD:refs/for/master/" + name("topic-foo")))
+        .setRefSpecs(new RefSpec("HEAD:refs/for/master%topic=" + name("topic-foo")))
         .call();
 
     String id1 = getChangeId(subRepo, c1).get();
@@ -139,7 +144,7 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
     gApi.changes().id(id2).current().review(ReviewInput.approve());
     gApi.changes().id(id3).current().review(ReviewInput.approve());
 
-    Map<Branch.NameKey, ObjectId> preview = fetchFromSubmitPreview(id1);
+    Map<BranchNameKey, ObjectId> preview = fetchFromSubmitPreview(id1);
     gApi.changes().id(id1).current().submit();
     ObjectId subRepoId =
         subRepo
@@ -150,15 +155,13 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
             .getAdvertisedRef("refs/heads/master")
             .getObjectId();
 
-    expectToHaveSubmoduleState(superRepo, "master", "subscribed-to-project", subRepoId);
+    expectToHaveSubmoduleState(superRepo, "master", subKey, subRepoId);
 
     // As the submodules have changed commits, the superproject tree will be
     // different, so we cannot directly compare the trees here, so make
     // assumptions only about the changed branches:
-    Project.NameKey p1 = new Project.NameKey(name("super-project"));
-    Project.NameKey p2 = new Project.NameKey(name("subscribed-to-project"));
-    assertThat(preview).containsKey(new Branch.NameKey(p1, "refs/heads/master"));
-    assertThat(preview).containsKey(new Branch.NameKey(p2, "refs/heads/master"));
+    assertThat(preview).containsKey(BranchNameKey.create(superKey, "refs/heads/master"));
+    assertThat(preview).containsKey(BranchNameKey.create(subKey, "refs/heads/master"));
 
     if ((getSubmitType() == SubmitType.CHERRY_PICK)
         || (getSubmitType() == SubmitType.REBASE_ALWAYS)) {
@@ -176,12 +179,9 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
 
   @Test
   public void subscriptionUpdateIncludingChangeInSuperproject() throws Exception {
-    TestRepository<?> superRepo = createProjectWithPush("super-project");
-    TestRepository<?> subRepo = createProjectWithPush("subscribed-to-project");
-    allowMatchingSubmoduleSubscription(
-        "subscribed-to-project", "refs/heads/master", "super-project", "refs/heads/master");
+    allowMatchingSubmoduleSubscription(subKey, "refs/heads/master", superKey, "refs/heads/master");
 
-    createSubmoduleSubscription(superRepo, "master", "subscribed-to-project", "master");
+    createSubmoduleSubscription(superRepo, "master", subKey, "master");
 
     ObjectId subHEAD =
         subRepo
@@ -212,7 +212,7 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
         .git()
         .push()
         .setRemote("origin")
-        .setRefSpecs(new RefSpec("HEAD:refs/for/master/" + name("topic-foo")))
+        .setRefSpecs(new RefSpec("HEAD:refs/for/master%topic=" + name("topic-foo")))
         .call();
 
     subRepo.reset(c.getId());
@@ -237,7 +237,7 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
         .git()
         .push()
         .setRemote("origin")
-        .setRefSpecs(new RefSpec("HEAD:refs/for/master/" + name("topic-foo")))
+        .setRefSpecs(new RefSpec("HEAD:refs/for/master%topic=" + name("topic-foo")))
         .call();
 
     RevCommit c4 =
@@ -252,7 +252,7 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
         .git()
         .push()
         .setRemote("origin")
-        .setRefSpecs(new RefSpec("HEAD:refs/for/master/" + name("topic-foo")))
+        .setRefSpecs(new RefSpec("HEAD:refs/for/master%topic=" + name("topic-foo")))
         .call();
 
     String id1 = getChangeId(subRepo, c1).get();
@@ -274,71 +274,69 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
             .getAdvertisedRef("refs/heads/master")
             .getObjectId();
 
-    expectToHaveSubmoduleState(superRepo, "master", "subscribed-to-project", subRepoId);
+    expectToHaveSubmoduleState(superRepo, "master", subKey, subRepoId);
   }
 
   @Test
   public void updateManySubmodules() throws Exception {
-    TestRepository<?> superRepo = createProjectWithPush("super-project");
-    TestRepository<?> sub1 = createProjectWithPush("sub1");
-    TestRepository<?> sub2 = createProjectWithPush("sub2");
-    TestRepository<?> sub3 = createProjectWithPush("sub3");
+    final int NUM = 3;
+    Project.NameKey subKey[] = new Project.NameKey[NUM];
+    TestRepository<?> sub[] = new TestRepository[NUM];
+    String prefix = RandomStringUtils.randomAlphabetic(8);
+    for (int i = 0; i < subKey.length; i++) {
+      subKey[i] =
+          projectOperations
+              .newProject()
+              .name(prefix + "sub" + i)
+              .submitType(getSubmitType())
+              .create();
+      projectOperations
+          .project(subKey[i])
+          .forUpdate()
+          .add(allow(Permission.PUSH).ref("refs/heads/*").group(adminGroupUuid()))
+          .add(allow(Permission.SUBMIT).ref("refs/for/refs/heads/*").group(adminGroupUuid()))
+          .update();
+      sub[i] = cloneProject(subKey[i]);
+    }
 
-    allowMatchingSubmoduleSubscription(
-        "sub1", "refs/heads/master", "super-project", "refs/heads/master");
-    allowMatchingSubmoduleSubscription(
-        "sub2", "refs/heads/master", "super-project", "refs/heads/master");
-    allowMatchingSubmoduleSubscription(
-        "sub3", "refs/heads/master", "super-project", "refs/heads/master");
+    for (int i = 0; i < subKey.length; i++) {
+      allowMatchingSubmoduleSubscription(
+          subKey[i], "refs/heads/master", superKey, "refs/heads/master");
+    }
 
     Config config = new Config();
-    prepareSubmoduleConfigEntry(config, "sub1", "master");
-    prepareSubmoduleConfigEntry(config, "sub2", "master");
-    prepareSubmoduleConfigEntry(config, "sub3", "master");
+    for (int i = 0; i < subKey.length; i++) {
+      prepareSubmoduleConfigEntry(config, subKey[i], "master");
+    }
     pushSubmoduleConfig(superRepo, "master", config);
 
     ObjectId superPreviousId = pushChangeTo(superRepo, "master");
 
-    ObjectId sub1Id = pushChangeTo(sub1, "refs/for/master", "some message", "same-topic");
-    ObjectId sub2Id = pushChangeTo(sub2, "refs/for/master", "some message", "same-topic");
-    ObjectId sub3Id = pushChangeTo(sub3, "refs/for/master", "some message", "same-topic");
+    ObjectId subId[] = new ObjectId[NUM];
 
-    approve(getChangeId(sub1, sub1Id).get());
-    approve(getChangeId(sub2, sub2Id).get());
-    approve(getChangeId(sub3, sub3Id).get());
+    for (int i = 0; i < sub.length; i++) {
+      subId[i] = pushChangeTo(sub[i], "refs/for/master", "some message", "same-topic");
+      approve(getChangeId(sub[i], subId[i]).get());
+    }
 
-    gApi.changes().id(getChangeId(sub1, sub1Id).get()).current().submit();
+    gApi.changes().id(getChangeId(sub[0], subId[0]).get()).current().submit();
 
-    expectToHaveSubmoduleState(superRepo, "master", "sub1", sub1, "master");
-    expectToHaveSubmoduleState(superRepo, "master", "sub2", sub2, "master");
-    expectToHaveSubmoduleState(superRepo, "master", "sub3", sub3, "master");
+    for (int i = 0; i < sub.length; i++) {
+      expectToHaveSubmoduleState(superRepo, "master", subKey[i], sub[i], "master");
+    }
 
-    String sub1HEAD =
-        sub1.git()
-            .fetch()
-            .setRemote("origin")
-            .call()
-            .getAdvertisedRef("refs/heads/master")
-            .getObjectId()
-            .name();
-
-    String sub2HEAD =
-        sub2.git()
-            .fetch()
-            .setRemote("origin")
-            .call()
-            .getAdvertisedRef("refs/heads/master")
-            .getObjectId()
-            .name();
-
-    String sub3HEAD =
-        sub3.git()
-            .fetch()
-            .setRemote("origin")
-            .call()
-            .getAdvertisedRef("refs/heads/master")
-            .getObjectId()
-            .name();
+    String heads[] = new String[NUM];
+    for (int i = 0; i < heads.length; i++) {
+      heads[i] =
+          sub[i]
+              .git()
+              .fetch()
+              .setRemote("origin")
+              .call()
+              .getAdvertisedRef("refs/heads/master")
+              .getObjectId()
+              .name();
+    }
 
     if (getSubmitType() == SubmitType.MERGE_IF_NECESSARY) {
       expectToHaveCommitMessage(
@@ -346,17 +344,17 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
           "master",
           "Update git submodules\n\n"
               + "* Update "
-              + name("sub1")
+              + subKey[0].get()
               + " from branch 'master'\n  to "
-              + sub1HEAD
+              + heads[0]
               + "\n\n* Update "
-              + name("sub2")
+              + subKey[1].get()
               + " from branch 'master'\n  to "
-              + sub2HEAD
+              + heads[1]
               + "\n\n* Update "
-              + name("sub3")
+              + subKey[2].get()
               + " from branch 'master'\n  to "
-              + sub3HEAD);
+              + heads[2]);
     }
 
     superRepo
@@ -374,73 +372,98 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
 
   @Test
   public void doNotUseFastForward() throws Exception {
-    TestRepository<?> superRepo = createProjectWithPush("super-project", false);
-    TestRepository<?> sub = createProjectWithPush("sub", false);
+    // like setup, but without empty commit
+    superKey =
+        projectOperations
+            .newProject()
+            .submitType(getSubmitType())
+            .createEmptyCommit(false)
+            .create();
+    grantPush(superKey);
+    subKey =
+        projectOperations
+            .newProject()
+            .submitType(getSubmitType())
+            .createEmptyCommit(false)
+            .create();
+    grantPush(subKey);
+    superRepo = cloneProject(superKey);
+    subRepo = cloneProject(subKey);
 
-    allowMatchingSubmoduleSubscription(
-        "sub", "refs/heads/master", "super-project", "refs/heads/master");
+    allowMatchingSubmoduleSubscription(subKey, "refs/heads/master", superKey, "refs/heads/master");
 
-    createSubmoduleSubscription(superRepo, "master", "sub", "master");
+    createSubmoduleSubscription(superRepo, "master", subKey, "master");
 
-    ObjectId subId = pushChangeTo(sub, "refs/for/master", "some message", "same-topic");
+    ObjectId subId = pushChangeTo(subRepo, "refs/for/master", "some message", "same-topic");
 
     ObjectId superId = pushChangeTo(superRepo, "refs/for/master", "some message", "same-topic");
 
-    String subChangeId = getChangeId(sub, subId).get();
+    String subChangeId = getChangeId(subRepo, subId).get();
     approve(subChangeId);
     approve(getChangeId(superRepo, superId).get());
 
     gApi.changes().id(subChangeId).current().submit();
 
-    expectToHaveSubmoduleState(superRepo, "master", "sub", sub, "master");
-    RevCommit superHead = getRemoteHead(name("super-project"), "master");
+    expectToHaveSubmoduleState(superRepo, "master", subKey, subRepo, "master");
+    RevCommit superHead = projectOperations.project(superKey).getHead("master");
     assertThat(superHead.getShortMessage()).contains("some message");
     assertThat(superHead.getId()).isNotEqualTo(superId);
   }
 
   @Test
   public void useFastForwardWhenNoSubmodule() throws Exception {
-    TestRepository<?> superRepo = createProjectWithPush("super-project", false);
-    TestRepository<?> sub = createProjectWithPush("sub", false);
+    // like setup, but without empty commit
+    superKey =
+        projectOperations
+            .newProject()
+            .submitType(getSubmitType())
+            .createEmptyCommit(false)
+            .create();
+    grantPush(superKey);
+    subKey =
+        projectOperations
+            .newProject()
+            .submitType(getSubmitType())
+            .createEmptyCommit(false)
+            .create();
+    grantPush(subKey);
+    superRepo = cloneProject(superKey);
+    subRepo = cloneProject(subKey);
 
-    ObjectId subId = pushChangeTo(sub, "refs/for/master", "some message", "same-topic");
-
+    ObjectId subId = pushChangeTo(subRepo, "refs/for/master", "some message", "same-topic");
     ObjectId superId = pushChangeTo(superRepo, "refs/for/master", "some message", "same-topic");
 
-    String subChangeId = getChangeId(sub, subId).get();
+    String subChangeId = getChangeId(subRepo, subId).get();
     approve(subChangeId);
     approve(getChangeId(superRepo, superId).get());
 
     gApi.changes().id(subChangeId).current().submit();
 
-    RevCommit superHead = getRemoteHead(name("super-project"), "master");
+    RevCommit superHead = projectOperations.project(superKey).getHead("master");
     assertThat(superHead.getShortMessage()).isEqualTo("some message");
     assertThat(superHead.getId()).isEqualTo(superId);
   }
 
   @Test
   public void sameProjectSameBranchDifferentPaths() throws Exception {
-    TestRepository<?> superRepo = createProjectWithPush("super-project");
-    TestRepository<?> sub = createProjectWithPush("sub");
-
-    allowMatchingSubmoduleSubscription(
-        "sub", "refs/heads/master", "super-project", "refs/heads/master");
+    allowMatchingSubmoduleSubscription(subKey, "refs/heads/master", superKey, "refs/heads/master");
 
     Config config = new Config();
-    prepareSubmoduleConfigEntry(config, "sub", "master");
-    prepareSubmoduleConfigEntry(config, "sub", "sub-copy", "master");
+    prepareSubmoduleConfigEntry(config, subKey, "master");
+    Project.NameKey copyKey = nameKey("sub-copy");
+    prepareSubmoduleConfigEntry(config, subKey, copyKey, "master");
     pushSubmoduleConfig(superRepo, "master", config);
 
     ObjectId superPreviousId = pushChangeTo(superRepo, "master");
 
-    ObjectId subId = pushChangeTo(sub, "refs/for/master", "some message", "");
+    ObjectId subId = pushChangeTo(subRepo, "refs/for/master", "some message", "");
 
-    approve(getChangeId(sub, subId).get());
+    approve(getChangeId(subRepo, subId).get());
 
-    gApi.changes().id(getChangeId(sub, subId).get()).current().submit();
+    gApi.changes().id(getChangeId(subRepo, subId).get()).current().submit();
 
-    expectToHaveSubmoduleState(superRepo, "master", "sub", sub, "master");
-    expectToHaveSubmoduleState(superRepo, "master", "sub-copy", sub, "master");
+    expectToHaveSubmoduleState(superRepo, "master", subKey, subRepo, "master");
+    expectToHaveSubmoduleState(superRepo, "master", copyKey, subRepo, "master");
 
     superRepo
         .git()
@@ -457,37 +480,33 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
 
   @Test
   public void sameProjectDifferentBranchDifferentPaths() throws Exception {
-    TestRepository<?> superRepo = createProjectWithPush("super-project");
-    TestRepository<?> sub = createProjectWithPush("sub");
+    allowMatchingSubmoduleSubscription(subKey, "refs/heads/master", superKey, "refs/heads/master");
+    allowMatchingSubmoduleSubscription(subKey, "refs/heads/dev", superKey, "refs/heads/master");
 
-    allowMatchingSubmoduleSubscription(
-        "sub", "refs/heads/master", "super-project", "refs/heads/master");
-    allowMatchingSubmoduleSubscription(
-        "sub", "refs/heads/dev", "super-project", "refs/heads/master");
-
-    ObjectId devHead = pushChangeTo(sub, "dev");
+    ObjectId devHead = pushChangeTo(subRepo, "dev");
     Config config = new Config();
-    prepareSubmoduleConfigEntry(config, "sub", "sub-master", "master");
-    prepareSubmoduleConfigEntry(config, "sub", "sub-dev", "dev");
+    prepareSubmoduleConfigEntry(config, subKey, nameKey("sub-master"), "master");
+    prepareSubmoduleConfigEntry(config, subKey, nameKey("sub-dev"), "dev");
     pushSubmoduleConfig(superRepo, "master", config);
 
     ObjectId subMasterId =
-        pushChangeTo(sub, "refs/for/master", "some message", "b.txt", "content b", "same-topic");
+        pushChangeTo(
+            subRepo, "refs/for/master", "some message", "b.txt", "content b", "same-topic");
 
-    sub.reset(devHead);
+    subRepo.reset(devHead);
     ObjectId subDevId =
         pushChangeTo(
-            sub, "refs/for/dev", "some message in dev", "b.txt", "content b", "same-topic");
+            subRepo, "refs/for/dev", "some message in dev", "b.txt", "content b", "same-topic");
 
-    approve(getChangeId(sub, subMasterId).get());
-    approve(getChangeId(sub, subDevId).get());
+    approve(getChangeId(subRepo, subMasterId).get());
+    approve(getChangeId(subRepo, subDevId).get());
 
     ObjectId superPreviousId = pushChangeTo(superRepo, "master");
 
-    gApi.changes().id(getChangeId(sub, subMasterId).get()).current().submit();
+    gApi.changes().id(getChangeId(subRepo, subMasterId).get()).current().submit();
 
-    expectToHaveSubmoduleState(superRepo, "master", "sub-master", sub, "master");
-    expectToHaveSubmoduleState(superRepo, "master", "sub-dev", sub, "dev");
+    expectToHaveSubmoduleState(superRepo, "master", nameKey("sub-master"), subRepo, "master");
+    expectToHaveSubmoduleState(superRepo, "master", nameKey("sub-dev"), subRepo, "dev");
 
     superRepo
         .git()
@@ -504,29 +523,27 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
 
   @Test
   public void nonSubmoduleInSameTopic() throws Exception {
-    TestRepository<?> superRepo = createProjectWithPush("super-project");
-    TestRepository<?> sub = createProjectWithPush("sub");
-    TestRepository<?> standAlone = createProjectWithPush("standalone");
+    Project.NameKey standaloneKey = createProjectForPush(getSubmitType());
+    TestRepository<?> standAlone = cloneProject(standaloneKey);
 
-    allowMatchingSubmoduleSubscription(
-        "sub", "refs/heads/master", "super-project", "refs/heads/master");
+    allowMatchingSubmoduleSubscription(subKey, "refs/heads/master", superKey, "refs/heads/master");
 
-    createSubmoduleSubscription(superRepo, "master", "sub", "master");
+    createSubmoduleSubscription(superRepo, "master", subKey, "master");
 
     ObjectId superPreviousId = pushChangeTo(superRepo, "master");
 
-    ObjectId subId = pushChangeTo(sub, "refs/for/master", "some message", "same-topic");
+    ObjectId subId = pushChangeTo(subRepo, "refs/for/master", "some message", "same-topic");
     ObjectId standAloneId =
         pushChangeTo(standAlone, "refs/for/master", "some message", "same-topic");
 
-    String subChangeId = getChangeId(sub, subId).get();
+    String subChangeId = getChangeId(subRepo, subId).get();
     String standAloneChangeId = getChangeId(standAlone, standAloneId).get();
     approve(subChangeId);
     approve(standAloneChangeId);
 
     gApi.changes().id(subChangeId).current().submit();
 
-    expectToHaveSubmoduleState(superRepo, "master", "sub", sub, "master");
+    expectToHaveSubmoduleState(superRepo, "master", subKey, subRepo, "master");
 
     ChangeStatus status = gApi.changes().id(standAloneChangeId).info().status;
     assertThat(status).isEqualTo(ChangeStatus.MERGED);
@@ -546,17 +563,18 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
 
   @Test
   public void recursiveSubmodules() throws Exception {
-    TestRepository<?> topRepo = createProjectWithPush("top-project");
-    TestRepository<?> midRepo = createProjectWithPush("mid-project");
-    TestRepository<?> bottomRepo = createProjectWithPush("bottom-project");
+    Project.NameKey topKey = createProjectForPush(getSubmitType());
+    Project.NameKey midKey = createProjectForPush(getSubmitType());
+    Project.NameKey botKey = createProjectForPush(getSubmitType());
+    TestRepository<?> topRepo = cloneProject(topKey);
+    TestRepository<?> midRepo = cloneProject(midKey);
+    TestRepository<?> bottomRepo = cloneProject(botKey);
 
-    allowMatchingSubmoduleSubscription(
-        "mid-project", "refs/heads/master", "top-project", "refs/heads/master");
-    allowMatchingSubmoduleSubscription(
-        "bottom-project", "refs/heads/master", "mid-project", "refs/heads/master");
+    allowMatchingSubmoduleSubscription(midKey, "refs/heads/master", topKey, "refs/heads/master");
+    allowMatchingSubmoduleSubscription(botKey, "refs/heads/master", midKey, "refs/heads/master");
 
-    createSubmoduleSubscription(topRepo, "master", "mid-project", "master");
-    createSubmoduleSubscription(midRepo, "master", "bottom-project", "master");
+    createSubmoduleSubscription(topRepo, "master", midKey, "master");
+    createSubmoduleSubscription(midRepo, "master", botKey, "master");
 
     ObjectId bottomHead = pushChangeTo(bottomRepo, "refs/for/master", "some message", "same-topic");
     ObjectId topHead = pushChangeTo(topRepo, "refs/for/master", "some message", "same-topic");
@@ -569,27 +587,27 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
 
     gApi.changes().id(id1).current().submit();
 
-    expectToHaveSubmoduleState(midRepo, "master", "bottom-project", bottomRepo, "master");
-    expectToHaveSubmoduleState(topRepo, "master", "mid-project", midRepo, "master");
+    expectToHaveSubmoduleState(midRepo, "master", botKey, bottomRepo, "master");
+    expectToHaveSubmoduleState(topRepo, "master", midKey, midRepo, "master");
   }
 
   @Test
   public void triangleSubmodules() throws Exception {
-    TestRepository<?> topRepo = createProjectWithPush("top-project");
-    TestRepository<?> midRepo = createProjectWithPush("mid-project");
-    TestRepository<?> bottomRepo = createProjectWithPush("bottom-project");
+    Project.NameKey topKey = createProjectForPush(getSubmitType());
+    Project.NameKey midKey = createProjectForPush(getSubmitType());
+    Project.NameKey botKey = createProjectForPush(getSubmitType());
+    TestRepository<?> topRepo = cloneProject(topKey);
+    TestRepository<?> midRepo = cloneProject(midKey);
+    TestRepository<?> bottomRepo = cloneProject(botKey);
 
-    allowMatchingSubmoduleSubscription(
-        "mid-project", "refs/heads/master", "top-project", "refs/heads/master");
-    allowMatchingSubmoduleSubscription(
-        "bottom-project", "refs/heads/master", "mid-project", "refs/heads/master");
-    allowMatchingSubmoduleSubscription(
-        "bottom-project", "refs/heads/master", "top-project", "refs/heads/master");
+    allowMatchingSubmoduleSubscription(midKey, "refs/heads/master", topKey, "refs/heads/master");
+    allowMatchingSubmoduleSubscription(botKey, "refs/heads/master", midKey, "refs/heads/master");
+    allowMatchingSubmoduleSubscription(botKey, "refs/heads/master", topKey, "refs/heads/master");
 
-    createSubmoduleSubscription(midRepo, "master", "bottom-project", "master");
+    createSubmoduleSubscription(midRepo, "master", botKey, "master");
     Config config = new Config();
-    prepareSubmoduleConfigEntry(config, "bottom-project", "master");
-    prepareSubmoduleConfigEntry(config, "mid-project", "master");
+    prepareSubmoduleConfigEntry(config, botKey, "master");
+    prepareSubmoduleConfigEntry(config, midKey, "master");
     pushSubmoduleConfig(topRepo, "master", config);
 
     ObjectId bottomHead = pushChangeTo(bottomRepo, "refs/for/master", "some message", "same-topic");
@@ -603,65 +621,61 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
 
     gApi.changes().id(id1).current().submit();
 
-    expectToHaveSubmoduleState(midRepo, "master", "bottom-project", bottomRepo, "master");
-    expectToHaveSubmoduleState(topRepo, "master", "mid-project", midRepo, "master");
-    expectToHaveSubmoduleState(topRepo, "master", "bottom-project", bottomRepo, "master");
+    expectToHaveSubmoduleState(midRepo, "master", botKey, bottomRepo, "master");
+    expectToHaveSubmoduleState(topRepo, "master", midKey, midRepo, "master");
+    expectToHaveSubmoduleState(topRepo, "master", botKey, bottomRepo, "master");
   }
 
-  private String prepareBranchCircularSubscription() throws Exception {
-    TestRepository<?> topRepo = createProjectWithPush("top-project");
-    TestRepository<?> midRepo = createProjectWithPush("mid-project");
-    TestRepository<?> bottomRepo = createProjectWithPush("bottom-project");
+  private void testBranchCircularSubscription(ThrowingConsumer<String> apiCall) throws Exception {
+    Project.NameKey topKey = createProjectForPush(getSubmitType());
+    Project.NameKey midKey = createProjectForPush(getSubmitType());
+    Project.NameKey botKey = createProjectForPush(getSubmitType());
+    TestRepository<?> topRepo = cloneProject(topKey);
+    TestRepository<?> midRepo = cloneProject(midKey);
+    TestRepository<?> bottomRepo = cloneProject(botKey);
 
-    createSubmoduleSubscription(midRepo, "master", "bottom-project", "master");
-    createSubmoduleSubscription(topRepo, "master", "mid-project", "master");
-    createSubmoduleSubscription(bottomRepo, "master", "top-project", "master");
+    createSubmoduleSubscription(midRepo, "master", botKey, "master");
+    createSubmoduleSubscription(topRepo, "master", midKey, "master");
+    createSubmoduleSubscription(bottomRepo, "master", topKey, "master");
 
-    allowMatchingSubmoduleSubscription(
-        "bottom-project", "refs/heads/master", "mid-project", "refs/heads/master");
-    allowMatchingSubmoduleSubscription(
-        "mid-project", "refs/heads/master", "top-project", "refs/heads/master");
-    allowMatchingSubmoduleSubscription(
-        "top-project", "refs/heads/master", "bottom-project", "refs/heads/master");
+    allowMatchingSubmoduleSubscription(botKey, "refs/heads/master", midKey, "refs/heads/master");
+    allowMatchingSubmoduleSubscription(midKey, "refs/heads/master", topKey, "refs/heads/master");
+    allowMatchingSubmoduleSubscription(topKey, "refs/heads/master", botKey, "refs/heads/master");
 
     ObjectId bottomMasterHead = pushChangeTo(bottomRepo, "refs/for/master", "some message", "");
     String changeId = getChangeId(bottomRepo, bottomMasterHead).get();
 
     approve(changeId);
-    exception.expectMessage("Branch level circular subscriptions detected");
-    exception.expectMessage("top-project,refs/heads/master");
-    exception.expectMessage("mid-project,refs/heads/master");
-    exception.expectMessage("bottom-project,refs/heads/master");
-    return changeId;
+
+    ResourceConflictException thrown =
+        assertThrows(ResourceConflictException.class, () -> apiCall.accept(changeId));
+    assertThat(thrown).hasMessageThat().contains("Branch level circular subscriptions detected");
+    assertThat(thrown).hasMessageThat().contains(topKey.get() + ",refs/heads/master");
+    assertThat(thrown).hasMessageThat().contains(midKey.get() + ",refs/heads/master");
+    assertThat(thrown).hasMessageThat().contains(botKey.get() + ",refs/heads/master");
   }
 
   @Test
   public void branchCircularSubscription() throws Exception {
-    String changeId = prepareBranchCircularSubscription();
-    gApi.changes().id(changeId).current().submit();
+    testBranchCircularSubscription(changeId -> gApi.changes().id(changeId).current().submit());
   }
 
   @Test
   public void branchCircularSubscriptionPreview() throws Exception {
-    String changeId = prepareBranchCircularSubscription();
-    gApi.changes().id(changeId).current().submitPreview();
+    testBranchCircularSubscription(
+        changeId -> gApi.changes().id(changeId).current().submitPreview());
   }
 
   @Test
   public void projectCircularSubscriptionWholeTopic() throws Exception {
-    TestRepository<?> superRepo = createProjectWithPush("super-project");
-    TestRepository<?> subRepo = createProjectWithPush("subscribed-to-project");
-
-    allowMatchingSubmoduleSubscription(
-        "subscribed-to-project", "refs/heads/master", "super-project", "refs/heads/master");
-    allowMatchingSubmoduleSubscription(
-        "super-project", "refs/heads/dev", "subscribed-to-project", "refs/heads/dev");
+    allowMatchingSubmoduleSubscription(subKey, "refs/heads/master", superKey, "refs/heads/master");
+    allowMatchingSubmoduleSubscription(superKey, "refs/heads/dev", subKey, "refs/heads/dev");
 
     pushChangeTo(subRepo, "dev");
     pushChangeTo(superRepo, "dev");
 
-    createSubmoduleSubscription(superRepo, "master", "subscribed-to-project", "master");
-    createSubmoduleSubscription(subRepo, "dev", "super-project", "dev");
+    createSubmoduleSubscription(superRepo, "master", subKey, "master");
+    createSubmoduleSubscription(subRepo, "dev", superKey, "dev");
 
     ObjectId subMasterHead =
         pushChangeTo(
@@ -671,16 +685,22 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
     approve(getChangeId(subRepo, subMasterHead).get());
     approve(getChangeId(superRepo, superDevHead).get());
 
-    exception.expectMessage("Project level circular subscriptions detected");
-    exception.expectMessage("subscribed-to-project");
-    exception.expectMessage("super-project");
-    gApi.changes().id(getChangeId(subRepo, subMasterHead).get()).current().submit();
+    Throwable thrown =
+        assertThrows(
+            Throwable.class,
+            () -> gApi.changes().id(getChangeId(subRepo, subMasterHead).get()).current().submit());
+    assertThat(thrown).hasMessageThat().contains("Project level circular subscriptions detected");
+    assertThat(thrown).hasMessageThat().contains(subKey.get());
+    assertThat(thrown).hasMessageThat().contains(superKey.get());
   }
 
   @Test
   public void projectNoSubscriptionWholeTopic() throws Exception {
-    TestRepository<?> repoA = createProjectWithPush("project-a");
-    TestRepository<?> repoB = createProjectWithPush("project-b");
+    Project.NameKey keyA = createProjectForPush(getSubmitType());
+    Project.NameKey keyB = createProjectForPush(getSubmitType());
+
+    TestRepository<?> repoA = cloneProject(keyA);
+    TestRepository<?> repoB = cloneProject(keyB);
     // bootstrap the dev branch
     ObjectId a0 = pushChangeTo(repoA, "dev");
 
@@ -735,33 +755,33 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
     approve(getChangeId(repoB, bDevHead).get());
 
     gApi.changes().id(getChangeId(repoA, aDevHead).get()).current().submit();
-    assertThat(getRemoteHead(name("project-a"), "refs/heads/master").getShortMessage())
+    assertThat(projectOperations.project(keyA).getHead("refs/heads/master").getShortMessage())
         .contains("some message in a master.txt");
-    assertThat(getRemoteHead(name("project-a"), "refs/heads/dev").getShortMessage())
+    assertThat(projectOperations.project(keyA).getHead("refs/heads/dev").getShortMessage())
         .contains("some message in a dev.txt");
-    assertThat(getRemoteHead(name("project-b"), "refs/heads/master").getShortMessage())
+    assertThat(projectOperations.project(keyB).getHead("refs/heads/master").getShortMessage())
         .contains("some message in b master.txt");
-    assertThat(getRemoteHead(name("project-b"), "refs/heads/dev").getShortMessage())
+    assertThat(projectOperations.project(keyB).getHead("refs/heads/dev").getShortMessage())
         .contains("some message in b dev.txt");
   }
 
   @Test
   public void twoProjectsMultipleBranchesWholeTopic() throws Exception {
-    TestRepository<?> repoA = createProjectWithPush("project-a");
-    TestRepository<?> repoB = createProjectWithPush("project-b");
+    Project.NameKey keyA = createProjectForPush(getSubmitType());
+    Project.NameKey keyB = createProjectForPush(getSubmitType());
+    TestRepository<?> repoA = cloneProject(keyA);
+    TestRepository<?> repoB = cloneProject(keyB);
     // bootstrap the dev branch
     pushChangeTo(repoA, "dev");
 
     // bootstrap the dev branch
     ObjectId b0 = pushChangeTo(repoB, "dev");
 
-    allowMatchingSubmoduleSubscription(
-        "project-b", "refs/heads/master", "project-a", "refs/heads/master");
-    allowMatchingSubmoduleSubscription(
-        "project-b", "refs/heads/dev", "project-a", "refs/heads/dev");
+    allowMatchingSubmoduleSubscription(keyB, "refs/heads/master", keyA, "refs/heads/master");
+    allowMatchingSubmoduleSubscription(keyB, "refs/heads/dev", keyA, "refs/heads/dev");
 
-    createSubmoduleSubscription(repoA, "master", "project-b", "master");
-    createSubmoduleSubscription(repoA, "dev", "project-b", "dev");
+    createSubmoduleSubscription(repoA, "master", keyB, "master");
+    createSubmoduleSubscription(repoA, "dev", keyB, "dev");
 
     // create a change for master branch in repo b
     ObjectId bHead =
@@ -788,26 +808,23 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
     approve(getChangeId(repoB, bDevHead).get());
     gApi.changes().id(getChangeId(repoB, bHead).get()).current().submit();
 
-    expectToHaveSubmoduleState(repoA, "master", "project-b", repoB, "master");
-    expectToHaveSubmoduleState(repoA, "dev", "project-b", repoB, "dev");
+    expectToHaveSubmoduleState(repoA, "master", keyB, repoB, "master");
+    expectToHaveSubmoduleState(repoA, "dev", keyB, repoB, "dev");
   }
 
   @Test
   public void retrySubmitAfterTornTopicOnLockFailure() throws Exception {
-    assume().that(notesMigration.disableChangeReviewDb()).isTrue();
+    Project.NameKey subKey1 = createProjectForPush(getSubmitType());
+    TestRepository<?> sub1 = cloneProject(subKey1);
+    Project.NameKey subKey2 = createProjectForPush(getSubmitType());
+    TestRepository<?> sub2 = cloneProject(subKey2);
 
-    TestRepository<?> superRepo = createProjectWithPush("super-project");
-    TestRepository<?> sub1 = createProjectWithPush("sub1");
-    TestRepository<?> sub2 = createProjectWithPush("sub2");
-
-    allowMatchingSubmoduleSubscription(
-        "sub1", "refs/heads/master", "super-project", "refs/heads/master");
-    allowMatchingSubmoduleSubscription(
-        "sub2", "refs/heads/master", "super-project", "refs/heads/master");
+    allowMatchingSubmoduleSubscription(subKey1, "refs/heads/master", superKey, "refs/heads/master");
+    allowMatchingSubmoduleSubscription(subKey2, "refs/heads/master", superKey, "refs/heads/master");
 
     Config config = new Config();
-    prepareSubmoduleConfigEntry(config, "sub1", "master");
-    prepareSubmoduleConfigEntry(config, "sub2", "master");
+    prepareSubmoduleConfigEntry(config, subKey1, "master");
+    prepareSubmoduleConfigEntry(config, subKey2, "master");
     pushSubmoduleConfig(superRepo, "master", config);
 
     ObjectId superPreviousId = pushChangeTo(superRepo, "master");
@@ -837,20 +854,20 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
 
     sub1.git().fetch().call();
     RevWalk rw1 = sub1.getRevWalk();
-    RevCommit master1 = rw1.parseCommit(getRemoteHead(name("sub1"), "master"));
+    RevCommit master1 = rw1.parseCommit(projectOperations.project(subKey1).getHead("master"));
     RevCommit change1Ps = parseCurrentRevision(rw1, changeId1);
     assertThat(rw1.isMergedInto(change1Ps, master1)).isTrue();
 
     sub2.git().fetch().call();
     RevWalk rw2 = sub2.getRevWalk();
-    RevCommit master2 = rw2.parseCommit(getRemoteHead(name("sub2"), "master"));
+    RevCommit master2 = rw2.parseCommit(projectOperations.project(subKey2).getHead("master"));
     RevCommit change2Ps = parseCurrentRevision(rw2, changeId2);
     assertThat(rw2.isMergedInto(change2Ps, master2)).isTrue();
 
     assertThat(input.generateLockFailures).containsExactly(false);
 
-    expectToHaveSubmoduleState(superRepo, "master", "sub1", sub1, "master");
-    expectToHaveSubmoduleState(superRepo, "master", "sub2", sub2, "master");
+    expectToHaveSubmoduleState(superRepo, "master", subKey1, sub1, "master");
+    expectToHaveSubmoduleState(superRepo, "master", subKey2, sub2, "master");
 
     assertWithMessage("submodule subscription update should have made one commit")
         .that(superRepo.getRepository().resolve("origin/master^"))
@@ -859,24 +876,23 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
 
   @Test
   public void skipUpdatingBrokenGitlinkPointer() throws Exception {
-    TestRepository<?> superRepo = createProjectWithPush("super-project");
-    TestRepository<?> sub1 = createProjectWithPush("sub1");
-    TestRepository<?> sub2 = createProjectWithPush("sub2");
+    Project.NameKey subKey1 = createProjectForPush(getSubmitType());
+    TestRepository<?> sub1 = cloneProject(subKey1);
+    Project.NameKey subKey2 = createProjectForPush(getSubmitType());
+    TestRepository<?> sub2 = cloneProject(subKey2);
 
-    allowMatchingSubmoduleSubscription(
-        "sub1", "refs/heads/master", "super-project", "refs/heads/master");
-    allowMatchingSubmoduleSubscription(
-        "sub2", "refs/heads/master", "super-project", "refs/heads/master");
+    allowMatchingSubmoduleSubscription(subKey1, "refs/heads/master", superKey, "refs/heads/master");
+    allowMatchingSubmoduleSubscription(subKey2, "refs/heads/master", superKey, "refs/heads/master");
 
     Config config = new Config();
-    prepareSubmoduleConfigEntry(config, "sub1", "master");
-    prepareSubmoduleConfigEntry(config, "sub2", "master");
+    prepareSubmoduleConfigEntry(config, subKey1, "master");
+    prepareSubmoduleConfigEntry(config, subKey2, "master");
     pushSubmoduleConfig(superRepo, "master", config);
 
     // Write an invalid SHA-1 directly to one of the gitlinks.
     ObjectId badId = ObjectId.fromString("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
-    directUpdateSubmodule("super-project", "refs/heads/master", "sub1", badId);
-    expectToHaveSubmoduleState(superRepo, "master", "sub1", badId);
+    directUpdateSubmodule(superKey, "refs/heads/master", subKey1, badId);
+    expectToHaveSubmoduleState(superRepo, "master", subKey1, badId);
 
     String topic = "same-topic";
     ObjectId sub1Id = pushChangeTo(sub1, "refs/for/master", "some message", topic);
@@ -893,7 +909,11 @@ public class SubmoduleSubscriptionsWholeTopicMergeIT extends AbstractSubmoduleSu
     assertThat(info(changeId2).status).isEqualTo(ChangeStatus.MERGED);
 
     // sub1 was skipped but sub2 succeeded.
-    expectToHaveSubmoduleState(superRepo, "master", "sub1", badId);
-    expectToHaveSubmoduleState(superRepo, "master", "sub2", sub2, "master");
+    expectToHaveSubmoduleState(superRepo, "master", subKey1, badId);
+    expectToHaveSubmoduleState(superRepo, "master", subKey2, sub2, "master");
+  }
+
+  private Project.NameKey nameKey(String s) {
+    return Project.nameKey(name(s));
   }
 }

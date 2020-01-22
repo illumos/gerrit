@@ -17,37 +17,42 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-edit-file-controls',
-
+  /** @extends Polymer.Element */
+  class GrEditFileControls extends Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element)) {
+    static get is() { return 'gr-edit-file-controls'; }
     /**
      * Fired when an action in the overflow menu is tapped.
      *
      * @event file-action-tap
      */
 
-    properties: {
-      filePath: String,
-      _allFileActions: {
-        type: Array,
-        value: () => Object.values(GrEditConstants.Actions),
-      },
-      _fileActions: {
-        type: Array,
-        computed: '_computeFileActions(_allFileActions)',
-      },
-    },
+    static get properties() {
+      return {
+        filePath: String,
+        _allFileActions: {
+          type: Array,
+          value: () => Object.values(GrEditConstants.Actions),
+        },
+        _fileActions: {
+          type: Array,
+          computed: '_computeFileActions(_allFileActions)',
+        },
+      };
+    }
 
     _handleActionTap(e) {
       e.preventDefault();
       e.stopPropagation();
       this._dispatchFileAction(e.detail.id, this.filePath);
-    },
+    }
 
     _dispatchFileAction(action, path) {
-      this.dispatchEvent(new CustomEvent('file-action-tap',
-          {detail: {action, path}, bubbles: true}));
-    },
+      this.dispatchEvent(new CustomEvent(
+          'file-action-tap',
+          {detail: {action, path}, bubbles: true, composed: true}));
+    }
 
     _computeFileActions(actions) {
       // TODO(kaspern): conditionally disable some actions based on file status.
@@ -57,6 +62,8 @@
           id: action.id,
         };
       });
-    },
-  });
+    }
+  }
+
+  customElements.define(GrEditFileControls.is, GrEditFileControls);
 })();

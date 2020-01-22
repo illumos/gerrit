@@ -12,12 +12,11 @@ java_library(
     deps = [
         "//java/com/google/gerrit/elasticsearch",
         "//java/com/google/gerrit/index",
-        "//java/com/google/gerrit/server",
         "//lib:guava",
+        "//lib:jgit",
         "//lib:junit",
         "//lib/guice",
         "//lib/httpcomponents:httpcore",
-        "//lib/jgit/org.eclipse.jgit:jgit",
         "//lib/testcontainers",
         "//lib/testcontainers:testcontainers-elasticsearch",
     ],
@@ -28,7 +27,7 @@ ELASTICSEARCH_DEPS = [
     "//java/com/google/gerrit/elasticsearch",
     "//java/com/google/gerrit/testing:gerrit-test-util",
     "//lib/guice",
-    "//lib/jgit/org.eclipse.jgit:jgit",
+    "//lib:jgit",
 ]
 
 HTTP_TEST_DEPS = [
@@ -93,9 +92,11 @@ junit_tests(
     tags = ["elastic"],
     deps = [
         "//java/com/google/gerrit/elasticsearch",
+        "//java/com/google/gerrit/testing:gerrit-test-util",
         "//lib:guava",
+        "//lib:jgit",
         "//lib/guice",
-        "//lib/jgit/org.eclipse.jgit:jgit",
+        "//lib/httpcomponents:httpcore",
         "//lib/truth",
     ],
 )

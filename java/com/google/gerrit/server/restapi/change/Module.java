@@ -32,6 +32,7 @@ import com.google.gerrit.server.account.AccountLoader;
 import com.google.gerrit.server.change.AddReviewersOp;
 import com.google.gerrit.server.change.ChangeInserter;
 import com.google.gerrit.server.change.ChangeResource;
+import com.google.gerrit.server.change.DeleteChangeOp;
 import com.google.gerrit.server.change.DeleteReviewerByEmailOp;
 import com.google.gerrit.server.change.DeleteReviewerOp;
 import com.google.gerrit.server.change.EmailReviewComments;
@@ -39,6 +40,7 @@ import com.google.gerrit.server.change.PatchSetInserter;
 import com.google.gerrit.server.change.RebaseChangeOp;
 import com.google.gerrit.server.change.ReviewerResource;
 import com.google.gerrit.server.change.SetAssigneeOp;
+import com.google.gerrit.server.change.SetCherryPickOp;
 import com.google.gerrit.server.change.SetHashtagsOp;
 import com.google.gerrit.server.change.SetPrivateOp;
 import com.google.gerrit.server.change.WorkInProgressOp;
@@ -95,11 +97,11 @@ public class Module extends RestApiModule {
     post(CHANGE_KIND, "hashtags").to(PostHashtags.class);
     post(CHANGE_KIND, "restore").to(Restore.class);
     post(CHANGE_KIND, "revert").to(Revert.class);
+    post(CHANGE_KIND, "revert_submission").to(RevertSubmission.class);
     post(CHANGE_KIND, "submit").to(Submit.CurrentRevision.class);
     get(CHANGE_KIND, "submitted_together").to(SubmittedTogether.class);
     post(CHANGE_KIND, "rebase").to(Rebase.CurrentRevision.class);
     post(CHANGE_KIND, "index").to(Index.class);
-    post(CHANGE_KIND, "rebuild.notedb").to(Rebuild.class);
     post(CHANGE_KIND, "move").to(Move.class);
     post(CHANGE_KIND, "private").to(PostPrivate.class);
     post(CHANGE_KIND, "private.delete").to(DeletePrivateByPost.class);
@@ -159,6 +161,7 @@ public class Module extends RestApiModule {
     get(ROBOT_COMMENT_KIND).to(GetRobotComment.class);
     child(REVISION_KIND, "fixes").to(Fixes.class);
     post(FIX_KIND, "apply").to(ApplyFix.class);
+    get(FIX_KIND, "preview").to(GetFixPreview.class);
 
     child(REVISION_KIND, "files").to(Files.class);
     put(FILE_KIND, "reviewed").to(PutReviewed.class);
@@ -190,6 +193,7 @@ public class Module extends RestApiModule {
     factory(AccountLoader.Factory.class);
     factory(ChangeInserter.Factory.class);
     factory(ChangeResource.Factory.class);
+    factory(DeleteChangeOp.Factory.class);
     factory(DeleteReviewerByEmailOp.Factory.class);
     factory(DeleteReviewerOp.Factory.class);
     factory(EmailReviewComments.Factory.class);
@@ -198,6 +202,7 @@ public class Module extends RestApiModule {
     factory(RebaseChangeOp.Factory.class);
     factory(ReviewerResource.Factory.class);
     factory(SetAssigneeOp.Factory.class);
+    factory(SetCherryPickOp.Factory.class);
     factory(SetHashtagsOp.Factory.class);
     factory(SetPrivateOp.Factory.class);
     factory(WorkInProgressOp.Factory.class);

@@ -14,18 +14,48 @@
 
 package com.google.gerrit.extensions.common;
 
+import com.google.common.base.MoreObjects;
 import java.util.List;
 import java.util.Objects;
 
+/**
+ * Representation of an account in the REST API.
+ *
+ * <p>This class determines the JSON format of accounts in the REST API.
+ *
+ * <p>This class defines fields for account properties that are frequently used. Additional fields
+ * are defined in {@link AccountDetailInfo}.
+ */
 public class AccountInfo {
+  /** The numeric ID of the account. */
   public Integer _accountId;
+
+  /** The full name of the user. */
   public String name;
+
+  /** The preferred email address of the user. */
   public String email;
+
+  /** List of the secondary email addresses of the user. */
   public List<String> secondaryEmails;
+
+  /** The username of the user. */
   public String username;
+
+  /** List of avatars of the user. */
   public List<AvatarInfo> avatars;
+
+  /**
+   * Whether the query would deliver more results if not limited. Only set on the last account that
+   * is returned as a query result.
+   */
   public Boolean _moreAccounts;
+
+  /** Status message of the account (e.g. 'OOO' for out-of-office). */
   public String status;
+
+  /** Whether the account is inactive. */
+  public Boolean inactive;
 
   public AccountInfo(Integer id) {
     this._accountId = id;
@@ -51,6 +81,16 @@ public class AccountInfo {
           && Objects.equals(status, accountInfo.status);
     }
     return false;
+  }
+
+  @Override
+  public String toString() {
+    return MoreObjects.toStringHelper(this)
+        .add("id", _accountId)
+        .add("name", name)
+        .add("email", email)
+        .add("username", username)
+        .toString();
   }
 
   @Override

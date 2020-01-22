@@ -16,6 +16,7 @@ package com.google.gerrit.server.restapi.project;
 
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Strings;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.api.projects.DashboardInfo;
 import com.google.gerrit.extensions.api.projects.SetDashboardInput;
 import com.google.gerrit.extensions.restapi.BadRequestException;
@@ -25,7 +26,6 @@ import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestModifyView;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
@@ -47,6 +47,7 @@ class SetDefaultDashboard implements RestModifyView<DashboardResource, SetDashbo
   private final DashboardsCollection dashboards;
   private final Provider<GetDashboard> get;
   private final PermissionBackend permissionBackend;
+  private final ProjectConfig.Factory projectConfigFactory;
 
   @Option(name = "--inherited", usage = "set dashboard inherited by children")
   boolean inherited;
@@ -57,12 +58,14 @@ class SetDefaultDashboard implements RestModifyView<DashboardResource, SetDashbo
       MetaDataUpdate.Server updateFactory,
       DashboardsCollection dashboards,
       Provider<GetDashboard> get,
-      PermissionBackend permissionBackend) {
+      PermissionBackend permissionBackend,
+      ProjectConfig.Factory projectConfigFactory) {
     this.cache = cache;
     this.updateFactory = updateFactory;
     this.dashboards = dashboards;
     this.get = get;
     this.permissionBackend = permissionBackend;
+    this.projectConfigFactory = projectConfigFactory;
   }
 
   @Override
@@ -93,7 +96,7 @@ class SetDefaultDashboard implements RestModifyView<DashboardResource, SetDashbo
     }
 
     try (MetaDataUpdate md = updateFactory.create(rsrc.getProjectState().getNameKey())) {
-      ProjectConfig config = ProjectConfig.read(md);
+      ProjectConfig config = projectConfigFactory.read(md);
       Project project = config.getProject();
       if (inherited) {
         project.setDefaultDashboard(input.id);
@@ -116,9 +119,9 @@ class SetDefaultDashboard implements RestModifyView<DashboardResource, SetDashbo
       cache.evict(rsrc.getProjectState().getProject());
 
       if (target != null) {
-        DashboardInfo info = get.get().apply(target);
-        info.isDefault = true;
-        return Response.ok(info);
+        Response<DashboardInfo> response = get.get().apply(target);
+        response.value().isDefault = true;
+        return response;
       }
       return Response.none();
     } catch (RepositoryNotFoundException notFound) {

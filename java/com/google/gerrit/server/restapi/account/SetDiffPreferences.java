@@ -14,13 +14,14 @@
 
 package com.google.gerrit.server.restapi.account;
 
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.client.DiffPreferencesInfo;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestModifyView;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.UserInitiated;
 import com.google.gerrit.server.account.AccountResource;
@@ -29,7 +30,6 @@ import com.google.gerrit.server.account.AccountsUpdate;
 import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -37,6 +37,18 @@ import java.io.IOException;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.errors.RepositoryNotFoundException;
 
+/**
+ * REST endpoint to set diff preferences for an account.
+ *
+ * <p>This REST endpoint handles {@code PUT /accounts/<account-identifier>/preferences.diff}
+ * requests.
+ *
+ * <p>General preferences can be set by {@link SetPreferences} and edit preferences can be set by
+ * {@link SetEditPreferences}.
+ *
+ * <p>Default diff preferences that apply for all accounts can be set by {@link
+ * com.google.gerrit.server.restapi.config.SetDiffPreferences}.
+ */
 @Singleton
 public class SetDiffPreferences implements RestModifyView<AccountResource, DiffPreferencesInfo> {
   private final Provider<CurrentUser> self;
@@ -54,9 +66,9 @@ public class SetDiffPreferences implements RestModifyView<AccountResource, DiffP
   }
 
   @Override
-  public DiffPreferencesInfo apply(AccountResource rsrc, DiffPreferencesInfo input)
+  public Response<DiffPreferencesInfo> apply(AccountResource rsrc, DiffPreferencesInfo input)
       throws RestApiException, ConfigInvalidException, RepositoryNotFoundException, IOException,
-          PermissionBackendException, OrmException {
+          PermissionBackendException {
     if (!self.get().hasSameAccountId(rsrc.getUser())) {
       permissionBackend.currentUser().check(GlobalPermission.MODIFY_ACCOUNT);
     }
@@ -66,10 +78,11 @@ public class SetDiffPreferences implements RestModifyView<AccountResource, DiffP
     }
 
     Account.Id id = rsrc.getUser().getAccountId();
-    return accountsUpdateProvider
-        .get()
-        .update("Set Diff Preferences via API", id, u -> u.setDiffPreferences(input))
-        .map(AccountState::getDiffPreferences)
-        .orElseThrow(() -> new ResourceNotFoundException(IdString.fromDecoded(id.toString())));
+    return Response.ok(
+        accountsUpdateProvider
+            .get()
+            .update("Set Diff Preferences via API", id, u -> u.setDiffPreferences(input))
+            .map(AccountState::diffPreferences)
+            .orElseThrow(() -> new ResourceNotFoundException(IdString.fromDecoded(id.toString()))));
   }
 }

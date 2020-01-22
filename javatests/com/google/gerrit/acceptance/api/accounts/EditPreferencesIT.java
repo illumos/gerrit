@@ -19,15 +19,13 @@ import static com.google.common.truth.Truth.assertThat;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.extensions.client.EditPreferencesInfo;
-import com.google.gerrit.extensions.client.KeyMapType;
-import com.google.gerrit.extensions.client.Theme;
 import org.junit.Test;
 
 @NoHttpd
 public class EditPreferencesIT extends AbstractDaemonTest {
   @Test
   public void getSetEditPreferences() throws Exception {
-    EditPreferencesInfo out = gApi.accounts().id(admin.getId().toString()).getEditPreferences();
+    EditPreferencesInfo out = gApi.accounts().id(admin.id().toString()).getEditPreferences();
 
     assertThat(out.lineLength).isEqualTo(100);
     assertThat(out.indentUnit).isEqualTo(2);
@@ -43,8 +41,6 @@ public class EditPreferencesIT extends AbstractDaemonTest {
     assertThat(out.indentWithTabs).isNull();
     assertThat(out.autoCloseBrackets).isNull();
     assertThat(out.showBase).isNull();
-    assertThat(out.theme).isEqualTo(Theme.DEFAULT);
-    assertThat(out.keyMapType).isEqualTo(KeyMapType.DEFAULT);
 
     // change some default values
     out.lineLength = 80;
@@ -61,10 +57,8 @@ public class EditPreferencesIT extends AbstractDaemonTest {
     out.indentWithTabs = true;
     out.autoCloseBrackets = true;
     out.showBase = true;
-    out.theme = Theme.TWILIGHT;
-    out.keyMapType = KeyMapType.EMACS;
 
-    EditPreferencesInfo info = gApi.accounts().id(admin.getId().toString()).setEditPreferences(out);
+    EditPreferencesInfo info = gApi.accounts().id(admin.id().toString()).setEditPreferences(out);
 
     assertEditPreferences(info, out);
 
@@ -72,7 +66,7 @@ public class EditPreferencesIT extends AbstractDaemonTest {
     EditPreferencesInfo in = new EditPreferencesInfo();
     in.tabSize = 42;
 
-    info = gApi.accounts().id(admin.getId().toString()).setEditPreferences(in);
+    info = gApi.accounts().id(admin.id().toString()).setEditPreferences(in);
 
     out.tabSize = in.tabSize;
     assertEditPreferences(info, out);
@@ -94,7 +88,5 @@ public class EditPreferencesIT extends AbstractDaemonTest {
     assertThat(out.indentWithTabs).isEqualTo(in.indentWithTabs);
     assertThat(out.autoCloseBrackets).isEqualTo(in.autoCloseBrackets);
     assertThat(out.showBase).isEqualTo(in.showBase);
-    assertThat(out.theme).isEqualTo(in.theme);
-    assertThat(out.keyMapType).isEqualTo(in.keyMapType);
   }
 }

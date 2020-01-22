@@ -15,15 +15,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
-<link rel="import" href="../../../bower_components/iron-input/iron-input.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/iron-input/iron-input.html">
 <link rel="import" href="../../shared/gr-button/gr-button.html">
 <link rel="import" href="../../shared/gr-rest-api-interface/gr-rest-api-interface.html">
 <link rel="import" href="../../../styles/shared-styles.html">
 
 <dom-module id="gr-email-editor">
   <template>
-    <style include="shared-styles"></style>
+    <style include="shared-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <style include="gr-form-styles">
       th {
         color: var(--deemphasized-text-color);
@@ -62,20 +64,28 @@ limitations under the License.
           <template is="dom-repeat" items="[[_emails]]">
             <tr>
               <td class="emailColumn">[[item.email]]</td>
-              <td class="preferredControl" on-tap="_handlePreferredControlTap">
-                <input
-                    is="iron-input"
+              <td class="preferredControl" on-click="_handlePreferredControlClick">
+                <iron-input
                     class="preferredRadio"
                     type="radio"
                     on-change="_handlePreferredChange"
                     name="preferred"
-                    value="[[item.email]]"
+                    bind-value="[[item.email]]"
                     checked$="[[item.preferred]]">
+                  <input
+                      is="iron-input"
+                      class="preferredRadio"
+                      type="radio"
+                      on-change="_handlePreferredChange"
+                      name="preferred"
+                      value="[[item.email]]"
+                      checked$="[[item.preferred]]">
+                </iron-input>
               </td>
               <td>
                 <gr-button
                     data-index$="[[index]]"
-                    on-tap="_handleDeleteButton"
+                    on-click="_handleDeleteButton"
                     disabled="[[item.preferred]]"
                     class="remove-button">Delete</gr-button>
               </td>

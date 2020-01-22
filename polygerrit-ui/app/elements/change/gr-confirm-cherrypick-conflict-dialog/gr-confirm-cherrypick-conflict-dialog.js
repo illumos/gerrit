@@ -17,8 +17,16 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-confirm-cherrypick-conflict-dialog',
+  /**
+   * @appliesMixin Gerrit.FireMixin
+   * @extends Polymer.Element
+   */
+  class GrConfirmCherrypickConflictDialog extends Polymer.mixinBehaviors( [
+    Gerrit.FireBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-confirm-cherrypick-conflict-dialog'; }
 
     /**
      * Fired when the confirm button is pressed.
@@ -34,12 +42,17 @@
 
     _handleConfirmTap(e) {
       e.preventDefault();
+      e.stopPropagation();
       this.fire('confirm', null, {bubbles: false});
-    },
+    }
 
     _handleCancelTap(e) {
       e.preventDefault();
+      e.stopPropagation();
       this.fire('cancel', null, {bubbles: false});
-    },
-  });
+    }
+  }
+
+  customElements.define(GrConfirmCherrypickConflictDialog.is,
+      GrConfirmCherrypickConflictDialog);
 })();

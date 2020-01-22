@@ -19,14 +19,12 @@ import static com.google.common.truth.Truth.assertThat;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RevId;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.change.WalkSorter.PatchSetData;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gerrit.testing.GerritBaseTests;
 import com.google.gerrit.testing.InMemoryRepositoryManager;
 import com.google.gerrit.testing.InMemoryRepositoryManager.Repo;
 import com.google.gerrit.testing.TestChanges;
@@ -39,13 +37,13 @@ import org.eclipse.jgit.revwalk.RevWalk;
 import org.junit.Before;
 import org.junit.Test;
 
-public class WalkSorterTest extends GerritBaseTests {
+public class WalkSorterTest {
   private Account.Id userId;
   private InMemoryRepositoryManager repoManager;
 
   @Before
   public void setUp() {
-    userId = new Account.Id(1);
+    userId = Account.id(1);
     repoManager = new InMemoryRepositoryManager();
   }
 
@@ -280,7 +278,7 @@ public class WalkSorterTest extends GerritBaseTests {
 
     // If we restrict to PS1 of each change, the sorter uses that commit.
     sorter.includePatchSets(
-        ImmutableSet.of(new PatchSet.Id(cd1.getId(), 1), new PatchSet.Id(cd2.getId(), 1)));
+        ImmutableSet.of(PatchSet.id(cd1.getId(), 1), PatchSet.id(cd2.getId(), 1)));
     assertSorted(
         sorter, changes, ImmutableList.of(patchSetData(cd2, 1, c2_1), patchSetData(cd1, 1, c1_1)));
   }
@@ -297,8 +295,7 @@ public class WalkSorterTest extends GerritBaseTests {
 
     List<ChangeData> changes = ImmutableList.of(cd1, cd2);
     WalkSorter sorter =
-        new WalkSorter(repoManager)
-            .includePatchSets(ImmutableSet.of(cd1.currentPatchSet().getId()));
+        new WalkSorter(repoManager).includePatchSets(ImmutableSet.of(cd1.currentPatchSet().id()));
 
     assertSorted(sorter, changes, ImmutableList.of(patchSetData(cd1, c1)));
   }
@@ -335,17 +332,15 @@ public class WalkSorterTest extends GerritBaseTests {
   private ChangeData newChange(TestRepository<Repo> tr, ObjectId id) throws Exception {
     Project.NameKey project = tr.getRepository().getDescription().getProject();
     Change c = TestChanges.newChange(project, userId);
-    ChangeData cd = ChangeData.createForTest(project, c.getId(), 1);
+    ChangeData cd = ChangeData.createForTest(project, c.getId(), 1, id);
     cd.setChange(c);
-    cd.currentPatchSet().setRevision(new RevId(id.name()));
     cd.setPatchSets(ImmutableList.of(cd.currentPatchSet()));
     return cd;
   }
 
   private PatchSet addPatchSet(ChangeData cd, ObjectId id) throws Exception {
     TestChanges.incrementPatchSet(cd.change());
-    PatchSet ps = new PatchSet(cd.change().currentPatchSetId());
-    ps.setRevision(new RevId(id.name()));
+    PatchSet ps = TestChanges.newPatchSet(cd.change().currentPatchSetId(), id.name(), userId);
     List<PatchSet> patchSets = new ArrayList<>(cd.patchSets());
     patchSets.add(ps);
     cd.setPatchSets(patchSets);
@@ -353,7 +348,7 @@ public class WalkSorterTest extends GerritBaseTests {
   }
 
   private TestRepository<Repo> newRepo(String name) throws Exception {
-    return new TestRepository<>(repoManager.createRepository(new Project.NameKey(name)));
+    return new TestRepository<>(repoManager.createRepository(Project.nameKey(name)));
   }
 
   private static PatchSetData patchSetData(ChangeData cd, RevCommit commit) throws Exception {
@@ -362,7 +357,7 @@ public class WalkSorterTest extends GerritBaseTests {
 
   private static PatchSetData patchSetData(ChangeData cd, int psId, RevCommit commit)
       throws Exception {
-    return PatchSetData.create(cd, cd.patchSet(new PatchSet.Id(cd.getId(), psId)), commit);
+    return PatchSetData.create(cd, cd.patchSet(PatchSet.id(cd.getId(), psId)), commit);
   }
 
   private static void assertSorted(

@@ -15,12 +15,16 @@
 package com.google.gerrit.server.query.project;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.common.truth.TruthJUnit.assume;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static java.util.stream.Collectors.toList;
 
 import com.google.common.base.CharMatcher;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.api.GerritApi;
 import com.google.gerrit.extensions.api.access.AccessSectionInfo;
 import com.google.gerrit.extensions.api.access.PermissionInfo;
@@ -37,9 +41,6 @@ import com.google.gerrit.index.Schema;
 import com.google.gerrit.index.project.ProjectData;
 import com.google.gerrit.index.project.ProjectIndexCollection;
 import com.google.gerrit.lifecycle.LifecycleManager;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.AnonymousUser;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
@@ -58,11 +59,10 @@ import com.google.gerrit.server.util.OneOffRequestContext;
 import com.google.gerrit.server.util.RequestContext;
 import com.google.gerrit.server.util.ThreadLocalRequestContext;
 import com.google.gerrit.testing.GerritServerTests;
-import com.google.gerrit.testing.InMemoryDatabase;
+import com.google.gerrit.testing.GerritTestName;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.Provider;
-import com.google.inject.util.Providers;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
@@ -71,10 +71,13 @@ import java.util.Set;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Ignore;
+import org.junit.Rule;
 import org.junit.Test;
 
 @Ignore
 public abstract class AbstractQueryProjectsTest extends GerritServerTests {
+  @Rule public final GerritTestName testName = new GerritTestName();
+
   @Inject protected Accounts accounts;
 
   @Inject @ServerInitiated protected Provider<AccountsUpdate> accountsUpdate;
@@ -88,8 +91,6 @@ public abstract class AbstractQueryProjectsTest extends GerritServerTests {
   @Inject protected IdentifiedUser.GenericFactory userFactory;
 
   @Inject private Provider<AnonymousUser> anonymousUser;
-
-  @Inject protected InMemoryDatabase schemaFactory;
 
   @Inject protected SchemaCreator schemaCreator;
 
@@ -105,7 +106,6 @@ public abstract class AbstractQueryProjectsTest extends GerritServerTests {
 
   protected LifecycleManager lifecycle;
   protected Injector injector;
-  protected ReviewDb db;
   protected AccountInfo currentUserInfo;
   protected CurrentUser user;
 
@@ -125,12 +125,10 @@ public abstract class AbstractQueryProjectsTest extends GerritServerTests {
   @After
   public void cleanUp() {
     lifecycle.stop();
-    db.close();
   }
 
   protected void setUpDatabase() throws Exception {
-    db = schemaFactory.open();
-    schemaCreator.create(db);
+    schemaCreator.create();
 
     Account.Id userId = createAccount("user", "User", "user@example.com", true);
     user = userFactory.create(userId);
@@ -142,32 +140,11 @@ public abstract class AbstractQueryProjectsTest extends GerritServerTests {
 
   protected RequestContext newRequestContext(Account.Id requestUserId) {
     final CurrentUser requestUser = userFactory.create(requestUserId);
-    return new RequestContext() {
-      @Override
-      public CurrentUser getUser() {
-        return requestUser;
-      }
-
-      @Override
-      public Provider<ReviewDb> getReviewDbProvider() {
-        return Providers.of(db);
-      }
-    };
+    return () -> requestUser;
   }
 
   protected void setAnonymous() {
-    requestContext.setContext(
-        new RequestContext() {
-          @Override
-          public CurrentUser getUser() {
-            return anonymousUser.get();
-          }
-
-          @Override
-          public Provider<ReviewDb> getReviewDbProvider() {
-            return Providers.of(db);
-          }
-        });
+    requestContext.setContext(anonymousUser::get);
   }
 
   @After
@@ -176,10 +153,6 @@ public abstract class AbstractQueryProjectsTest extends GerritServerTests {
       lifecycle.stop();
     }
     requestContext.setContext(null);
-    if (db != null) {
-      db.close();
-    }
-    InMemoryDatabase.drop(schemaFactory);
   }
 
   @Test
@@ -218,7 +191,7 @@ public abstract class AbstractQueryProjectsTest extends GerritServerTests {
 
   @Test
   public void byInname() throws Exception {
-    String namePart = getSanitizedMethodName();
+    String namePart = testName.getSanitizedMethodName();
     namePart = CharMatcher.is('_').removeFrom(namePart);
 
     ProjectInfo project1 = createProject(name("project1-" + namePart));
@@ -240,9 +213,9 @@ public abstract class AbstractQueryProjectsTest extends GerritServerTests {
 
     assertQuery("description:non-existing");
 
-    exception.expect(BadRequestException.class);
-    exception.expectMessage("description operator requires a value");
-    assertQuery("description:\"\"");
+    BadRequestException thrown =
+        assertThrows(BadRequestException.class, () -> assertQuery("description:\"\""));
+    assertThat(thrown).hasMessageThat().contains("description operator requires a value");
   }
 
   @Test
@@ -257,16 +230,18 @@ public abstract class AbstractQueryProjectsTest extends GerritServerTests {
 
   @Test
   public void byState_emptyQuery() throws Exception {
-    exception.expect(BadRequestException.class);
-    exception.expectMessage("state operator requires a value");
-    assertQuery("state:\"\"");
+    BadRequestException thrown =
+        assertThrows(BadRequestException.class, () -> assertQuery("state:\"\""));
+    assertThat(thrown).hasMessageThat().contains("state operator requires a value");
   }
 
   @Test
   public void byState_badQuery() throws Exception {
-    exception.expect(BadRequestException.class);
-    exception.expectMessage("state operator must be either 'active' or 'read-only'");
-    assertQuery("state:bla");
+    BadRequestException thrown =
+        assertThrows(BadRequestException.class, () -> assertQuery("state:bla"));
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains("state operator must be either 'active' or 'read-only'");
   }
 
   @Test
@@ -408,8 +383,8 @@ public abstract class AbstractQueryProjectsTest extends GerritServerTests {
       throws Exception {
     List<ProjectInfo> result = query.get();
     Iterable<String> names = names(result);
-    assertThat(names)
-        .named(format(query, result, projects))
+    assertWithMessage(format(query, result, projects))
+        .that(names)
         .containsExactlyElementsIn(names(projects))
         .inOrder();
     return result;
@@ -476,6 +451,6 @@ public abstract class AbstractQueryProjectsTest extends GerritServerTests {
       return null;
     }
 
-    return name + "_" + getSanitizedMethodName();
+    return name + "_" + testName.getSanitizedMethodName();
   }
 }

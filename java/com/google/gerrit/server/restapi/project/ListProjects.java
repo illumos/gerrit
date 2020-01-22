@@ -27,21 +27,23 @@ import com.google.common.collect.Iterables;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.data.GroupReference;
-import com.google.gerrit.common.errors.NoSuchGroupException;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.exceptions.NoSuchGroupException;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.common.ProjectInfo;
 import com.google.gerrit.extensions.common.WebLinkInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.BinaryResult;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.extensions.restapi.TopLevelResource;
 import com.google.gerrit.extensions.restapi.Url;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.gerrit.json.OutputFormat;
 import com.google.gerrit.server.CurrentUser;
-import com.google.gerrit.server.OutputFormat;
 import com.google.gerrit.server.WebLinks;
 import com.google.gerrit.server.account.GroupControl;
 import com.google.gerrit.server.config.GerritServerConfig;
@@ -57,7 +59,6 @@ import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.util.TreeFormatter;
 import com.google.gson.reflect.TypeToken;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import java.io.BufferedWriter;
@@ -103,17 +104,6 @@ public class ListProjects implements RestReadView<TopLevelResource> {
       @Override
       boolean useMatch() {
         return true;
-      }
-    },
-    PARENT_CANDIDATES {
-      @Override
-      boolean matches(Repository git) {
-        return true;
-      }
-
-      @Override
-      boolean useMatch() {
-        return false;
       }
     },
     PERMISSIONS {
@@ -314,16 +304,17 @@ public class ListProjects implements RestReadView<TopLevelResource> {
   }
 
   @Override
-  public Object apply(TopLevelResource resource)
+  public Response<Object> apply(TopLevelResource resource)
       throws BadRequestException, PermissionBackendException {
     if (format == OutputFormat.TEXT) {
       ByteArrayOutputStream buf = new ByteArrayOutputStream();
       displayToStream(buf);
-      return BinaryResult.create(buf.toByteArray())
-          .setContentType("text/plain")
-          .setCharacterEncoding(UTF_8);
+      return Response.ok(
+          BinaryResult.create(buf.toByteArray())
+              .setContentType("text/plain")
+              .setCharacterEncoding(UTF_8));
     }
-    return apply();
+    return Response.ok(apply());
   }
 
   public SortedMap<String, ProjectInfo> apply()
@@ -369,7 +360,7 @@ public class ListProjects implements RestReadView<TopLevelResource> {
           .collect(
               ImmutableSortedMap.toImmutableSortedMap(
                   natural(), p -> p.name, p -> showDescription ? p : nullifyDescription(p)));
-    } catch (OrmException | MethodNotAllowedException e) {
+    } catch (StorageException | MethodNotAllowedException e) {
       logger.atWarning().withCause(e).log(
           "Internal error while processing the query '%s' request", query);
       throw new BadRequestException("Internal error while processing the query request");
@@ -389,7 +380,7 @@ public class ListProjects implements RestReadView<TopLevelResource> {
         newProjectsNamesStream(query).forEach(out::println);
       }
       out.flush();
-    } catch (OrmException | MethodNotAllowedException e) {
+    } catch (StorageException | MethodNotAllowedException e) {
       logger.atWarning().withCause(e).log(
           "Internal error while processing the query '%s' request", query);
       throw new BadRequestException("Internal error while processing the query request");
@@ -397,7 +388,7 @@ public class ListProjects implements RestReadView<TopLevelResource> {
   }
 
   private Stream<String> newProjectsNamesStream(String query)
-      throws OrmException, MethodNotAllowedException, BadRequestException {
+      throws MethodNotAllowedException, BadRequestException {
     Stream<String> projects =
         queryProjectsProvider.get().withQuery(query).apply().stream().map(p -> p.name).skip(start);
     if (limit > 0) {
@@ -436,11 +427,6 @@ public class ListProjects implements RestReadView<TopLevelResource> {
       }
     }
 
-    if (type == FilterType.PARENT_CANDIDATES) {
-      // Historically, PARENT_CANDIDATES implied showDescription.
-      showDescription = true;
-    }
-
     int foundIndex = 0;
     int found = 0;
     TreeMap<String, ProjectInfo> output = new TreeMap<>();
@@ -449,10 +435,10 @@ public class ListProjects implements RestReadView<TopLevelResource> {
     PermissionBackend.WithUser perm = permissionBackend.user(currentUser);
     final TreeMap<Project.NameKey, ProjectNode> treeMap = new TreeMap<>();
     try {
-      Iterable<Project.NameKey> projectNames = filter(perm)::iterator;
-      for (Project.NameKey projectName : projectNames) {
-        final ProjectState e = projectCache.get(projectName);
-        if (e == null || (e.getProject().getState() == HIDDEN && !all && state != HIDDEN)) {
+      Iterable<ProjectState> projectStatesIt = filter(perm)::iterator;
+      for (ProjectState e : projectStatesIt) {
+        Project.NameKey projectName = e.getNameKey();
+        if (e.getProject().getState() == HIDDEN && !all && state != HIDDEN) {
           // If we can't get it from the cache, pretend it's not present.
           // If all wasn't selected, and it's HIDDEN, pretend it's not present.
           // If state HIDDEN wasn't selected, and it's HIDDEN, pretend it's not present.
@@ -469,26 +455,22 @@ public class ListProjects implements RestReadView<TopLevelResource> {
           continue;
         }
 
-        ProjectInfo info = new ProjectInfo();
         if (showTree && !format.isJson()) {
           treeMap.put(projectName, projectNodeFactory.create(e.getProject(), true));
           continue;
         }
 
+        if (foundIndex++ < start) {
+          continue;
+        }
+        if (limit > 0 && ++found > limit) {
+          break;
+        }
+
+        ProjectInfo info = new ProjectInfo();
         info.name = projectName.get();
         if (showTree && format.isJson()) {
-          ProjectState parent = Iterables.getFirst(e.parents(), null);
-          if (parent != null) {
-            if (isParentAccessible(accessibleParents, perm, parent)) {
-              info.parent = parent.getName();
-            } else {
-              info.parent = hiddenNames.get(parent.getName());
-              if (info.parent == null) {
-                info.parent = "?-" + (hiddenNames.size() + 1);
-                hiddenNames.put(parent.getName(), info.parent);
-              }
-            }
-          }
+          addParentProjectInfo(hiddenNames, accessibleParents, perm, e, info);
         }
 
         if (showDescription) {
@@ -503,32 +485,12 @@ public class ListProjects implements RestReadView<TopLevelResource> {
                 continue;
               }
 
-              boolean canReadAllRefs = e.statePermitsRead();
-              if (canReadAllRefs) {
-                try {
-                  permissionBackend
-                      .user(currentUser)
-                      .project(e.getNameKey())
-                      .check(ProjectPermission.READ);
-                } catch (AuthException exp) {
-                  canReadAllRefs = false;
-                }
-              }
-
-              List<Ref> refs = getBranchRefs(projectName, canReadAllRefs);
+              List<Ref> refs = retieveBranchRefs(e);
               if (!hasValidRef(refs)) {
                 continue;
               }
 
-              for (int i = 0; i < showBranch.size(); i++) {
-                Ref ref = refs.get(i);
-                if (ref != null && ref.getObjectId() != null) {
-                  if (info.branches == null) {
-                    info.branches = new LinkedHashMap<>();
-                  }
-                  info.branches.put(showBranch.get(i), ref.getObjectId().name());
-                }
-              }
+              addProjectBranchesInfo(info, refs);
             }
           } else if (!showTree && type.useMatch()) {
             try (Repository git = repoManager.openRepository(projectName)) {
@@ -545,17 +507,8 @@ public class ListProjects implements RestReadView<TopLevelResource> {
           continue;
         }
 
-        if (type != FilterType.PARENT_CANDIDATES) {
-          List<WebLinkInfo> links = webLinks.getProjectLinks(projectName.get());
-          info.webLinks = links.isEmpty() ? null : links;
-        }
-
-        if (foundIndex++ < start) {
-          continue;
-        }
-        if (limit > 0 && ++found > limit) {
-          break;
-        }
+        ImmutableList<WebLinkInfo> links = webLinks.getProjectLinks(projectName.get());
+        info.webLinks = links.isEmpty() ? null : links;
 
         if (stdout == null || format.isJson()) {
           output.put(info.name, info);
@@ -563,15 +516,7 @@ public class ListProjects implements RestReadView<TopLevelResource> {
         }
 
         if (!showBranch.isEmpty()) {
-          for (String name : showBranch) {
-            String ref = info.branches != null ? info.branches.get(name) : null;
-            if (ref == null) {
-              // Print stub (forty '-' symbols)
-              ref = "----------------------------------------";
-            }
-            stdout.print(ref);
-            stdout.print(' ');
-          }
+          printProjectBranches(stdout, info);
         }
         stdout.print(info.name);
 
@@ -604,28 +549,79 @@ public class ListProjects implements RestReadView<TopLevelResource> {
     }
   }
 
-  private Stream<Project.NameKey> filter(PermissionBackend.WithUser perm)
-      throws BadRequestException {
-    Stream<Project.NameKey> matches = StreamSupport.stream(scan().spliterator(), false);
-    if (type == FilterType.PARENT_CANDIDATES) {
-      matches =
-          matches.map(projectCache::get).map(this::parentOf).filter(Objects::nonNull).sorted();
+  private void printProjectBranches(PrintWriter stdout, ProjectInfo info) {
+    for (String name : showBranch) {
+      String ref = info.branches != null ? info.branches.get(name) : null;
+      if (ref == null) {
+        // Print stub (forty '-' symbols)
+        ref = "----------------------------------------";
+      }
+      stdout.print(ref);
+      stdout.print(' ');
     }
-    return matches.filter(p -> perm.project(p).testOrFalse(ProjectPermission.ACCESS));
   }
 
-  private Project.NameKey parentOf(ProjectState ps) {
-    if (ps == null) {
-      return null;
-    }
-    Project.NameKey parent = ps.getProject().getParent();
-    if (parent != null) {
-      if (projectCache.get(parent) != null) {
-        return parent;
+  private void addProjectBranchesInfo(ProjectInfo info, List<Ref> refs) {
+    for (int i = 0; i < showBranch.size(); i++) {
+      Ref ref = refs.get(i);
+      if (ref != null && ref.getObjectId() != null) {
+        if (info.branches == null) {
+          info.branches = new LinkedHashMap<>();
+        }
+        info.branches.put(showBranch.get(i), ref.getObjectId().name());
       }
-      logger.atWarning().log("parent project %s of project %s not found", ps.getName());
     }
-    return null;
+  }
+
+  private List<Ref> retieveBranchRefs(ProjectState e) throws PermissionBackendException {
+    boolean canReadAllRefs = e.statePermitsRead();
+    if (canReadAllRefs) {
+      try {
+        permissionBackend.user(currentUser).project(e.getNameKey()).check(ProjectPermission.READ);
+      } catch (AuthException exp) {
+        canReadAllRefs = false;
+      }
+    }
+
+    return getBranchRefs(e.getNameKey(), canReadAllRefs);
+  }
+
+  private void addParentProjectInfo(
+      Map<String, String> hiddenNames,
+      Map<Project.NameKey, Boolean> accessibleParents,
+      PermissionBackend.WithUser perm,
+      ProjectState e,
+      ProjectInfo info)
+      throws PermissionBackendException {
+    ProjectState parent = Iterables.getFirst(e.parents(), null);
+    if (parent != null) {
+      if (isParentAccessible(accessibleParents, perm, parent)) {
+        info.parent = parent.getName();
+      } else {
+        info.parent = hiddenNames.get(parent.getName());
+        if (info.parent == null) {
+          info.parent = "?-" + (hiddenNames.size() + 1);
+          hiddenNames.put(parent.getName(), info.parent);
+        }
+      }
+    }
+  }
+
+  private Stream<ProjectState> filter(PermissionBackend.WithUser perm) throws BadRequestException {
+    return StreamSupport.stream(scan().spliterator(), false)
+        .map(projectCache::get)
+        .filter(Objects::nonNull)
+        .filter(p -> permissionCheck(p, perm));
+  }
+
+  private boolean permissionCheck(ProjectState state, PermissionBackend.WithUser perm) {
+    // Hidden projects(permitsRead = false) should only be accessible by the project owners.
+    // READ_CONFIG is checked here because it's only allowed to project owners(ACCESS may also
+    // be allowed for other users). Allowing project owners to access here will help them to view
+    // and update the config of hidden projects easily.
+    return perm.project(state.getNameKey())
+        .testOrFalse(
+            state.statePermitsRead() ? ProjectPermission.ACCESS : ProjectPermission.READ_CONFIG);
   }
 
   private boolean isParentAccessible(

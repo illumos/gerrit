@@ -14,13 +14,14 @@
 
 package com.google.gerrit.server.mail.send;
 
-import com.google.gerrit.common.errors.EmailException;
+import com.google.gerrit.exceptions.EmailException;
 import com.google.gerrit.extensions.api.changes.RecipientType;
 import com.google.gerrit.mail.Address;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.inject.assistedinject.Assisted;
 import com.google.inject.assistedinject.AssistedInject;
 
+/** Sender that informs a user by email that the HTTP password of their account was updated. */
 public class HttpPasswordUpdateSender extends OutgoingEmail {
   public interface Factory {
     HttpPasswordUpdateSender create(IdentifiedUser user, String operation);
@@ -31,8 +32,8 @@ public class HttpPasswordUpdateSender extends OutgoingEmail {
 
   @AssistedInject
   public HttpPasswordUpdateSender(
-      EmailArguments ea, @Assisted IdentifiedUser user, @Assisted String operation) {
-    super(ea, "HttpPasswordUpdate");
+      EmailArguments args, @Assisted IdentifiedUser user, @Assisted String operation) {
+    super(args, "HttpPasswordUpdate");
     this.user = user;
     this.operation = operation;
   }
@@ -58,24 +59,20 @@ public class HttpPasswordUpdateSender extends OutgoingEmail {
     }
   }
 
-  public String getEmail() {
-    return user.getAccount().getPreferredEmail();
-  }
-
-  public String getUserNameEmail() {
-    return getUserNameEmailFor(user.getAccountId());
-  }
-
   @Override
   protected void setupSoyContext() {
     super.setupSoyContext();
     soyContextEmailData.put("email", getEmail());
-    soyContextEmailData.put("userNameEmail", getUserNameEmail());
+    soyContextEmailData.put("userNameEmail", getUserNameEmailFor(user.getAccountId()));
     soyContextEmailData.put("operation", operation);
   }
 
   @Override
   protected boolean supportsHtml() {
     return true;
+  }
+
+  private String getEmail() {
+    return user.getAccount().preferredEmail();
   }
 }

@@ -1,6 +1,5 @@
 <dom-module id="coverage-plugin">
   <script>
-
     function populateWithDummyData(coverageData) {
       coverageData['NewFile'] = {
         linesMissingCoverage: [1, 2, 3],
@@ -32,6 +31,11 @@
       const coverageData = {};
       let displayCoverage = false;
       const annotationApi = plugin.annotationApi();
+      const styleApi = plugin.styles();
+
+      const coverageStyle = styleApi.css('background-color: #EF9B9B !important');
+      const emptyStyle = styleApi.css('');
+
       annotationApi.addLayer(context => {
         if (Object.keys(coverageData).length === 0) {
           // Coverage data is not ready yet.
@@ -41,20 +45,23 @@
         const line = context.line;
         // Highlight lines missing coverage with this background color if
         // coverage should be displayed, else do nothing.
-        const cssClass = displayCoverage
-          ? Gerrit.css('background-color: #EF9B9B')
-          : Gerrit.css('');
+        const annotationStyle = displayCoverage
+          ? coverageStyle
+          : emptyStyle;
         if (coverageData[path] &&
               coverageData[path].changeNum === context.changeNum &&
               coverageData[path].patchNum === context.patchNum) {
           const linesMissingCoverage = coverageData[path].linesMissingCoverage;
           if (linesMissingCoverage.includes(line.afterNumber)) {
-            context.annotateRange(0, line.text.length, cssClass, 'right');
+            context.annotateRange(0, line.text.length, annotationStyle, 'right');
+            context.annotateLineNumber(annotationStyle, 'right');
           }
         }
       }).enableToggleCheckbox('Display Coverage', checkbox => {
         // Checkbox is attached so now add the notifier that will be controlled
         // by the checkbox.
+        // Checkbox will only be added to the file diff page, in the top right
+        // section near the "Diff view".
         annotationApi.addNotifier(notifyFunc => {
           new Promise(resolve => setTimeout(resolve, 3000)).then(() => {
             populateWithDummyData(coverageData);

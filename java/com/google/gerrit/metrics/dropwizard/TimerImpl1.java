@@ -14,11 +14,11 @@
 
 package com.google.gerrit.metrics.dropwizard;
 
-import com.google.common.base.Function;
 import com.google.gerrit.metrics.Description;
 import com.google.gerrit.metrics.Field;
 import com.google.gerrit.metrics.Timer1;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
 /** Optimized version of {@link BucketedTimer} for single dimension. */
 class TimerImpl1<F1> extends BucketedTimer implements BucketedMetric {
@@ -26,8 +26,9 @@ class TimerImpl1<F1> extends BucketedTimer implements BucketedMetric {
     super(metrics, name, desc, field1);
   }
 
+  @SuppressWarnings("unchecked")
   Timer1<F1> timer() {
-    return new Timer1<F1>(name) {
+    return new Timer1<F1>(name, (Field<F1>) fields[0]) {
       @Override
       protected void doRecord(F1 field1, long value, TimeUnit unit) {
         total.record(value, unit);

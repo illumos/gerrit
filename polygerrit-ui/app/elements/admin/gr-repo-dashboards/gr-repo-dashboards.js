@@ -17,20 +17,30 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-repo-dashboards',
+  /**
+   * @appliesMixin Gerrit.FireMixin
+   * @extends Polymer.Element
+   */
+  class GrRepoDashboards extends Polymer.mixinBehaviors( [
+    Gerrit.FireBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-repo-dashboards'; }
 
-    properties: {
-      repo: {
-        type: String,
-        observer: '_repoChanged',
-      },
-      _loading: {
-        type: Boolean,
-        value: true,
-      },
-      _dashboards: Array,
-    },
+    static get properties() {
+      return {
+        repo: {
+          type: String,
+          observer: '_repoChanged',
+        },
+        _loading: {
+          type: Boolean,
+          value: true,
+        },
+        _dashboards: Array,
+      };
+    }
 
     _repoChanged(repo) {
       this._loading = true;
@@ -45,7 +55,7 @@
 
         // Group by ref and sort by id.
         const dashboards = res.concat.apply([], res).sort((a, b) =>
-          a.id < b.id ? -1 : 1);
+          (a.id < b.id ? -1 : 1));
         const dashboardsByRef = {};
         dashboards.forEach(d => {
           if (!dashboardsByRef[d.ref]) {
@@ -55,35 +65,38 @@
         });
 
         const dashboardBuilder = [];
-        Object.keys(dashboardsByRef).sort().forEach(ref => {
-          dashboardBuilder.push({
-            section: ref,
-            dashboards: dashboardsByRef[ref],
-          });
-        });
+        Object.keys(dashboardsByRef).sort()
+            .forEach(ref => {
+              dashboardBuilder.push({
+                section: ref,
+                dashboards: dashboardsByRef[ref],
+              });
+            });
 
         this._dashboards = dashboardBuilder;
         this._loading = false;
         Polymer.dom.flush();
       });
-    },
+    }
 
     _getUrl(project, id) {
       if (!project || !id) { return ''; }
 
       return Gerrit.Nav.getUrlForRepoDashboard(project, id);
-    },
+    }
 
     _computeLoadingClass(loading) {
       return loading ? 'loading' : '';
-    },
+    }
 
     _computeInheritedFrom(project, definingProject) {
       return project === definingProject ? '' : definingProject;
-    },
+    }
 
     _computeIsDefault(isDefault) {
       return isDefault ? '✓' : '';
-    },
-  });
+    }
+  }
+
+  customElements.define(GrRepoDashboards.is, GrRepoDashboards);
 })();

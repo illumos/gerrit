@@ -29,6 +29,7 @@
     'cc:',
     'cc:self',
     'change:',
+    'cherrypickof:',
     'comment:',
     'commentby:',
     'commit:',
@@ -36,7 +37,12 @@
     'conflicts:',
     'deleted:',
     'delta:',
+    'dir:',
+    'directory:',
+    'ext:',
+    'extension:',
     'file:',
+    'footer:',
     'from:',
     'has:',
     'has:draft',
@@ -55,7 +61,6 @@
     'is:merged',
     'is:open',
     'is:owner',
-    'is:pending',
     'is:private',
     'is:reviewed',
     'is:reviewer',
@@ -65,6 +70,8 @@
     'is:wip',
     'label:',
     'message:',
+    'onlyexts:',
+    'onlyextensions:',
     'owner:',
     'ownerin:',
     'parentproject:',
@@ -83,8 +90,8 @@
     'status:closed',
     'status:merged',
     'status:open',
-    'status:pending',
     'status:reviewed',
+    'submissionid:',
     'topic:',
     'tr:',
   ];
@@ -97,75 +104,81 @@
 
   const TOKENIZE_REGEX = /(?:[^\s"]+|"[^"]*")+\s*/g;
 
-  Polymer({
-    is: 'gr-search-bar',
-
+  /**
+   * @appliesMixin Gerrit.KeyboardShortcutMixin
+   * @appliesMixin Gerrit.URLEncodingMixin
+   * @extends Polymer.Element
+   */
+  class GrSearchBar extends Polymer.mixinBehaviors( [
+    Gerrit.KeyboardShortcutBehavior,
+    Gerrit.URLEncodingBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-search-bar'; }
     /**
      * Fired when a search is committed
      *
      * @event handle-search
      */
 
-    behaviors: [
-      Gerrit.KeyboardShortcutBehavior,
-      Gerrit.URLEncodingBehavior,
-    ],
-
-    properties: {
-      value: {
-        type: String,
-        value: '',
-        notify: true,
-        observer: '_valueChanged',
-      },
-      keyEventTarget: {
-        type: Object,
-        value() { return document.body; },
-      },
-      query: {
-        type: Function,
-        value() {
-          return this._getSearchSuggestions.bind(this);
+    static get properties() {
+      return {
+        value: {
+          type: String,
+          value: '',
+          notify: true,
+          observer: '_valueChanged',
         },
-      },
-      projectSuggestions: {
-        type: Function,
-        value() {
-          return () => Promise.resolve([]);
+        keyEventTarget: {
+          type: Object,
+          value() { return document.body; },
         },
-      },
-      groupSuggestions: {
-        type: Function,
-        value() {
-          return () => Promise.resolve([]);
+        query: {
+          type: Function,
+          value() {
+            return this._getSearchSuggestions.bind(this);
+          },
         },
-      },
-      accountSuggestions: {
-        type: Function,
-        value() {
-          return () => Promise.resolve([]);
+        projectSuggestions: {
+          type: Function,
+          value() {
+            return () => Promise.resolve([]);
+          },
         },
-      },
-      _inputVal: String,
-      _threshold: {
-        type: Number,
-        value: 1,
-      },
-    },
+        groupSuggestions: {
+          type: Function,
+          value() {
+            return () => Promise.resolve([]);
+          },
+        },
+        accountSuggestions: {
+          type: Function,
+          value() {
+            return () => Promise.resolve([]);
+          },
+        },
+        _inputVal: String,
+        _threshold: {
+          type: Number,
+          value: 1,
+        },
+      };
+    }
 
     keyboardShortcuts() {
       return {
         [this.Shortcut.SEARCH]: '_handleSearch',
       };
-    },
+    }
 
     _valueChanged(value) {
       this._inputVal = value;
-    },
+    }
 
     _handleInputCommit(e) {
       this._preventDefaultAndNavigateToInputVal(e);
-    },
+    }
 
     /**
      * This function is called in a few different cases:
@@ -188,9 +201,7 @@
       const trimmedInput = this._inputVal && this._inputVal.trim();
       if (trimmedInput) {
         const predefinedOpOnlyQuery = SEARCH_OPERATORS_WITH_NEGATIONS.some(
-            op => {
-              return op.endsWith(':') && op === trimmedInput;
-            }
+            op => op.endsWith(':') && op === trimmedInput
         );
         if (predefinedOpOnlyQuery) {
           return;
@@ -199,7 +210,7 @@
           detail: {inputVal: this._inputVal},
         }));
       }
-    },
+    }
 
     /**
      * Determine what array of possible suggestions should be provided
@@ -240,9 +251,9 @@
         default:
           return Promise.resolve(SEARCH_OPERATORS_WITH_NEGATIONS
               .filter(operator => operator.includes(input))
-              .map(operator => ({text: operator})));
+              .map(operator => { return {text: operator}; }));
       }
-    },
+    }
 
     /**
      * Get the sorted, pruned list of suggestions for the current search query.
@@ -286,7 +297,7 @@
                   };
                 });
           });
-    },
+    }
 
     _handleSearch(e) {
       const keyboardEvent = this.getKeyboardEvent(e);
@@ -296,6 +307,8 @@
       e.preventDefault();
       this.$.searchInput.focus();
       this.$.searchInput.selectAll();
-    },
-  });
+    }
+  }
+
+  customElements.define(GrSearchBar.is, GrSearchBar);
 })();

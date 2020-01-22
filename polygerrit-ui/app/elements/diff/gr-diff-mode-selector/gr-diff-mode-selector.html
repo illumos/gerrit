@@ -15,7 +15,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/iron-icon/iron-icon.html">
 <link rel="import" href="../../../styles/shared-styles.html">
 <link rel="import" href="../../shared/gr-button/gr-button.html">
 <link rel="import" href="../../shared/gr-rest-api-interface/gr-rest-api-interface.html">
@@ -41,7 +42,7 @@ limitations under the License.
         has-tooltip
         class$="[[_computeSelectedClass(mode, _VIEW_MODES.SIDE_BY_SIDE)]]"
         title="Side-by-side diff"
-        on-tap="_handleSideBySideTap">
+        on-click="_handleSideBySideTap">
       <iron-icon icon="gr-icons:side-by-side"></iron-icon>
     </gr-button>
     <gr-button
@@ -50,7 +51,7 @@ limitations under the License.
         has-tooltip
         title="Unified diff"
         class$="[[_computeSelectedClass(mode, _VIEW_MODES.UNIFIED)]]"
-        on-tap="_handleUnifiedTap">
+        on-click="_handleUnifiedTap">
       <iron-icon icon="gr-icons:unified"></iron-icon>
     </gr-button>
     <gr-rest-api-interface id="restAPI"></gr-rest-api-interface>

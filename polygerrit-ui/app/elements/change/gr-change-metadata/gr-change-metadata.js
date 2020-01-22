@@ -17,17 +17,6 @@
 (function() {
   'use strict';
 
-  const Defs = {};
-
-  /**
-   * @typedef {{
-   *    message: string,
-   *    icon: string,
-   *    class: string,
-   *  }}
-   */
-  Defs.PushCertificateValidation;
-
   const HASHTAG_ADD_MESSAGE = 'Add Hashtag';
 
   const SubmitTypeLabel = {
@@ -59,111 +48,112 @@
     TRUSTED: 'TRUSTED',
   };
 
-  Polymer({
-    is: 'gr-change-metadata',
-
+  /**
+   * @appliesMixin Gerrit.RESTClientMixin
+   * @extends Polymer.Element
+   */
+  class GrChangeMetadata extends Polymer.mixinBehaviors( [
+    Gerrit.RESTClientBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-change-metadata'; }
     /**
      * Fired when the change topic is changed.
      *
      * @event topic-changed
      */
 
-    properties: {
+    static get properties() {
+      return {
       /** @type {?} */
-      change: Object,
-      labels: {
-        type: Object,
-        notify: true,
-      },
-      account: Object,
-      /** @type {?} */
-      revision: Object,
-      commitInfo: Object,
-      _mutable: {
-        type: Boolean,
-        computed: '_computeIsMutable(account)',
-      },
-      /**
-       * @type {{ note_db_enabled: string }}
-       */
-      serverConfig: Object,
-      parentIsCurrent: Boolean,
-      _notCurrentMessage: {
-        type: String,
-        value: NOT_CURRENT_MESSAGE,
-        readOnly: true,
-      },
-      _topicReadOnly: {
-        type: Boolean,
-        computed: '_computeTopicReadOnly(_mutable, change)',
-      },
-      _hashtagReadOnly: {
-        type: Boolean,
-        computed: '_computeHashtagReadOnly(_mutable, change)',
-      },
-      _showReviewersByState: {
-        type: Boolean,
-        computed: '_computeShowReviewersByState(serverConfig)',
-      },
-      /**
-       * @type {Defs.PushCertificateValidation}
-       */
-      _pushCertificateValidation: {
-        type: Object,
-        computed: '_computePushCertificateValidation(serverConfig, change)',
-      },
-      _showRequirements: {
-        type: Boolean,
-        computed: '_computeShowRequirements(change)',
-      },
-
-      _assignee: Array,
-      _isWip: {
-        type: Boolean,
-        computed: '_computeIsWip(change)',
-      },
-      _newHashtag: String,
-
-      _settingTopic: {
-        type: Boolean,
-        value: false,
-      },
-
-      _currentParents: {
-        type: Array,
-        computed: '_computeParents(change)',
-      },
-
-      /** @type {?} */
-      _CHANGE_ROLE: {
-        type: Object,
-        readOnly: true,
-        value: {
-          OWNER: 'owner',
-          UPLOADER: 'uploader',
-          AUTHOR: 'author',
-          COMMITTER: 'committer',
+        change: Object,
+        labels: {
+          type: Object,
+          notify: true,
         },
-      },
-    },
+        account: Object,
+        /** @type {?} */
+        revision: Object,
+        commitInfo: Object,
+        _mutable: {
+          type: Boolean,
+          computed: '_computeIsMutable(account)',
+        },
+        /** @type {?} */
+        serverConfig: Object,
+        parentIsCurrent: Boolean,
+        _notCurrentMessage: {
+          type: String,
+          value: NOT_CURRENT_MESSAGE,
+          readOnly: true,
+        },
+        _topicReadOnly: {
+          type: Boolean,
+          computed: '_computeTopicReadOnly(_mutable, change)',
+        },
+        _hashtagReadOnly: {
+          type: Boolean,
+          computed: '_computeHashtagReadOnly(_mutable, change)',
+        },
+        /**
+         * @type {Gerrit.PushCertificateValidation}
+         */
+        _pushCertificateValidation: {
+          type: Object,
+          computed: '_computePushCertificateValidation(serverConfig, change)',
+        },
+        _showRequirements: {
+          type: Boolean,
+          computed: '_computeShowRequirements(change)',
+        },
 
-    behaviors: [
-      Gerrit.RESTClientBehavior,
-    ],
+        _assignee: Array,
+        _isWip: {
+          type: Boolean,
+          computed: '_computeIsWip(change)',
+        },
+        _newHashtag: String,
 
-    observers: [
-      '_changeChanged(change)',
-      '_labelsChanged(change.labels)',
-      '_assigneeChanged(_assignee.*)',
-    ],
+        _settingTopic: {
+          type: Boolean,
+          value: false,
+        },
+
+        _currentParents: {
+          type: Array,
+          computed: '_computeParents(change)',
+        },
+
+        /** @type {?} */
+        _CHANGE_ROLE: {
+          type: Object,
+          readOnly: true,
+          value: {
+            OWNER: 'owner',
+            UPLOADER: 'uploader',
+            AUTHOR: 'author',
+            COMMITTER: 'committer',
+          },
+        },
+      };
+    }
+
+    static get observers() {
+      return [
+        '_changeChanged(change)',
+        '_labelsChanged(change.labels)',
+        '_assigneeChanged(_assignee.*)',
+      ];
+    }
 
     _labelsChanged(labels) {
       this.labels = Object.assign({}, labels) || null;
-    },
+    }
 
     _changeChanged(change) {
       this._assignee = change.assignee ? [change.assignee] : [];
-    },
+    }
 
     _assigneeChanged(assigneeRecord) {
       if (!this.change) { return; }
@@ -179,11 +169,11 @@
         this.set(['change', 'assignee'], undefined);
         this.$.restAPI.deleteAssignee(this.change._number);
       }
-    },
+    }
 
     _computeHideStrategy(change) {
-      return !this.changeIsOpen(change.status);
-    },
+      return !this.changeIsOpen(change);
+    }
 
     /**
      * @param {Object} commitInfo
@@ -201,15 +191,15 @@
             config: serverConfig,
           });
       return weblinks.length ? weblinks : null;
-    },
+    }
 
     _computeStrategy(change) {
       return SubmitTypeLabel[change.submit_type];
-    },
+    }
 
     _computeLabelNames(labels) {
       return Object.keys(labels).sort();
-    },
+    }
 
     _handleTopicChanged(e, topic) {
       const lastTopic = this.change.topic;
@@ -220,21 +210,30 @@
             this._settingTopic = false;
             this.set(['change', 'topic'], newTopic);
             if (newTopic !== lastTopic) {
-              this.dispatchEvent(
-                  new CustomEvent('topic-changed', {bubbles: true}));
+              this.dispatchEvent(new CustomEvent(
+                  'topic-changed', {bubbles: true, composed: true}));
             }
           });
-    },
+    }
 
     _showAddTopic(changeRecord, settingTopic) {
-      const hasTopic = !!changeRecord && !!changeRecord.base.topic;
+      const hasTopic = !!changeRecord &&
+          !!changeRecord.base && !!changeRecord.base.topic;
       return !hasTopic && !settingTopic;
-    },
+    }
 
     _showTopicChip(changeRecord, settingTopic) {
-      const hasTopic = !!changeRecord && !!changeRecord.base.topic;
+      const hasTopic = !!changeRecord &&
+          !!changeRecord.base && !!changeRecord.base.topic;
       return hasTopic && !settingTopic;
-    },
+    }
+
+    _showCherryPickOf(changeRecord) {
+      const hasCherryPickOf = !!changeRecord &&
+          !!changeRecord.base && !!changeRecord.base.cherry_pick_of_change &&
+          !!changeRecord.base.cherry_pick_of_patch_set;
+      return hasCherryPickOf;
+    }
 
     _handleHashtagChanged(e) {
       const lastHashtag = this.change.hashtag;
@@ -246,45 +245,45 @@
         this.set(['change', 'hashtags'], newHashtag);
         if (newHashtag !== lastHashtag) {
           this.dispatchEvent(
-              new CustomEvent('hashtag-changed', {bubbles: true}));
+              new CustomEvent('hashtag-changed', {
+                bubbles: true, composed: true}));
         }
       });
-    },
+    }
 
     _computeTopicReadOnly(mutable, change) {
       return !mutable ||
+          !change ||
           !change.actions ||
           !change.actions.topic ||
           !change.actions.topic.enabled;
-    },
+    }
 
     _computeHashtagReadOnly(mutable, change) {
       return !mutable ||
+          !change ||
           !change.actions ||
           !change.actions.hashtags ||
           !change.actions.hashtags.enabled;
-    },
+    }
 
     _computeAssigneeReadOnly(mutable, change) {
       return !mutable ||
+          !change ||
           !change.actions ||
           !change.actions.assignee ||
           !change.actions.assignee.enabled;
-    },
+    }
 
     _computeTopicPlaceholder(_topicReadOnly) {
       // Action items in Material Design are uppercase -- placeholder label text
       // is sentence case.
       return _topicReadOnly ? 'No topic' : 'ADD TOPIC';
-    },
+    }
 
     _computeHashtagPlaceholder(_hashtagReadOnly) {
       return _hashtagReadOnly ? '' : HASHTAG_ADD_MESSAGE;
-    },
-
-    _computeShowReviewersByState(serverConfig) {
-      return !!serverConfig.note_db_enabled;
-    },
+    }
 
     _computeShowRequirements(change) {
       if (change.status !== this.ChangeStatus.NEW) {
@@ -297,14 +296,14 @@
       const hasLabels = !!change.labels &&
           Object.keys(change.labels).length > 0;
       return hasRequirements || hasLabels || !!change.work_in_progress;
-    },
+    }
 
     /**
-     * @return {?Defs.PushCertificateValidation} object representing data for
+     * @return {?Gerrit.PushCertificateValidation} object representing data for
      *     the push validation.
      */
     _computePushCertificateValidation(serverConfig, change) {
-      if (!serverConfig || !serverConfig.receive ||
+      if (!change || !serverConfig || !serverConfig.receive ||
           !serverConfig.receive.enable_signed_push) {
         return null;
       }
@@ -342,7 +341,7 @@
         default:
           throw new Error(`unknown certificate status: ${key.status}`);
       }
-    },
+    }
 
     _problems(msg, key) {
       if (!key || !key.problems || key.problems.length === 0) {
@@ -350,39 +349,47 @@
       }
 
       return [msg + ':'].concat(key.problems).join('\n');
-    },
+    }
 
     _computeProjectURL(project) {
       return Gerrit.Nav.getUrlForProjectChanges(project);
-    },
+    }
 
     _computeBranchURL(project, branch) {
+      if (!this.change || !this.change.status) return '';
       return Gerrit.Nav.getUrlForBranch(branch, project,
           this.change.status == this.ChangeStatus.NEW ? 'open' :
             this.change.status.toLowerCase());
-    },
+    }
+
+    _computeCherryPickOfURL(change, patchset, project) {
+      return Gerrit.Nav.getUrlForChangeById(change, project, patchset);
+    }
 
     _computeTopicURL(topic) {
       return Gerrit.Nav.getUrlForTopic(topic);
-    },
+    }
 
     _computeHashtagURL(hashtag) {
       return Gerrit.Nav.getUrlForHashtag(hashtag);
-    },
+    }
 
     _handleTopicRemoved(e) {
       const target = Polymer.dom(e).rootTarget;
       target.disabled = true;
-      this.$.restAPI.setChangeTopic(this.change._number, null).then(() => {
-        target.disabled = false;
-        this.set(['change', 'topic'], '');
-        this.dispatchEvent(
-            new CustomEvent('topic-changed', {bubbles: true}));
-      }).catch(err => {
-        target.disabled = false;
-        return;
-      });
-    },
+      this.$.restAPI.setChangeTopic(this.change._number, null)
+          .then(() => {
+            target.disabled = false;
+            this.set(['change', 'topic'], '');
+            this.dispatchEvent(
+                new CustomEvent('topic-changed',
+                    {bubbles: true, composed: true}));
+          })
+          .catch(err => {
+            target.disabled = false;
+            return;
+          });
+    }
 
     _handleHashtagRemoved(e) {
       e.preventDefault();
@@ -393,19 +400,20 @@
           .then(newHashtag => {
             target.disabled = false;
             this.set(['change', 'hashtags'], newHashtag);
-          }).catch(err => {
+          })
+          .catch(err => {
             target.disabled = false;
             return;
           });
-    },
+    }
 
     _computeIsWip(change) {
       return !!change.work_in_progress;
-    },
+    }
 
     _computeShowRoleClass(change, role) {
       return this._getNonOwnerRole(change, role) ? '' : 'hideDisplay';
-    },
+    }
 
     /**
      * Get the user with the specified role on the change. Returns null if the
@@ -416,7 +424,7 @@
      * @return {Object|null} either an accound or null.
      */
     _getNonOwnerRole(change, role) {
-      if (!change.current_revision ||
+      if (!change || !change.current_revision ||
           !change.revisions[change.current_revision]) {
         return null;
       }
@@ -443,38 +451,52 @@
       }
 
       return null;
-    },
+    }
 
     _computeParents(change) {
-      if (!change.current_revision ||
+      if (!change || !change.current_revision ||
           !change.revisions[change.current_revision] ||
           !change.revisions[change.current_revision].commit) {
         return undefined;
       }
       return change.revisions[change.current_revision].commit.parents;
-    },
+    }
 
     _computeParentsLabel(parents) {
-      return parents.length > 1 ? 'Parents' : 'Parent';
-    },
+      return parents && parents.length > 1 ? 'Parents' : 'Parent';
+    }
 
     _computeParentListClass(parents, parentIsCurrent) {
+      // Undefined check for polymer 2
+      if (parents === undefined || parentIsCurrent === undefined) {
+        return '';
+      }
+
       return [
         'parentList',
-        parents.length > 1 ? 'merge' : 'nonMerge',
+        parents && parents.length > 1 ? 'merge' : 'nonMerge',
         parentIsCurrent ? 'current' : 'notCurrent',
       ].join(' ');
-    },
+    }
 
     _computeIsMutable(account) {
       return !!Object.keys(account).length;
-    },
+    }
 
     editTopic() {
       if (this._topicReadOnly || this.change.topic) { return; }
       // Cannot use `this.$.ID` syntax because the element exists inside of a
       // dom-if.
       this.$$('.topicEditableLabel').open();
-    },
-  });
+    }
+
+    _getReviewerSuggestionsProvider(change) {
+      const provider = GrReviewerSuggestionsProvider.create(this.$.restAPI,
+          change._number, Gerrit.SUGGESTIONS_PROVIDERS_USERS_TYPES.ANY);
+      provider.init();
+      return provider;
+    }
+  }
+
+  customElements.define(GrChangeMetadata.is, GrChangeMetadata);
 })();

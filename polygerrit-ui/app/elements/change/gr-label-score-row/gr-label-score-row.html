@@ -15,25 +15,27 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
-<link rel="import" href="../../../bower_components/iron-selector/iron-selector.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/iron-selector/iron-selector.html">
 <link rel="import" href="../../shared/gr-button/gr-button.html">
 <link rel="import" href="../../../styles/gr-voting-styles.html">
 <link rel="import" href="../../../styles/shared-styles.html">
 
 <dom-module id="gr-label-score-row">
   <template>
-    <style include="gr-voting-styles"></style>
+    <style include="gr-voting-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <style include="shared-styles">
       .labelContainer {
         align-items: center;
         display: flex;
-        margin-bottom: .5em;
+        margin-bottom: var(--spacing-m);
       }
       .labelName {
         display: inline-block;
         flex: 0 0 auto;
-        margin-right: .5em;
+        margin-right: var(--spacing-m);
         min-width: 7em;
         text-align: left;
         width: 20%;
@@ -47,7 +49,7 @@ limitations under the License.
       .selectedValueText {
         color: var(--deemphasized-text-color);
         font-style: italic;
-        margin: 0 .5em 0 .5em;
+        margin: 0 var(--spacing-m);
       }
       .selectedValueText.hidden {
         display: none;
@@ -60,8 +62,8 @@ limitations under the License.
         --gr-button: {
           background-color: var(--button-background-color, var(--table-header-background-color));
           color: var(--primary-text-color);
-          padding: .2em .85em;
-          @apply(--vote-chip-styles);
+          padding: var(--spacing-xs) var(--spacing-m);
+          @apply --vote-chip-styles;
         }
       }
       gr-button.iron-selected.max {
@@ -108,7 +110,8 @@ limitations under the License.
           <span class="placeholder" data-label$="[[label.name]]"></span>
         </template>
         <iron-selector
-            attr-for-selected="value"
+            id="labelSelector"
+            attr-for-selected="data-value"
             selected="[[_computeLabelValue(labels, permittedLabels, label)]]"
             hidden$="[[!_computeAnyPermittedLabelValues(permittedLabels, label.name)]]"
             on-selected-item-changed="_setSelectedValueText">
@@ -118,8 +121,8 @@ limitations under the License.
             <gr-button
                 class$="[[_computeButtonClass(value, index, _items.length)]]"
                 has-tooltip
-                name="[[label.name]]"
-                value$="[[value]]"
+                data-name$="[[label.name]]"
+                data-value$="[[value]]"
                 title$="[[_computeLabelValueTitle(labels, label.name, value)]]">
               [[value]]</gr-button>
           </template>

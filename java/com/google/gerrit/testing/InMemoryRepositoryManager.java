@@ -16,7 +16,7 @@ package com.google.gerrit.testing;
 
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Sets;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.RepositoryCaseMismatchException;
 import com.google.inject.Inject;
@@ -103,7 +103,7 @@ public class InMemoryRepositoryManager implements GitRepositoryManager {
   public synchronized SortedSet<Project.NameKey> list() {
     SortedSet<Project.NameKey> names = Sets.newTreeSet();
     for (DfsRepository repo : repos.values()) {
-      names.add(new Project.NameKey(repo.getDescription().getRepositoryName()));
+      names.add(Project.nameKey(repo.getDescription().getRepositoryName()));
     }
     return ImmutableSortedSet.copyOf(names);
   }

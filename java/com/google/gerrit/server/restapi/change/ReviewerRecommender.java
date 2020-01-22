@@ -14,7 +14,6 @@
 
 package com.google.gerrit.server.restapi.change;
 
-import static com.google.gerrit.server.notedb.ReviewerStateInternal.REVIEWER;
 import static java.util.stream.Collectors.toList;
 
 import com.google.common.base.Strings;
@@ -22,36 +21,34 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.common.data.LabelType;
-import com.google.gerrit.index.query.Predicate;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.index.query.QueryParseException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.PatchSetApproval;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.FanOutExecutor;
+import com.google.gerrit.server.account.AccountCache;
+import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.change.ReviewerSuggestion;
 import com.google.gerrit.server.change.SuggestedReviewer;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.index.change.ChangeField;
 import com.google.gerrit.server.notedb.ChangeNotes;
+import com.google.gerrit.server.notedb.ReviewerStateInternal;
 import com.google.gerrit.server.plugincontext.PluginMapContext;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.ChangeQueryBuilder;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -66,13 +63,6 @@ import org.eclipse.jgit.lib.Config;
 public class ReviewerRecommender {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
-  private static final double BASE_REVIEWER_WEIGHT = 10;
-  private static final double BASE_OWNER_WEIGHT = 1;
-  private static final double BASE_COMMENT_WEIGHT = 0.5;
-  private static final double[] WEIGHTS =
-      new double[] {
-        BASE_REVIEWER_WEIGHT, BASE_OWNER_WEIGHT, BASE_COMMENT_WEIGHT,
-      };
   private static final long PLUGIN_QUERY_TIMEOUT = 500; // ms
 
   private final ChangeQueryBuilder changeQueryBuilder;
@@ -80,8 +70,8 @@ public class ReviewerRecommender {
   private final PluginMapContext<ReviewerSuggestion> reviewerSuggestionPluginMap;
   private final Provider<InternalChangeQuery> queryProvider;
   private final ExecutorService executor;
-  private final Provider<ReviewDb> dbProvider;
   private final ApprovalsUtil approvalsUtil;
+  private final AccountCache accountCache;
 
   @Inject
   ReviewerRecommender(
@@ -89,24 +79,25 @@ public class ReviewerRecommender {
       PluginMapContext<ReviewerSuggestion> reviewerSuggestionPluginMap,
       Provider<InternalChangeQuery> queryProvider,
       @FanOutExecutor ExecutorService executor,
-      Provider<ReviewDb> dbProvider,
       ApprovalsUtil approvalsUtil,
-      @GerritServerConfig Config config) {
+      @GerritServerConfig Config config,
+      AccountCache accountCache) {
     this.changeQueryBuilder = changeQueryBuilder;
     this.config = config;
     this.queryProvider = queryProvider;
     this.reviewerSuggestionPluginMap = reviewerSuggestionPluginMap;
     this.executor = executor;
-    this.dbProvider = dbProvider;
     this.approvalsUtil = approvalsUtil;
+    this.accountCache = accountCache;
   }
 
   public List<Account.Id> suggestReviewers(
+      ReviewerState reviewerState,
       @Nullable ChangeNotes changeNotes,
       SuggestReviewers suggestReviewers,
       ProjectState projectState,
       List<Account.Id> candidateList)
-      throws OrmException, IOException, ConfigInvalidException {
+      throws IOException, ConfigInvalidException {
     logger.atFine().log("Candidates %s", candidateList);
 
     String query = suggestReviewers.getQuery();
@@ -115,12 +106,7 @@ public class ReviewerRecommender {
     double baseWeight = config.getInt("addReviewer", "baseWeight", 1);
     logger.atFine().log("base weight: %s", baseWeight);
 
-    Map<Account.Id, MutableDouble> reviewerScores;
-    if (Strings.isNullOrEmpty(query)) {
-      reviewerScores = baseRankingForEmptyQuery(baseWeight);
-    } else {
-      reviewerScores = baseRankingForCandidateList(candidateList, projectState, baseWeight);
-    }
+    Map<Account.Id, MutableDouble> reviewerScores = baseRanking(baseWeight, query, candidateList);
     logger.atFine().log("Base reviewer scores: %s", reviewerScores);
 
     // Send the query along with a candidate list to all plugins and merge the
@@ -183,8 +169,8 @@ public class ReviewerRecommender {
 
       // Remove existing reviewers
       approvalsUtil
-          .getReviewers(dbProvider.get(), changeNotes)
-          .byState(REVIEWER)
+          .getReviewers(changeNotes)
+          .byState(ReviewerStateInternal.fromReviewerState(reviewerState))
           .forEach(
               r -> {
                 if (reviewerScores.remove(r) != null) {
@@ -194,7 +180,7 @@ public class ReviewerRecommender {
     }
 
     // Sort results
-    Stream<Entry<Account.Id, MutableDouble>> sorted =
+    Stream<Map.Entry<Account.Id, MutableDouble>> sorted =
         reviewerScores.entrySet().stream()
             .sorted(Collections.reverseOrder(Map.Entry.comparingByValue()));
     List<Account.Id> sortedSuggestions = sorted.map(Map.Entry::getKey).collect(toList());
@@ -202,24 +188,38 @@ public class ReviewerRecommender {
     return sortedSuggestions;
   }
 
-  private Map<Account.Id, MutableDouble> baseRankingForEmptyQuery(double baseWeight)
-      throws OrmException, IOException, ConfigInvalidException {
-    // Get the user's last 25 changes, check approvals
+  /**
+   * @param baseWeight The weight applied to the ordering of the reviewers.
+   * @param query Query to match. For example, it can try to match all users that start with "Ab".
+   * @param candidateList The list of candidates based on the query. If query is empty, this list is
+   *     also empty.
+   * @return Map of account ids that match the query and their appropriate ranking (the better the
+   *     ranking, the better it is to suggest them as reviewers).
+   * @throws IOException Can't find owner="self" account.
+   * @throws ConfigInvalidException Can't find owner="self" account.
+   */
+  private Map<Account.Id, MutableDouble> baseRanking(
+      double baseWeight, String query, List<Account.Id> candidateList)
+      throws IOException, ConfigInvalidException {
+    int numberOfRelevantChanges = config.getInt("suggest", "relevantChanges", 50);
+    // Get the user's last 25 changes, check reviewers
     try {
       List<ChangeData> result =
           queryProvider
               .get()
-              .setLimit(25)
-              .setRequestedFields(ChangeField.APPROVAL)
+              .setLimit(numberOfRelevantChanges)
+              .setRequestedFields(ChangeField.REVIEWER)
               .query(changeQueryBuilder.owner("self"));
-      Map<Account.Id, MutableDouble> suggestions = new HashMap<>();
+      Map<Account.Id, MutableDouble> suggestions = new LinkedHashMap<>();
+      // Put those candidates at the bottom of the list
+      candidateList.stream().forEach(id -> suggestions.put(id, new MutableDouble(0)));
+
       for (ChangeData cd : result) {
-        for (PatchSetApproval approval : cd.currentApprovals()) {
-          Account.Id id = approval.getAccountId();
-          if (suggestions.containsKey(id)) {
-            suggestions.get(id).add(baseWeight);
-          } else {
-            suggestions.put(id, new MutableDouble(baseWeight));
+        for (Account.Id reviewer : cd.reviewers().all()) {
+          if (Strings.isNullOrEmpty(query) || accountMatchesQuery(reviewer, query)) {
+            suggestions
+                .computeIfAbsent(reviewer, (ignored) -> new MutableDouble(0))
+                .add(baseWeight);
           }
         }
       }
@@ -231,63 +231,15 @@ public class ReviewerRecommender {
     }
   }
 
-  private Map<Account.Id, MutableDouble> baseRankingForCandidateList(
-      List<Account.Id> candidates, ProjectState projectState, double baseWeight)
-      throws OrmException, IOException, ConfigInvalidException {
-    // Get each reviewer's activity based on number of applied labels
-    // (weighted 10d), number of comments (weighted 0.5d) and number of owned
-    // changes (weighted 1d).
-    Map<Account.Id, MutableDouble> reviewers = new LinkedHashMap<>();
-    if (candidates.size() == 0) {
-      return reviewers;
-    }
-    List<Predicate<ChangeData>> predicates = new ArrayList<>();
-    for (Account.Id id : candidates) {
-      try {
-        Predicate<ChangeData> projectQuery = changeQueryBuilder.project(projectState.getName());
-
-        // Get all labels for this project and create a compound OR query to
-        // fetch all changes where users have applied one of these labels
-        List<LabelType> labelTypes = projectState.getLabelTypes().getLabelTypes();
-        List<Predicate<ChangeData>> labelPredicates = new ArrayList<>(labelTypes.size());
-        for (LabelType type : labelTypes) {
-          labelPredicates.add(changeQueryBuilder.label(type.getName() + ",user=" + id));
-        }
-        Predicate<ChangeData> reviewerQuery =
-            Predicate.and(projectQuery, Predicate.or(labelPredicates));
-
-        Predicate<ChangeData> ownerQuery =
-            Predicate.and(projectQuery, changeQueryBuilder.owner(id.toString()));
-        Predicate<ChangeData> commentedByQuery =
-            Predicate.and(projectQuery, changeQueryBuilder.commentby(id.toString()));
-
-        predicates.add(reviewerQuery);
-        predicates.add(ownerQuery);
-        predicates.add(commentedByQuery);
-        reviewers.put(id, new MutableDouble());
-      } catch (QueryParseException e) {
-        // Unhandled: If an exception is thrown, we won't increase the
-        // candidates's score
-        logger.atSevere().withCause(e).log("Exception while suggesting reviewers");
+  private boolean accountMatchesQuery(Account.Id id, String query) {
+    Optional<Account> account = accountCache.get(id).map(AccountState::account);
+    if (account.isPresent() && account.get().isActive()) {
+      if ((account.get().fullName() != null && account.get().fullName().startsWith(query))
+          || (account.get().preferredEmail() != null
+              && account.get().preferredEmail().startsWith(query))) {
+        return true;
       }
     }
-
-    List<List<ChangeData>> result = queryProvider.get().setLimit(25).noFields().query(predicates);
-
-    Iterator<List<ChangeData>> queryResultIterator = result.iterator();
-    Iterator<Account.Id> reviewersIterator = reviewers.keySet().iterator();
-
-    int i = 0;
-    Account.Id currentId = null;
-    while (queryResultIterator.hasNext()) {
-      List<ChangeData> currentResult = queryResultIterator.next();
-      if (i % WEIGHTS.length == 0) {
-        currentId = reviewersIterator.next();
-      }
-
-      reviewers.get(currentId).add(WEIGHTS[i % WEIGHTS.length] * baseWeight * currentResult.size());
-      i++;
-    }
-    return reviewers;
+    return false;
   }
 }

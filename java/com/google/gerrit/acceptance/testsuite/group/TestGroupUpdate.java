@@ -18,8 +18,8 @@ import com.google.auto.value.AutoValue;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 import com.google.gerrit.acceptance.testsuite.ThrowingConsumer;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
@@ -126,9 +126,9 @@ public abstract class TestGroupUpdate {
     abstract TestGroupUpdate autoBuild();
 
     /** Executes the group update as specified. */
-    public void update() throws Exception {
+    public void update() {
       TestGroupUpdate groupUpdater = autoBuild();
-      groupUpdater.groupUpdater().accept(groupUpdater);
+      groupUpdater.groupUpdater().acceptAndThrowSilently(groupUpdater);
     }
   }
 }

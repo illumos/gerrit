@@ -1,3 +1,4 @@
+:linkattrs:
 = Gerrit Code Review - /accounts/ REST API
 
 This page describes the account related REST endpoints.
@@ -57,8 +58,8 @@ generally disabled by default. Optional fields are:
 
 [[details]]
 --
-* `DETAILS`: Includes full name, preferred email, username and avatars
-for each account.
+* `DETAILS`: Includes full name, preferred email, username, avatars,
+status and state for each account.
 --
 
 [[all-emails]]
@@ -1250,14 +1251,10 @@ any account.
   )]}'
   {
     "changes_per_page": 25,
-    "show_site_header": true,
-    "use_flash_clipboard": true,
-    "download_command": "CHECKOUT",
     "date_format": "STD",
     "time_format": "HHMM_12",
     "diff_view": "SIDE_BY_SIDE",
     "size_bar_in_change_table": true,
-    "review_category_strategy": "ABBREV",
     "mute_common_path_prefixes": true,
     "publish_comments_on_push": true,
     "work_in_progress_by_default": true,
@@ -1306,14 +1303,10 @@ link:#preferences-input[PreferencesInput] entity.
 
   {
     "changes_per_page": 50,
-    "show_site_header": true,
-    "use_flash_clipboard": true,
     "expand_inline_diffs": true,
-    "download_command": "CHECKOUT",
     "date_format": "STD",
     "time_format": "HHMM_12",
     "size_bar_in_change_table": true,
-    "review_category_strategy": "NAME",
     "diff_view": "SIDE_BY_SIDE",
     "mute_common_path_prefixes": true,
     "my": [
@@ -1357,14 +1350,10 @@ link:#preferences-info[PreferencesInfo] entity.
   )]}'
   {
     "changes_per_page": 50,
-    "show_site_header": true,
-    "use_flash_clipboard": true,
     "expand_inline_diffs": true,
-    "download_command": "CHECKOUT",
     "date_format": "STD",
     "time_format": "HHMM_12",
     "size_bar_in_change_table": true,
-    "review_category_strategy": "NAME",
     "diff_view": "SIDE_BY_SIDE",
     "publish_comments_on_push": true,
     "work_in_progress_by_default": true,
@@ -1423,7 +1412,6 @@ link:#diff-preferences-info[DiffPreferencesInfo] entity.
   )]}'
   {
     "context": 10,
-    "theme": "DEFAULT",
     "ignore_whitespace": "IGNORE_ALL",
     "intraline_difference": true,
     "line_length": 100,
@@ -1454,7 +1442,6 @@ link:#diff-preferences-input[DiffPreferencesInput] entity.
 
   {
     "context": 10,
-    "theme": "ECLIPSE",
     "ignore_whitespace": "IGNORE_ALL",
     "intraline_difference": true,
     "line_length": 100,
@@ -1480,7 +1467,6 @@ link:#diff-preferences-info[DiffPreferencesInfo] entity.
   )]}'
   {
     "context": 10,
-    "theme": "ECLIPSE",
     "ignore_whitespace": "IGNORE_ALL",
     "intraline_difference": true,
     "line_length": 100,
@@ -1517,8 +1503,6 @@ link:#edit-preferences-info[EditPreferencesInfo] entity.
 
   )]}'
   {
-    "theme": "ECLIPSE",
-    "key_map_type": "VIM",
     "tab_size": 4,
     "line_length": 80,
     "indent_unit": 2,
@@ -1550,8 +1534,6 @@ link:#edit-preferences-info[EditPreferencesInfo] entity.
   Content-Type: application/json;charset=UTF-8
 
   {
-    "theme": "ECLIPSE",
-    "key_map_type": "VIM",
     "tab_size": 4,
     "line_length": 80,
     "indent_unit": 2,
@@ -1578,8 +1560,6 @@ link:#edit-preferences-info[EditPreferencesInfo] entity.
 
   )]}'
   {
-    "theme": "ECLIPSE",
-    "key_map_type": "VIM",
     "tab_size": 4,
     "line_length": 80,
     "cursor_blink_rate": 530,
@@ -2143,12 +2123,37 @@ Identifier that uniquely identifies one account.
 
 This can be:
 
+* `self` or `me` for the calling user
+* a bare account ID ("18419")
+* an account ID following a name in parentheses ("Full Name (18419)")
 * a string of the format "Full Name <email@example.com>"
 * just the email address ("email@example")
-* a full name if it is unique ("Full Name")
-* an account ID ("18419")
+* a full name ("Full Name")
 * a user name ("username")
-* `self` for the calling user
+
+In all cases, accounts that are not
+link:config-gerrit.html#accounts.visibility[visible] to the calling user are not
+considered.
+
+In all cases _except_ a bare account ID and `self`/`me`, inactive accounts are
+not considered. Inactive accounts should only be referenced by bare ID.
+
+If the input is a bare account ID, this will always resolve to exactly
+one account if there is a visible account with that ID, and zero accounts
+otherwise. (This is true even in corner cases like a user having a full name
+which is exactly a numeric account ID belonging to a different user; such a user
+cannot be identified by this number.)
+
+If the identifier is ambiguous or only refers to inactive accounts, the error
+message from the API should contain a human-readable description of how to
+disambiguate the request.
+
+*Note*: Except as noted above, callers should not rely on the particular
+priorities of any of the identifiers in the account resolution algorithm. Any
+other formats may be subject to future deprecation. If callers require specific
+searching semantics, they should use the link:#query-account[Query Account]
+endpoint to resolve a string to one or more accounts, then access the API using
+the account ID.
 
 [[capability-id]]
 === \{capability-id\}
@@ -2184,7 +2189,7 @@ The `AccountDetailInfo` entity contains detailed information about an
 account.
 
 `AccountDetailInfo` has the same fields as link:#account-info[
-AccountInfo]. In addition `AccountDetailInfo` has the following fields:
+AccountInfo]. In addition `AccountDetailInfo` has the following field:
 
 [options="header",cols="1,^1,5"]
 |=================================
@@ -2192,8 +2197,6 @@ AccountInfo]. In addition `AccountDetailInfo` has the following fields:
 |`registered_on`     ||
 The link:rest-api.html#timestamp[timestamp] of when the account was
 registered.
-|`inactive`          |not set if `false`|
-Whether the account is inactive.
 |=================================
 
 [[account-external-id-info]]
@@ -2244,9 +2247,14 @@ Only set if detailed account information is requested. +
 See option link:rest-api-changes.html#detailed-accounts[
 DETAILED_ACCOUNTS] for change queries +
 and option link:#details[DETAILS] for account queries.
+|`avatars`         |optional|List of link:#avatar-info[AvatarInfo] +
+entities that provide information about avatar images of the account.
 |`_more_accounts`  |optional, not set if `false`|
 Whether the query would deliver more results if not limited. +
 Only set on the last account that is returned.
+|`status`          |optional|Status message of the account.
+|`inactive`        |not set if `false`|
+Whether the account is inactive.
 |===============================
 
 [[account-input]]
@@ -2291,6 +2299,19 @@ for an account.
 |`status`   |optional|The new status of the account. +
 If not set or if set to an empty string, the account status is deleted.
 |=============================
+
+[[avatar-info]]
+=== AvatarInfo
+The `AccountInfo` entity contains information about an avatar image of
+an account.
+
+[options="header",cols="1,6"]
+|======================
+|Field Name|Description
+|`url`     |The URL to the avatar image.
+|`height`  |The height of the avatar image in pixels.
+|`width`   |The width of the avatar image in pixels.
+|======================
 
 [[capability-info]]
 === CapabilityInfo
@@ -2359,13 +2380,18 @@ link:access-control.html#capability_viewQueue[View Queue] capability.
 The `ContributorAgreementInfo` entity contains information about a
 contributor agreement.
 
-[options="header",cols="1,6"]
-|=================================
-|Field Name                 |Description
-|`name`                     |The name of the agreement.
-|`description`              |The description of the agreement.
-|`url`                      |The URL of the agreement.
-|=================================
+[options="header",cols="1,^1,5"]
+|================================
+|Field Name         ||Description
+|`name`             ||The unique name of the contributor agreement.
+|`description`      ||The description of the contributor agreement.
+|`url`              ||The URL of the contributor agreement.
+|`auto_verify_group`|optional|
+The group to which a user that signs the contributor agreement online
+is added automatically as a link:rest-api-groups.html#group-info[
+GroupInfo] entity. If not set, users cannot sign the contributor
+agreement online.
+|================================
 
 [[contributor-agreement-input]]
 === ContributorAgreementInput
@@ -2419,9 +2445,6 @@ preferences of a user.
 |Field Name                    ||Description
 |`context`                     ||
 The number of lines of context when viewing a patch.
-|`theme`                       ||
-The CodeMirror theme name in upper case, for example `DEFAULT`. All the themes
-from the CodeMirror release that Gerrit is using are available.
 |`expand_all_comments`         |not set if `false`|
 Whether all inline comments should be automatically expanded.
 |`ignore_whitespace`           ||
@@ -2543,12 +2566,6 @@ preferences of a user.
 [options="header",cols="1,^1,5"]
 |===========================================
 |Field Name                    ||Description
-|`theme`                       ||
-The CodeMirror theme name in upper case, for example `DEFAULT`. All the themes
-from the CodeMirror release that Gerrit is using are available.
-|`key_map_type`                ||
-The CodeMirror key map. Currently only a subset of key maps are
-supported: `DEFAULT`, `EMACS`, `SUBLIME`, `VIM`.
 |`tab_size`                    ||
 Number of spaces that should be used to display one tab.
 |`line_length`                 ||
@@ -2629,7 +2646,7 @@ The `GpgKeyInfo` entity contains information about a GPG public key.
 |`id`         |Not set in map context|The 8-char hex GPG key ID.
 |`fingerprint`|Not set for deleted keys|The 40-char (plus spaces) hex GPG key fingerprint.
 |`user_ids`   |Not set for deleted keys|
-link:https://tools.ietf.org/html/rfc4880#section-5.11[OpenPGP User IDs]
+link:https://tools.ietf.org/html/rfc4880#section-5.11[OpenPGP User IDs,role=external,window=_blank]
 associated with the public key.
 |`key`        |Not set for deleted keys|ASCII armored public key material.
 |`status`     |Not set for deleted keys|
@@ -2697,10 +2714,6 @@ The `PreferencesInfo` entity contains information about a user's preferences.
 |`changes_per_page`             ||
 The number of changes to show on each page.
 Allowed values are `10`, `25`, `50`, `100`.
-|`show_site_header`             |not set if `false`|
-Whether the site header should be shown.
-|`use_flash_clipboard`          |not set if `false`|
-Whether to use the flash clipboard widget.
 |`expand_inline_diffs`          |not set if `false`|
 Whether to expand diffs inline instead of opening as separate page
 (PolyGerrit only).
@@ -2708,8 +2721,6 @@ Whether to expand diffs inline instead of opening as separate page
 The type of download URL the user prefers to use. May be any key from
 the `schemes` map in
 link:rest-api-config.html#download-info[DownloadInfo].
-|`download_command`             ||
-The type of download command the user prefers to use.
 |`date_format`                  ||
 The format to display the date in.
 Allowed values are `STD`, `US`, `ISO`, `EURO`, `UK`.
@@ -2725,9 +2736,6 @@ Allowed values are `SIDE_BY_SIDE`, `UNIFIED_DIFF`.
 Whether to show the change sizes as colored bars in the change table.
 |`legacycid_in_change_table`    |not set if `false`|
 Whether to show change number in the change table.
-|`review_category_strategy`     ||
-The strategy used to displayed info in the review category column.
-Allowed values are `NONE`, `NAME`, `EMAIL`, `USERNAME`, `ABBREV`.
 |`mute_common_path_prefixes`    |not set if `false`|
 Whether to mute common path prefixes in file names in the file table.
 |`signed_off_by`                |not set if `false`|
@@ -2739,9 +2747,6 @@ link:rest-api-config.html#top-menu-item-info[TopMenuItemInfo] entities.
 |`change_table`                           ||
 The columns to display in the change table (PolyGerrit only). The default is
 empty, which will default columns as determined by the frontend.
-|`url_aliases`                  |optional|
-A map of URL path pairs, where the first URL path is an alias for the
-second URL path.
 |`email_strategy`               ||
 The type of email strategy to use. On `ENABLED`, the user will receive emails
 from Gerrit. On `CC_ON_OWN_COMMENTS` the user will also receive emails for
@@ -2771,17 +2776,11 @@ user preferences. Fields which are not set will not be updated.
 |`changes_per_page`             |optional|
 The number of changes to show on each page.
 Allowed values are `10`, `25`, `50`, `100`.
-|`show_site_header`             |optional|
-Whether the site header should be shown.
-|`use_flash_clipboard`          |optional|
-Whether to use the flash clipboard widget.
 |`expand_inline_diffs`          |not set if `false`|
 Whether to expand diffs inline instead of opening as separate page
 (PolyGerrit only).
 |`download_scheme`              |optional|
 The type of download URL the user prefers to use.
-|`download_command`             |optional|
-The type of download command the user prefers to use.
 |`date_format`                  |optional|
 The format to display the date in.
 Allowed values are `STD`, `US`, `ISO`, `EURO`, `UK`.
@@ -2797,9 +2796,6 @@ Allowed values are `SIDE_BY_SIDE`, `UNIFIED_DIFF`.
 Whether to show the change sizes as colored bars in the change table.
 |`legacycid_in_change_table`    |optional|
 Whether to show change number in the change table.
-|`review_category_strategy`     |optional|
-The strategy used to displayed info in the review category column.
-Allowed values are `NONE`, `NAME`, `EMAIL`, `USERNAME`, `ABBREV`.
 |`mute_common_path_prefixes`    |optional|
 Whether to mute common path prefixes in file names in the file table.
 |`signed_off_by`                |optional|
@@ -2811,9 +2807,6 @@ link:rest-api-config.html#top-menu-item-info[TopMenuItemInfo] entities.
 |`change_table`                           ||
 The columns to display in the change table (PolyGerrit only). The default is
 empty, which will default columns as determined by the frontend.
-|`url_aliases`                  |optional|
-A map of URL path pairs, where the first URL path is an alias for the
-second URL path.
 |`email_strategy`               |optional|
 The type of email strategy to use. On `ENABLED`, the user will receive emails
 from Gerrit. On `CC_ON_OWN_COMMENTS` the user will also receive emails for

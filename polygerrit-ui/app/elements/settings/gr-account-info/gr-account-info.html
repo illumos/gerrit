@@ -15,8 +15,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/iron-input/iron-input.html">
 
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../shared/gr-avatar/gr-avatar.html">
 <link rel="import" href="../../shared/gr-date-formatter/gr-date-formatter.html">
 <link rel="import" href="../../shared/gr-rest-api-interface/gr-rest-api-interface.html">
@@ -31,14 +33,16 @@ limitations under the License.
       gr-avatar {
         height: 120px;
         width: 120px;
-        margin-right: .15em;
+        margin-right: var(--spacing-xs);
         vertical-align: -.25em;
       }
-      .hide {
+      div section.hide {
         display: none;
       }
     </style>
-    <style include="gr-form-styles"></style>
+    <style include="gr-form-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <div class="gr-form-styles">
       <section>
         <span class="title"></span>
@@ -79,12 +83,16 @@ limitations under the License.
         <span
             hidden$="[[!usernameMutable]]"
             class="value">
-          <input
-              is="iron-input"
-              id="usernameInput"
-              disabled="[[_saving]]"
+          <iron-input
               on-keydown="_handleKeydown"
               bind-value="{{_username}}">
+            <input
+                is="iron-input"
+                id="usernameInput"
+                disabled="[[_saving]]"
+                on-keydown="_handleKeydown"
+                bind-value="{{_username}}">
+          </iron-input>
         </span>
       </section>
       <section id="nameSection">
@@ -95,24 +103,32 @@ limitations under the License.
         <span
             hidden$="[[!nameMutable]]"
             class="value">
-          <input
-              is="iron-input"
-              id="nameInput"
-              disabled="[[_saving]]"
+          <iron-input
               on-keydown="_handleKeydown"
               bind-value="{{_account.name}}">
+            <input
+                is="iron-input"
+                id="nameInput"
+                disabled="[[_saving]]"
+                on-keydown="_handleKeydown"
+                bind-value="{{_account.name}}">
+          </iron-input>
         </span>
       </section>
       <section>
         <span class="title">Status (e.g. "Vacation")</span>
         <span class="value">
-          <input
-              is="iron-input"
-              id="statusInput"
-              disabled="[[_saving]]"
+          <iron-input
               on-keydown="_handleKeydown"
               bind-value="{{_account.status}}">
-          </span>
+            <input
+                is="iron-input"
+                id="statusInput"
+                disabled="[[_saving]]"
+                on-keydown="_handleKeydown"
+                bind-value="{{_account.status}}">
+          </iron-input>
+        </span>
       </section>
     </div>
     <gr-rest-api-interface id="restAPI"></gr-rest-api-interface>

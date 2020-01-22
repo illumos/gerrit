@@ -14,10 +14,13 @@
 
 package com.google.gerrit.elasticsearch;
 
+import com.google.common.collect.ImmutableSet;
 import com.google.gerrit.elasticsearch.ElasticMapping.MappingProperties;
 import com.google.gerrit.elasticsearch.bulk.BulkRequest;
 import com.google.gerrit.elasticsearch.bulk.IndexRequest;
 import com.google.gerrit.elasticsearch.bulk.UpdateRequest;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.index.QueryOptions;
 import com.google.gerrit.index.Schema;
 import com.google.gerrit.index.project.ProjectData;
@@ -26,7 +29,6 @@ import com.google.gerrit.index.project.ProjectIndex;
 import com.google.gerrit.index.query.DataSource;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryParseException;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.config.SitePaths;
 import com.google.gerrit.server.index.IndexUtils;
 import com.google.gerrit.server.project.ProjectCache;
@@ -36,7 +38,6 @@ import com.google.gson.JsonObject;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.assistedinject.Assisted;
-import java.io.IOException;
 import java.util.Set;
 import org.apache.http.HttpStatus;
 import org.elasticsearch.client.Response;
@@ -71,16 +72,16 @@ public class ElasticProjectIndex extends AbstractElasticIndex<Project.NameKey, P
   }
 
   @Override
-  public void replace(ProjectData projectState) throws IOException {
+  public void replace(ProjectData projectState) {
     BulkRequest bulk =
         new IndexRequest(projectState.getProject().getName(), indexName, type, client.adapter())
-            .add(new UpdateRequest<>(schema, projectState));
+            .add(new UpdateRequest<>(schema, projectState, ImmutableSet.of()));
 
     String uri = getURI(type, BULK);
     Response response = postRequest(uri, bulk, getRefreshParam());
     int statusCode = response.getStatusLine().getStatusCode();
     if (statusCode != HttpStatus.SC_OK) {
-      throw new IOException(
+      throw new StorageException(
           String.format(
               "Failed to replace project %s in index %s: %s",
               projectState.getProject().getName(), indexName, statusCode));
@@ -117,8 +118,7 @@ public class ElasticProjectIndex extends AbstractElasticIndex<Project.NameKey, P
     }
 
     Project.NameKey nameKey =
-        new Project.NameKey(
-            source.getAsJsonObject().get(ProjectField.NAME.getName()).getAsString());
+        Project.nameKey(source.getAsJsonObject().get(ProjectField.NAME.getName()).getAsString());
     return projectCache.get().get(nameKey).toProjectData();
   }
 }

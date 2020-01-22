@@ -20,7 +20,6 @@ import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.server.change.AccountPatchReviewStore;
 import com.google.gerrit.server.change.FileResource;
 import com.google.gerrit.server.plugincontext.PluginItemContext;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 
@@ -36,16 +35,15 @@ public class Reviewed {
     }
 
     @Override
-    public Response<String> apply(FileResource resource, Input input) throws OrmException {
+    public Response<String> apply(FileResource resource, Input input) {
       boolean reviewFlagUpdated =
           accountPatchReviewStore.call(
               s ->
                   s.markReviewed(
-                      resource.getPatchKey().getParentKey(),
+                      resource.getPatchKey().patchSetId(),
                       resource.getAccountId(),
-                      resource.getPatchKey().getFileName()),
-              OrmException.class);
-      return reviewFlagUpdated ? Response.created("") : Response.ok("");
+                      resource.getPatchKey().fileName()));
+      return reviewFlagUpdated ? Response.created() : Response.ok();
     }
   }
 
@@ -59,14 +57,13 @@ public class Reviewed {
     }
 
     @Override
-    public Response<?> apply(FileResource resource, Input input) throws OrmException {
+    public Response<?> apply(FileResource resource, Input input) {
       accountPatchReviewStore.run(
           s ->
               s.clearReviewed(
-                  resource.getPatchKey().getParentKey(),
+                  resource.getPatchKey().patchSetId(),
                   resource.getAccountId(),
-                  resource.getPatchKey().getFileName()),
-          OrmException.class);
+                  resource.getPatchKey().fileName()));
       return Response.none();
     }
   }

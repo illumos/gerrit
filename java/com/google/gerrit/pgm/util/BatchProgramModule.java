@@ -19,13 +19,13 @@ import static com.google.inject.Scopes.SINGLETON;
 import com.google.common.cache.Cache;
 import com.google.common.collect.ImmutableSet;
 import com.google.gerrit.common.data.GroupReference;
+import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.extensions.api.projects.CommentLinkInfo;
 import com.google.gerrit.extensions.common.AccountVisibility;
 import com.google.gerrit.extensions.config.FactoryModule;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.registration.DynamicSet;
 import com.google.gerrit.extensions.restapi.RestView;
-import com.google.gerrit.reviewdb.client.AccountGroup;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.AccountCacheImpl;
@@ -39,6 +39,7 @@ import com.google.gerrit.server.account.externalids.ExternalIdModule;
 import com.google.gerrit.server.cache.CacheRemovalListener;
 import com.google.gerrit.server.cache.h2.H2CacheModule;
 import com.google.gerrit.server.cache.mem.DefaultMemoryCacheModule;
+import com.google.gerrit.server.change.ChangeAttributeFactory;
 import com.google.gerrit.server.change.ChangeJson;
 import com.google.gerrit.server.change.ChangeKindCacheImpl;
 import com.google.gerrit.server.change.MergeabilityCacheImpl;
@@ -48,9 +49,8 @@ import com.google.gerrit.server.config.AdministrateServerGroups;
 import com.google.gerrit.server.config.CanonicalWebUrl;
 import com.google.gerrit.server.config.CanonicalWebUrlProvider;
 import com.google.gerrit.server.config.DefaultUrlFormatter;
-import com.google.gerrit.server.config.DisableReverseDnsLookup;
-import com.google.gerrit.server.config.DisableReverseDnsLookupProvider;
-import com.google.gerrit.server.config.GerritServerConfig;
+import com.google.gerrit.server.config.EnableReverseDnsLookup;
+import com.google.gerrit.server.config.EnableReverseDnsLookupProvider;
 import com.google.gerrit.server.config.GitReceivePackGroups;
 import com.google.gerrit.server.config.GitUploadPackGroups;
 import com.google.gerrit.server.config.SysExecutorModule;
@@ -58,6 +58,7 @@ import com.google.gerrit.server.extensions.events.EventUtil;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.extensions.events.RevisionCreated;
 import com.google.gerrit.server.git.MergeUtil;
+import com.google.gerrit.server.git.PureRevertCache;
 import com.google.gerrit.server.git.SearchingChangeCacheImpl;
 import com.google.gerrit.server.git.TagCache;
 import com.google.gerrit.server.mail.send.ReplacePatchSetSender;
@@ -73,42 +74,23 @@ import com.google.gerrit.server.project.ProjectCacheImpl;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.project.SubmitRuleEvaluator;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gerrit.server.query.change.ChangeQueryProcessor;
 import com.google.gerrit.server.restapi.group.GroupModule;
 import com.google.gerrit.server.rules.DefaultSubmitRule;
 import com.google.gerrit.server.rules.IgnoreSelfApprovalRule;
 import com.google.gerrit.server.rules.PrologModule;
 import com.google.gerrit.server.rules.SubmitRule;
 import com.google.gerrit.server.update.BatchUpdate;
-import com.google.inject.Inject;
-import com.google.inject.Module;
 import com.google.inject.TypeLiteral;
 import com.google.inject.util.Providers;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
-import org.eclipse.jgit.lib.Config;
 
-/**
- * Module for programs that perform batch operations on a site.
- *
- * <p>Any program that requires this module likely also requires using {@link ThreadLimiter} to
- * limit the number of threads accessing the database concurrently.
- */
+/** Module for programs that perform batch operations on a site. */
 public class BatchProgramModule extends FactoryModule {
-  private final Config cfg;
-  private final Module reviewDbModule;
-
-  @Inject
-  BatchProgramModule(@GerritServerConfig Config cfg, PerThreadReviewDbModule reviewDbModule) {
-    this.cfg = cfg;
-    this.reviewDbModule = reviewDbModule;
-  }
-
   @SuppressWarnings("rawtypes")
   @Override
   protected void configure() {
-    install(reviewDbModule);
     install(new DiffExecutorModule());
     install(new SysExecutorModule());
     install(BatchUpdate.module());
@@ -126,28 +108,25 @@ public class BatchProgramModule extends FactoryModule {
 
     // We're just running through each change
     // once, so don't worry about cache removal.
-    bind(new TypeLiteral<DynamicSet<CacheRemovalListener>>() {})
-        .toInstance(DynamicSet.<CacheRemovalListener>emptySet());
-    bind(new TypeLiteral<DynamicMap<Cache<?, ?>>>() {})
-        .toInstance(DynamicMap.<Cache<?, ?>>emptyMap());
+    bind(new TypeLiteral<DynamicSet<CacheRemovalListener>>() {}).toInstance(DynamicSet.emptySet());
+    bind(new TypeLiteral<DynamicMap<Cache<?, ?>>>() {}).toInstance(DynamicMap.emptyMap());
     bind(new TypeLiteral<List<CommentLinkInfo>>() {})
         .toProvider(CommentLinkProvider.class)
         .in(SINGLETON);
-    bind(new TypeLiteral<DynamicMap<ChangeQueryProcessor.ChangeAttributeFactory>>() {})
-        .toInstance(DynamicMap.<ChangeQueryProcessor.ChangeAttributeFactory>emptyMap());
+    bind(new TypeLiteral<DynamicSet<ChangeAttributeFactory>>() {})
+        .toInstance(DynamicSet.emptySet());
     bind(new TypeLiteral<DynamicMap<RestView<CommitResource>>>() {})
-        .toInstance(DynamicMap.<RestView<CommitResource>>emptyMap());
+        .toInstance(DynamicMap.emptyMap());
     bind(String.class)
         .annotatedWith(CanonicalWebUrl.class)
         .toProvider(CanonicalWebUrlProvider.class);
     bind(Boolean.class)
-        .annotatedWith(DisableReverseDnsLookup.class)
-        .toProvider(DisableReverseDnsLookupProvider.class)
+        .annotatedWith(EnableReverseDnsLookup.class)
+        .toProvider(EnableReverseDnsLookupProvider.class)
         .in(SINGLETON);
     bind(Realm.class).to(FakeRealm.class);
-    bind(IdentifiedUser.class).toProvider(Providers.<IdentifiedUser>of(null));
-    bind(ReplacePatchSetSender.Factory.class)
-        .toProvider(Providers.<ReplacePatchSetSender.Factory>of(null));
+    bind(IdentifiedUser.class).toProvider(Providers.of(null));
+    bind(ReplacePatchSetSender.Factory.class).toProvider(Providers.of(null));
     bind(CurrentUser.class).to(IdentifiedUser.class);
     factory(MergeUtil.Factory.class);
     factory(PatchSetInserter.Factory.class);
@@ -155,17 +134,17 @@ public class BatchProgramModule extends FactoryModule {
 
     // As Reindex is a batch program, don't assume the index is available for
     // the change cache.
-    bind(SearchingChangeCacheImpl.class).toProvider(Providers.<SearchingChangeCacheImpl>of(null));
+    bind(SearchingChangeCacheImpl.class).toProvider(Providers.of(null));
 
     bind(new TypeLiteral<ImmutableSet<GroupReference>>() {})
         .annotatedWith(AdministrateServerGroups.class)
-        .toInstance(ImmutableSet.<GroupReference>of());
+        .toInstance(ImmutableSet.of());
     bind(new TypeLiteral<Set<AccountGroup.UUID>>() {})
         .annotatedWith(GitUploadPackGroups.class)
-        .toInstance(Collections.<AccountGroup.UUID>emptySet());
+        .toInstance(Collections.emptySet());
     bind(new TypeLiteral<Set<AccountGroup.UUID>>() {})
         .annotatedWith(GitReceivePackGroups.class)
-        .toInstance(Collections.<AccountGroup.UUID>emptySet());
+        .toInstance(Collections.emptySet());
 
     install(new BatchGitModule());
     install(new DefaultPermissionBackendModule());
@@ -173,7 +152,7 @@ public class BatchProgramModule extends FactoryModule {
     install(new H2CacheModule());
     install(new ExternalIdModule());
     install(new GroupModule());
-    install(new NoteDbModule(cfg));
+    install(new NoteDbModule());
     install(AccountCacheImpl.module());
     install(GroupCacheImpl.module());
     install(GroupIncludeCacheImpl.module());
@@ -182,6 +161,7 @@ public class BatchProgramModule extends FactoryModule {
     install(ChangeKindCacheImpl.module());
     install(MergeabilityCacheImpl.module());
     install(TagCache.module());
+    install(PureRevertCache.module());
     factory(CapabilityCollection.Factory.class);
     factory(ChangeData.AssistedFactory.class);
     factory(ProjectState.Factory.class);
@@ -193,8 +173,8 @@ public class BatchProgramModule extends FactoryModule {
     install(new DefaultSubmitRule.Module());
     install(new IgnoreSelfApprovalRule.Module());
 
-    bind(ChangeJson.Factory.class).toProvider(Providers.<ChangeJson.Factory>of(null));
-    bind(EventUtil.class).toProvider(Providers.<EventUtil>of(null));
+    bind(ChangeJson.Factory.class).toProvider(Providers.of(null));
+    bind(EventUtil.class).toProvider(Providers.of(null));
     bind(GitReferenceUpdated.class).toInstance(GitReferenceUpdated.DISABLED);
     bind(RevisionCreated.class).toInstance(RevisionCreated.DISABLED);
     bind(AccountVisibility.class).toProvider(AccountVisibilityProvider.class).in(SINGLETON);

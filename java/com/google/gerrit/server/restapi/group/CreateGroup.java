@@ -19,6 +19,9 @@ import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableSet;
 import com.google.gerrit.common.data.GlobalCapability;
 import com.google.gerrit.common.data.GroupDescription;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.exceptions.DuplicateKeyException;
 import com.google.gerrit.extensions.annotations.RequiresCapability;
 import com.google.gerrit.extensions.api.groups.GroupInput;
 import com.google.gerrit.extensions.client.ListGroupsOption;
@@ -28,19 +31,17 @@ import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestCollectionCreateView;
 import com.google.gerrit.extensions.restapi.TopLevelResource;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
 import com.google.gerrit.extensions.restapi.Url;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.IdentifiedUser;
-import com.google.gerrit.server.Sequences;
 import com.google.gerrit.server.UserInitiated;
 import com.google.gerrit.server.account.CreateGroupArgs;
 import com.google.gerrit.server.account.GroupCache;
-import com.google.gerrit.server.account.GroupUUID;
+import com.google.gerrit.server.account.GroupUuid;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.group.GroupResolver;
 import com.google.gerrit.server.group.GroupResource;
@@ -50,12 +51,11 @@ import com.google.gerrit.server.group.SystemGroupBackend;
 import com.google.gerrit.server.group.db.GroupsUpdate;
 import com.google.gerrit.server.group.db.InternalGroupCreation;
 import com.google.gerrit.server.group.db.InternalGroupUpdate;
+import com.google.gerrit.server.notedb.Sequences;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.gerrit.server.validators.GroupCreationValidationListener;
 import com.google.gerrit.server.validators.ValidationException;
-import com.google.gwtorm.server.OrmDuplicateKeyException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -123,10 +123,10 @@ public class CreateGroup
   }
 
   @Override
-  public GroupInfo apply(TopLevelResource resource, IdString id, GroupInput input)
+  public Response<GroupInfo> apply(TopLevelResource resource, IdString id, GroupInput input)
       throws AuthException, BadRequestException, UnprocessableEntityException,
-          ResourceConflictException, OrmException, IOException, ConfigInvalidException,
-          ResourceNotFoundException, PermissionBackendException {
+          ResourceConflictException, IOException, ConfigInvalidException, ResourceNotFoundException,
+          PermissionBackendException {
     String name = id.get();
     if (input == null) {
       input = new GroupInput();
@@ -149,14 +149,14 @@ public class CreateGroup
           throw new UnprocessableEntityException(
               String.format("Account Inactive: %s", nameOrEmailOrId));
         }
-        members.add(a.getId());
+        members.add(a.id());
       }
       args.initialMembers = members;
     } else {
       args.initialMembers =
           ownerUuid == null
               ? Collections.singleton(self.get().getAccountId())
-              : Collections.<Account.Id>emptySet();
+              : Collections.emptySet();
     }
 
     try {
@@ -166,7 +166,7 @@ public class CreateGroup
       throw new ResourceConflictException(e.getMessage(), e);
     }
 
-    return json.format(new InternalGroupDescription(createGroup(args)));
+    return Response.created(json.format(new InternalGroupDescription(createGroup(args))));
   }
 
   private AccountGroup.UUID owner(GroupInput input) throws UnprocessableEntityException {
@@ -178,7 +178,7 @@ public class CreateGroup
   }
 
   private InternalGroup createGroup(CreateGroupArgs createGroupArgs)
-      throws OrmException, ResourceConflictException, IOException, ConfigInvalidException {
+      throws ResourceConflictException, IOException, ConfigInvalidException {
 
     String nameLower = createGroupArgs.getGroupName().toLowerCase(Locale.US);
 
@@ -194,9 +194,9 @@ public class CreateGroup
       }
     }
 
-    AccountGroup.Id groupId = new AccountGroup.Id(sequences.nextGroupId());
+    AccountGroup.Id groupId = AccountGroup.id(sequences.nextGroupId());
     AccountGroup.UUID uuid =
-        GroupUUID.make(
+        GroupUuid.make(
             createGroupArgs.getGroupName(),
             self.get().newCommitterIdent(serverIdent.getWhen(), serverIdent.getTimeZone()));
     InternalGroupCreation groupCreation =
@@ -218,7 +218,7 @@ public class CreateGroup
         members -> ImmutableSet.copyOf(createGroupArgs.initialMembers));
     try {
       return groupsUpdateProvider.get().createGroup(groupCreation, groupUpdateBuilder.build());
-    } catch (OrmDuplicateKeyException e) {
+    } catch (DuplicateKeyException e) {
       throw new ResourceConflictException(
           "group '" + createGroupArgs.getGroupName() + "' already exists");
     }

@@ -15,6 +15,8 @@
 package com.google.gerrit.metrics.proc;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
 import com.codahale.metrics.Counter;
 import com.codahale.metrics.Gauge;
@@ -36,13 +38,9 @@ import com.google.inject.Injector;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.ExpectedException;
 
 public class ProcMetricModuleTest {
-  @Rule public ExpectedException exception = ExpectedException.none();
-
   @Inject MetricMaker metrics;
 
   @Inject MetricRegistry registry;
@@ -82,7 +80,9 @@ public class ProcMetricModuleTest {
   public void counter1() {
     Counter1<String> cntr =
         metrics.newCounter(
-            "test/count", new Description("simple test").setCumulative(), Field.ofString("action"));
+            "test/count",
+            new Description("simple test").setCumulative(),
+            Field.ofString("action", Field.ignoreMetadata()).build());
 
     Counter total = get("test/count_total", Counter.class);
     assertThat(total.getCount()).isEqualTo(0);
@@ -107,7 +107,7 @@ public class ProcMetricModuleTest {
             new Description("simple test")
                 .setCumulative()
                 .setFieldOrdering(FieldOrdering.PREFIX_FIELDS_BASENAME),
-            Field.ofString("action"));
+            Field.ofString("action", Field.ignoreMetadata()).build());
 
     Counter total = get("test/count_total", Counter.class);
     assertThat(total.getCount()).isEqualTo(0);
@@ -150,14 +150,16 @@ public class ProcMetricModuleTest {
 
   @Test
   public void invalidName1() {
-    exception.expect(IllegalArgumentException.class);
-    metrics.newCounter("invalid name", new Description("fail"));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> metrics.newCounter("invalid name", new Description("fail")));
   }
 
   @Test
   public void invalidName2() {
-    exception.expect(IllegalArgumentException.class);
-    metrics.newCounter("invalid/ name", new Description("fail"));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> metrics.newCounter("invalid/ name", new Description("fail")));
   }
 
   @SuppressWarnings({"unchecked", "cast"})
@@ -167,8 +169,8 @@ public class ProcMetricModuleTest {
 
   private <M extends Metric> M get(String name, Class<M> type) {
     Metric m = registry.getMetrics().get(name);
-    assertThat(m).named(name).isNotNull();
-    assertThat(m).named(name).isInstanceOf(type);
+    assertWithMessage(name).that(m).isNotNull();
+    assertWithMessage(name).that(m).isInstanceOf(type);
 
     @SuppressWarnings("unchecked")
     M result = (M) m;

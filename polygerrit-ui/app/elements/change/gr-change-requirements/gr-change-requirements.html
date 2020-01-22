@@ -15,7 +15,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 <link rel="import" href="../../../behaviors/rest-client-behavior/rest-client-behavior.html">
 <link rel="import" href="../../../styles/shared-styles.html">
 <link rel="import" href="../../shared/gr-button/gr-button.html">
@@ -34,8 +34,10 @@ limitations under the License.
       .status {
         color: #FFA62F;
         display: inline-block;
-        font-family: var(--monospace-font-family);
         text-align: center;
+        font-family: var(--monospace-font-family);
+        font-size: var(--font-size-mono);
+        line-height: var(--line-height-mono);
       }
       .approved.status {
         color: var(--vote-text-color-recommended);
@@ -46,8 +48,8 @@ limitations under the License.
       iron-icon {
         color: inherit;
       }
-      .name {
-        font-weight: var(--font-weight-bold);
+      .status iron-icon {
+        vertical-align: top;
       }
       section {
         display: table-row;
@@ -57,16 +59,15 @@ limitations under the License.
       }
       .title {
         min-width: 10em;
-        padding: .75em .5em 0 var(--requirements-horizontal-padding);
-        vertical-align: top;
+        padding: var(--spacing-s) var(--spacing-m) 0 var(--requirements-horizontal-padding);
       }
       .value {
-        padding: .6em .5em 0 0;
-        vertical-align: middle;
+        padding: var(--spacing-s) 0 0 0;
       }
       .title,
       .value {
         display: table-cell;
+        vertical-align: top;
       }
       .hidden {
         display: none;
@@ -75,12 +76,10 @@ limitations under the License.
         cursor: pointer;
       }
       .showHide .title {
-        border-top: 1px solid var(--border-color);
-        padding-bottom: .5em;
-        padding-top: .5em;
+        padding-bottom: var(--spacing-m);
+        padding-top: var(--spacing-l);
       }
       .showHide .value {
-        border-top: 1px solid var(--border-color);
         padding-top: 0;
         vertical-align: middle;
       }
@@ -89,7 +88,7 @@ limitations under the License.
         float: right;
       }
       .spacer {
-        height: .5em;
+        height: var(--spacing-m);
       }
     </style>
     <template
@@ -128,7 +127,7 @@ limitations under the License.
     <section class$="spacer [[_computeShowOptional(_optionalLabels.*)]]"></section>
     <section
         show-bottom-border$="[[_showOptionalLabels]]"
-        on-tap="_handleShowHide"
+        on-click="_handleShowHide"
         class$="showHide [[_computeShowOptional(_optionalLabels.*)]]">
       <div class="title">Other labels</div>
       <div class="value">

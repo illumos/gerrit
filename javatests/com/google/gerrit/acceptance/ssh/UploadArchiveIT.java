@@ -15,15 +15,16 @@
 package com.google.gerrit.acceptance.ssh;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.TruthJUnit.assume;
+import static com.google.common.truth.Truth.assertWithMessage;
 
 import com.google.common.base.Splitter;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
-import com.google.gerrit.acceptance.GerritConfig;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.PushOneCommit;
+import com.google.gerrit.acceptance.PushOneCommit.Result;
 import com.google.gerrit.acceptance.UseSsh;
-import com.google.gerrit.testing.NoteDbMode;
+import com.google.gerrit.acceptance.config.GerritConfig;
+import com.google.gerrit.git.ObjectIds;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -34,19 +35,11 @@ import org.apache.commons.compress.archivers.zip.ZipArchiveInputStream;
 import org.eclipse.jgit.transport.PacketLineIn;
 import org.eclipse.jgit.transport.PacketLineOut;
 import org.eclipse.jgit.util.IO;
-import org.junit.Before;
 import org.junit.Test;
 
 @NoHttpd
 @UseSsh
 public class UploadArchiveIT extends AbstractDaemonTest {
-
-  @Before
-  public void setUp() {
-    // There is some Guice request scoping problem preventing this test from
-    // passing in CHECK mode.
-    assume().that(NoteDbMode.get()).isNotEqualTo(NoteDbMode.CHECK);
-  }
 
   @Test
   @GerritConfig(name = "download.archive", value = "off")
@@ -65,7 +58,7 @@ public class UploadArchiveIT extends AbstractDaemonTest {
   @Test
   public void zipFormat() throws Exception {
     PushOneCommit.Result r = createChange();
-    String abbreviated = r.getCommit().abbreviate(8).name();
+    String abbreviated = abbreviateName(r);
     String c = command(r, "zip", abbreviated);
 
     InputStream out =
@@ -102,7 +95,7 @@ public class UploadArchiveIT extends AbstractDaemonTest {
   @Test
   public void txzFormat() throws Exception {
     PushOneCommit.Result r = createChange();
-    String abbreviated = r.getCommit().abbreviate(8).name();
+    String abbreviated = abbreviateName(r);
     String c = command(r, "tar.xz", abbreviated);
 
     try (InputStream out =
@@ -125,7 +118,7 @@ public class UploadArchiveIT extends AbstractDaemonTest {
       // that is currently not public.
       char channel = packet.charAt(0);
       if (channel != 1) {
-        fail("got packet on channel " + (int) channel, packet);
+        assertWithMessage("got packet on channel " + (int) channel, packet).fail();
       }
     }
   }
@@ -140,7 +133,7 @@ public class UploadArchiveIT extends AbstractDaemonTest {
 
   private void assertArchiveNotPermitted() throws Exception {
     PushOneCommit.Result r = createChange();
-    String abbreviated = r.getCommit().abbreviate(8).name();
+    String abbreviated = abbreviateName(r);
     String c = command(r, "zip", abbreviated);
 
     InputStream out =
@@ -154,6 +147,10 @@ public class UploadArchiveIT extends AbstractDaemonTest {
     tmp = in.readString();
     tmp = tmp.substring(1);
     assertThat(tmp).isEqualTo("fatal: upload-archive not permitted for format zip");
+  }
+
+  private String abbreviateName(Result r) throws Exception {
+    return ObjectIds.abbreviateName(r.getCommit(), 8, testRepo.getRevWalk().getObjectReader());
   }
 
   private InputStream argumentsToInputStream(String c) throws Exception {

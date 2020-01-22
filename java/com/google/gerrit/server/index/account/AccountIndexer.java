@@ -14,9 +14,9 @@
 
 package com.google.gerrit.server.index.account;
 
-import com.google.gerrit.reviewdb.client.Account;
-import java.io.IOException;
+import com.google.gerrit.entities.Account;
 
+/** Interface for indexing a Gerrit account. */
 public interface AccountIndexer {
 
   /**
@@ -24,7 +24,7 @@ public interface AccountIndexer {
    *
    * @param id account id to index.
    */
-  void index(Account.Id id) throws IOException;
+  void index(Account.Id id);
 
   /**
    * Synchronously reindex an account if it is stale.
@@ -32,5 +32,5 @@ public interface AccountIndexer {
    * @param id account id to index.
    * @return whether the account was reindexed
    */
-  boolean reindexIfStale(Account.Id id) throws IOException;
+  boolean reindexIfStale(Account.Id id);
 }

@@ -15,11 +15,12 @@
 package com.google.gerrit.server.index.account;
 
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.index.IndexDefinition;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.account.AccountState;
 import com.google.inject.Inject;
 
+/** Bundle of service classes that make up the account index. */
 public class AccountIndexDefinition
     extends IndexDefinition<Account.Id, AccountState, AccountIndex> {
 

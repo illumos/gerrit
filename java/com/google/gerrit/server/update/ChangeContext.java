@@ -16,8 +16,8 @@ package com.google.gerrit.server.update;
 
 import static java.util.Objects.requireNonNull;
 
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSet;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ChangeUpdate;
 
@@ -30,7 +30,7 @@ import com.google.gerrit.server.notedb.ChangeUpdate;
  */
 public interface ChangeContext extends Context {
   /**
-   * Get an update for this change at a given patch set.
+   * Get the first update for this change at a given patch set.
    *
    * <p>A single operation can modify changes at different patch sets. Commits in the NoteDb graph
    * within this update are created in patch set order.
@@ -43,6 +43,16 @@ public interface ChangeContext extends Context {
   ChangeUpdate getUpdate(PatchSet.Id psId);
 
   /**
+   * Gets a new ChangeUpdate for this change at a given patch set.
+   *
+   * <p>To get the current patch set ID, use {@link com.google.gerrit.server.PatchSetUtil#current}.
+   *
+   * @param psId patch set ID.
+   * @return handle for change updates.
+   */
+  ChangeUpdate getDistinctUpdate(PatchSet.Id psId);
+
+  /**
    * Get the up-to-date notes for this change.
    *
    * <p>The change data is read within the same transaction that {@link
@@ -51,16 +61,6 @@ public interface ChangeContext extends Context {
    * @return notes for this change.
    */
   ChangeNotes getNotes();
-
-  /**
-   * Don't bump the value of {@link Change#getLastUpdatedOn()}.
-   *
-   * <p>If called, don't bump the timestamp before storing to ReviewDb. Only has an effect in
-   * ReviewDb, and the only usage should be to match the behavior of NoteDb. Specifically, in NoteDb
-   * the timestamp is updated if and only if the change meta graph is updated, and is not updated
-   * when only drafts are modified.
-   */
-  void dontBumpLastUpdatedOn();
 
   /**
    * Instruct {@link BatchUpdate} to delete this change.

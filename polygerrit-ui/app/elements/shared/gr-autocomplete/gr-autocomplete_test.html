@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-reviewer-list</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-autocomplete.html">
 
@@ -36,6 +38,10 @@ limitations under the License.
   suite('gr-autocomplete tests', () => {
     let element;
     let sandbox;
+    const focusOnInput = element => {
+      MockInteractions.pressAndReleaseKeyOn(element.$.input, 13, null,
+          'enter');
+    };
 
     setup(() => {
       element = fixture('basic');
@@ -48,19 +54,18 @@ limitations under the License.
 
     test('renders', () => {
       let promise;
-      const queryStub = sandbox.spy(input => {
-        return promise = Promise.resolve([
-          {name: input + ' 0', value: 0},
-          {name: input + ' 1', value: 1},
-          {name: input + ' 2', value: 2},
-          {name: input + ' 3', value: 3},
-          {name: input + ' 4', value: 4},
-        ]);
-      });
+      const queryStub = sandbox.spy(input => promise = Promise.resolve([
+        {name: input + ' 0', value: 0},
+        {name: input + ' 1', value: 1},
+        {name: input + ' 2', value: 2},
+        {name: input + ' 3', value: 3},
+        {name: input + ' 4', value: 4},
+      ]));
       element.query = queryStub;
       assert.isTrue(element.$.suggestions.isHidden);
       assert.equal(element.$.suggestions.$.cursor.index, -1);
 
+      focusOnInput(element);
       element.text = 'blah';
 
       assert.isTrue(queryStub.called);
@@ -80,25 +85,26 @@ limitations under the License.
       });
     });
 
-    test('selectAll', () => {
-      const nativeInput = element.$.input.inputElement;
-      const selectionStub = sandbox.stub(nativeInput, 'setSelectionRange');
+    test('selectAll', done => {
+      flush(() => {
+        const nativeInput = element._nativeInput;
+        const selectionStub = sandbox.stub(nativeInput, 'setSelectionRange');
 
-      element.selectAll();
-      assert.isFalse(selectionStub.called);
+        element.selectAll();
+        assert.isFalse(selectionStub.called);
 
-      element.$.input.value = 'test';
-      element.selectAll();
-      assert.isTrue(selectionStub.called);
+        element.$.input.value = 'test';
+        element.selectAll();
+        assert.isTrue(selectionStub.called);
+        done();
+      });
     });
 
     test('esc key behavior', done => {
       let promise;
-      const queryStub = sandbox.spy(() => {
-        return promise = Promise.resolve([
-          {name: 'blah', value: 123},
-        ]);
-      });
+      const queryStub = sandbox.spy(() => promise = Promise.resolve([
+        {name: 'blah', value: 123},
+      ]));
       element.query = queryStub;
 
       assert.isTrue(element.$.suggestions.isHidden);
@@ -125,15 +131,13 @@ limitations under the License.
 
     test('emits commit and handles cursor movement', done => {
       let promise;
-      const queryStub = sandbox.spy(input => {
-        return promise = Promise.resolve([
-          {name: input + ' 0', value: 0},
-          {name: input + ' 1', value: 1},
-          {name: input + ' 2', value: 2},
-          {name: input + ' 3', value: 3},
-          {name: input + ' 4', value: 4},
-        ]);
-      });
+      const queryStub = sandbox.spy(input => promise = Promise.resolve([
+        {name: input + ' 0', value: 0},
+        {name: input + ' 1', value: 1},
+        {name: input + ' 2', value: 2},
+        {name: input + ' 3', value: 3},
+        {name: input + ' 4', value: 4},
+      ]));
       element.query = queryStub;
 
       assert.isTrue(element.$.suggestions.isHidden);
@@ -178,9 +182,11 @@ limitations under the License.
     test('clear-on-commit behavior (off)', done => {
       let promise;
       const queryStub = sandbox.spy(() => {
-        return promise = Promise.resolve([{name: 'suggestion', value: 0}]);
+        promise = Promise.resolve([{name: 'suggestion', value: 0}]);
+        return promise;
       });
       element.query = queryStub;
+      focusOnInput(element);
       element.text = 'blah';
 
       promise.then(() => {
@@ -199,9 +205,11 @@ limitations under the License.
     test('clear-on-commit behavior (on)', done => {
       let promise;
       const queryStub = sandbox.spy(() => {
-        return promise = Promise.resolve([{name: 'suggestion', value: 0}]);
+        promise = Promise.resolve([{name: 'suggestion', value: 0}]);
+        return promise;
       });
       element.query = queryStub;
+      focusOnInput(element);
       element.text = 'blah';
       element.clearOnCommit = true;
 
@@ -219,31 +227,24 @@ limitations under the License.
     });
 
     test('threshold guards the query', () => {
-      const queryStub = sandbox.spy(() => {
-        return Promise.resolve([]);
-      });
+      const queryStub = sandbox.spy(() => Promise.resolve([]));
       element.query = queryStub;
-
       element.threshold = 2;
-
+      focusOnInput(element);
       element.text = 'a';
-
       assert.isFalse(queryStub.called);
-
       element.text = 'ab';
-
       assert.isTrue(queryStub.called);
     });
 
     test('noDebounce=false debounces the query', () => {
-      const queryStub = sandbox.spy(() => {
-        return Promise.resolve([]);
-      });
+      const queryStub = sandbox.spy(() => Promise.resolve([]));
       let callback;
       const debounceStub = sandbox.stub(element, 'debounce',
           (name, cb) => { callback = cb; });
       element.query = queryStub;
       element.noDebounce = false;
+      focusOnInput(element);
       element.text = 'a';
       assert.isFalse(queryStub.called);
       assert.isTrue(debounceStub.called);
@@ -264,11 +265,68 @@ limitations under the License.
       assert.equal(element._suggestions.length, 0);
     });
 
+    test('when focused', done => {
+      let promise;
+      const queryStub = sandbox.stub()
+          .returns(promise = Promise.resolve([
+            {name: 'suggestion', value: 0},
+          ]));
+      element.query = queryStub;
+      element.suggestOnlyWhenFocus = true;
+      focusOnInput(element);
+      element.text = 'bla';
+      assert.equal(element._focused, true);
+      flushAsynchronousOperations();
+      promise.then(() => {
+        assert.equal(element._suggestions.length, 1);
+        assert.equal(queryStub.notCalled, false);
+        done();
+      });
+    });
+
+    test('when not focused', done => {
+      let promise;
+      const queryStub = sandbox.stub()
+          .returns(promise = Promise.resolve([
+            {name: 'suggestion', value: 0},
+          ]));
+      element.query = queryStub;
+      element.suggestOnlyWhenFocus = true;
+      element.text = 'bla';
+      assert.equal(element._focused, false);
+      flushAsynchronousOperations();
+      promise.then(() => {
+        assert.equal(element._suggestions.length, 0);
+        done();
+      });
+    });
+
+    test('suggestions should not carry over', done => {
+      let promise;
+      const queryStub = sandbox.stub()
+          .returns(promise = Promise.resolve([
+            {name: 'suggestion', value: 0},
+          ]));
+      element.query = queryStub;
+      focusOnInput(element);
+      element.text = 'bla';
+      flushAsynchronousOperations();
+      promise.then(() => {
+        assert.equal(element._suggestions.length, 1);
+        element._updateSuggestions('', 0, false);
+        assert.equal(element._suggestions.length, 0);
+        done();
+      });
+    });
+
     test('multi completes only the last part of the query', done => {
       let promise;
       const queryStub = sandbox.stub()
-          .returns(promise = Promise.resolve([{name: 'suggestion', value: 0}]));
+          .returns(promise = Promise.resolve([
+            {name: 'suggestion', value: 0},
+          ]));
       element.query = queryStub;
+      focusOnInput(element);
       element.text = 'blah blah';
       element.multi = true;
 
@@ -318,16 +376,19 @@ limitations under the License.
       });
     });
 
-    test('search icon shows with showSearchIcon property', () => {
-      assert.equal(getComputedStyle(element.$$('iron-icon')).display,
-          'none');
-      element.showSearchIcon = true;
-      assert.notEqual(getComputedStyle(element.$$('iron-icon')).display,
-          'none');
+    test('search icon shows with showSearchIcon property', done => {
+      flush(() => {
+        assert.equal(getComputedStyle(element.$$('iron-icon')).display,
+            'none');
+        element.showSearchIcon = true;
+        assert.notEqual(getComputedStyle(element.$$('iron-icon')).display,
+            'none');
+        done();
+      });
     });
 
     test('vertical offset overridden by param if it exists', () => {
-      assert.equal(element.$.suggestions.verticalOffset, 20);
+      assert.equal(element.$.suggestions.verticalOffset, 31);
       element.verticalOffset = 30;
       assert.equal(element.$.suggestions.verticalOffset, 30);
     });
@@ -388,7 +449,12 @@ limitations under the License.
       // Must set the value, because the MockInteraction does not.
       element.$.input.value = 'file:x';
       assert.isTrue(keydownSpy.calledOnce);
-      MockInteractions.pressAndReleaseKeyOn(element.$.input, 13, null, 'enter');
+      MockInteractions.pressAndReleaseKeyOn(
+          element.$.input,
+          13,
+          null,
+          'enter'
+      );
       assert.isTrue(keydownSpy.calledTwice);
       assert.equal(element.text, 'file:x');
     });

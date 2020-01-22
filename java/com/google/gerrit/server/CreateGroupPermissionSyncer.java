@@ -22,8 +22,8 @@ import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.data.AccessSection;
 import com.google.gerrit.common.data.Permission;
 import com.google.gerrit.common.data.PermissionRule;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.events.ChangeMergedListener;
-import com.google.gerrit.reviewdb.client.RefNames;
 import com.google.gerrit.server.config.AllProjectsName;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
@@ -57,17 +57,20 @@ public class CreateGroupPermissionSyncer implements ChangeMergedListener {
   private final AllUsersName allUsers;
   private final ProjectCache projectCache;
   private final Provider<MetaDataUpdate.Server> metaDataUpdateFactory;
+  private final ProjectConfig.Factory projectConfigFactory;
 
   @Inject
   CreateGroupPermissionSyncer(
       AllProjectsName allProjects,
       AllUsersName allUsers,
       ProjectCache projectCache,
-      Provider<MetaDataUpdate.Server> metaDataUpdateFactory) {
+      Provider<MetaDataUpdate.Server> metaDataUpdateFactory,
+      ProjectConfig.Factory projectConfigFactory) {
     this.allProjects = allProjects;
     this.allUsers = allUsers;
     this.projectCache = projectCache;
     this.metaDataUpdateFactory = metaDataUpdateFactory;
+    this.projectConfigFactory = projectConfigFactory;
   }
 
   /**
@@ -102,7 +105,7 @@ public class CreateGroupPermissionSyncer implements ChangeMergedListener {
     }
 
     try (MetaDataUpdate md = metaDataUpdateFactory.get().create(allUsers)) {
-      ProjectConfig config = ProjectConfig.read(md);
+      ProjectConfig config = projectConfigFactory.read(md);
       AccessSection createGroupAccessSection =
           config.getAccessSection(RefNames.REFS_GROUPS + "*", true);
       if (createGroupsGlobal.isEmpty()) {
@@ -112,11 +115,12 @@ public class CreateGroupPermissionSyncer implements ChangeMergedListener {
                 .collect(toList()));
         config.replace(createGroupAccessSection);
       } else {
-        Permission createGroupPermission = new Permission(Permission.CREATE);
-        createGroupAccessSection.addPermission(createGroupPermission);
-        createGroupsGlobal.forEach(createGroupPermission::add);
         // The create permission is managed by Gerrit at this point only so there is no concern of
         // overwriting user-defined permissions here.
+        Permission createGroupPermission = new Permission(Permission.CREATE);
+        createGroupAccessSection.remove(createGroupPermission);
+        createGroupAccessSection.addPermission(createGroupPermission);
+        createGroupsGlobal.forEach(createGroupPermission::add);
         config.replace(createGroupAccessSection);
       }
 

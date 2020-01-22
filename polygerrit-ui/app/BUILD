@@ -45,6 +45,22 @@ filegroup(
     ),
 )
 
+filegroup(
+    name = "pg_code_without_test",
+    srcs = glob(
+        [
+            "**/*.html",
+            "**/*.js",
+        ],
+        exclude = [
+            "bower_components/**",
+            "**/*_test.html",
+            "test/**",
+            "samples/**",
+        ],
+    ),
+)
+
 genrule2(
     name = "pg_code_zip",
     srcs = [":pg_code"],
@@ -77,6 +93,7 @@ sh_test(
     ],
 )
 
+# TODO(taoalpha): alias to `npm run eslint` or just remove once CI moved to npm
 sh_test(
     name = "lint_test",
     size = "large",
@@ -97,7 +114,8 @@ sh_test(
     size = "large",
     srcs = ["polylint_test.sh"],
     data = [
-        ":pg_code",
+        "polymer.json",
+        ":pg_code_without_test",
         "//polygerrit-ui:polygerrit_components.bower_components.zip",
     ],
     # Should not run sandboxed.
@@ -137,55 +155,10 @@ DIRECTORIES = [
     ],
 ) for directory in DIRECTORIES]
 
-# Embed bundle
-polygerrit_bundle(
-    name = "polygerrit_embed_ui",
-    srcs = glob(
-        [
-            "**/*.html",
-            "**/*.js",
-        ],
-        exclude = [
-            "bower_components/**",
-            "test/**",
-            "**/*_test.html",
-        ],
-    ),
-    outs = ["polygerrit_embed_ui.zip"],
-    app = "embed/embed.html",
-)
-
-filegroup(
-    name = "embed_test_files",
-    srcs = glob(
-        [
-            "embed/**/*_test.html",
-        ],
-    ),
-)
-
 filegroup(
     name = "template_test_srcs",
     srcs = [
         "template_test_srcs/convert_for_template_tests.py",
         "template_test_srcs/template_test.js",
-    ],
-)
-
-sh_test(
-    name = "embed_test",
-    size = "small",
-    srcs = ["embed_test.sh"],
-    data = [
-        "embed/test.html",
-        "test/common-test-setup.html",
-        ":embed_test_files",
-        ":polygerrit_embed_ui.zip",
-        ":test_components.zip",
-    ],
-    # Should not run sandboxed.
-    tags = [
-        "local",
-        "manual",
     ],
 )

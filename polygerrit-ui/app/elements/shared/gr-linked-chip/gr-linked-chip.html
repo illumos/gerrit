@@ -15,7 +15,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../behaviors/gr-tooltip-behavior/gr-tooltip-behavior.html">
 <link rel="import" href="../gr-button/gr-button.html">
 <link rel="import" href="../gr-icons/gr-icons.html">
@@ -34,25 +35,31 @@ limitations under the License.
         background: var(--chip-background-color);
         border-radius: .75em;
         display: inline-flex;
-        padding: 0 .5em;
+        padding: 0 var(--spacing-m);
       }
+      gr-button.remove {
+        --gr-remove-button-style: {
+          border: 0;
+          color: var(--deemphasized-text-color);
+          font-weight: normal;
+          height: .6em;
+          line-height: 10px;
+          margin-left: var(--spacing-xs);
+          padding: 0;
+          text-decoration: none;
+        }
+      }
+
       gr-button.remove:hover,
       gr-button.remove:focus {
         --gr-button: {
+          @apply --gr-remove-button-style;
           color: #333;
         }
       }
       gr-button.remove {
         --gr-button: {
-          border: 0;
-          color: var(--deemphasized-text-color);
-          font-size: 1.7rem;
-          font-weight: normal;
-          height: .6em;
-          line-height: .6;
-          margin-left: .15em;
-          padding: 0;
-          text-decoration: none;
+          @apply --gr-remove-button-style;
         }
       }
       .transparentBackground,
@@ -83,7 +90,7 @@ limitations under the License.
           hidden$="[[!removable]]"
           hidden
           class$="remove [[_getBackgroundClass(transparentBackground)]]"
-          on-tap="_handleRemoveTap">
+          on-click="_handleRemoveTap">
         <iron-icon icon="gr-icons:close"></iron-icon>
       </gr-button>
     </div>

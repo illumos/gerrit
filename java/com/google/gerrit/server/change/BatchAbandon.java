@@ -14,35 +14,35 @@
 
 package com.google.gerrit.server.change;
 
-import com.google.common.collect.ImmutableListMultimap;
-import com.google.common.collect.ListMultimap;
-import com.google.gerrit.extensions.api.changes.NotifyHandling;
-import com.google.gerrit.extensions.api.changes.RecipientType;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.RestApiException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.account.AccountState;
+import com.google.gerrit.server.config.ChangeCleanupConfig;
+import com.google.gerrit.server.plugincontext.PluginItemContext;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.UpdateException;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.util.Collection;
 
 @Singleton
 public class BatchAbandon {
-  private final Provider<ReviewDb> dbProvider;
   private final AbandonOp.Factory abandonOpFactory;
+  private final ChangeCleanupConfig cfg;
+  private final PluginItemContext<AccountPatchReviewStore> accountPatchReviewStore;
 
   @Inject
-  BatchAbandon(Provider<ReviewDb> dbProvider, AbandonOp.Factory abandonOpFactory) {
-    this.dbProvider = dbProvider;
+  BatchAbandon(
+      AbandonOp.Factory abandonOpFactory,
+      ChangeCleanupConfig cfg,
+      PluginItemContext<AccountPatchReviewStore> accountPatchReviewStore) {
     this.abandonOpFactory = abandonOpFactory;
+    this.cfg = cfg;
+    this.accountPatchReviewStore = accountPatchReviewStore;
   }
 
   /**
@@ -58,14 +58,14 @@ public class BatchAbandon {
       CurrentUser user,
       Collection<ChangeData> changes,
       String msgTxt,
-      NotifyHandling notifyHandling,
-      ListMultimap<RecipientType, Account.Id> accountsToNotify)
+      NotifyResolver.Result notify)
       throws RestApiException, UpdateException {
     if (changes.isEmpty()) {
       return;
     }
     AccountState accountState = user.isIdentifiedUser() ? user.asIdentifiedUser().state() : null;
-    try (BatchUpdate u = updateFactory.create(dbProvider.get(), project, user, TimeUtil.nowTs())) {
+    try (BatchUpdate u = updateFactory.create(project, user, TimeUtil.nowTs())) {
+      u.setNotify(notify);
       for (ChangeData change : changes) {
         if (!project.equals(change.project())) {
           throw new ResourceConflictException(
@@ -73,11 +73,13 @@ public class BatchAbandon {
                   "Project name \"%s\" doesn't match \"%s\"",
                   change.project().get(), project.get()));
         }
-        u.addOp(
-            change.getId(),
-            abandonOpFactory.create(accountState, msgTxt, notifyHandling, accountsToNotify));
+        u.addOp(change.getId(), abandonOpFactory.create(accountState, msgTxt));
       }
       u.execute();
+
+      if (cfg.getCleanupAccountPatchReview()) {
+        cleanupAccountPatchReview(changes);
+      }
     }
   }
 
@@ -88,14 +90,7 @@ public class BatchAbandon {
       Collection<ChangeData> changes,
       String msgTxt)
       throws RestApiException, UpdateException {
-    batchAbandon(
-        updateFactory,
-        project,
-        user,
-        changes,
-        msgTxt,
-        NotifyHandling.ALL,
-        ImmutableListMultimap.of());
+    batchAbandon(updateFactory, project, user, changes, msgTxt, NotifyResolver.Result.all());
   }
 
   public void batchAbandon(
@@ -104,7 +99,12 @@ public class BatchAbandon {
       CurrentUser user,
       Collection<ChangeData> changes)
       throws RestApiException, UpdateException {
-    batchAbandon(
-        updateFactory, project, user, changes, "", NotifyHandling.ALL, ImmutableListMultimap.of());
+    batchAbandon(updateFactory, project, user, changes, "", NotifyResolver.Result.all());
+  }
+
+  private void cleanupAccountPatchReview(Collection<ChangeData> changes) {
+    for (ChangeData change : changes) {
+      accountPatchReviewStore.run(s -> s.clearReviewed(change.getId()));
+    }
   }
 }

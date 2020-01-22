@@ -17,41 +17,60 @@
 (function() {
   'use strict';
 
-  const HOVER_PATH_PATTERN = /^comments\.(left|right)\.\#(\d+)\.__hovering$/;
-  const SPLICE_PATH_PATTERN = /^comments\.(left|right)\.splices$/;
+  // Polymer 1 adds # before array's key, while Polymer 2 doesn't
+  const HOVER_PATH_PATTERN = /^(commentRanges\.\#?\d+)\.hovering$/;
 
-  const RANGE_HIGHLIGHT = 'range';
-  const HOVER_HIGHLIGHT = 'rangeHighlight';
+  const RANGE_HIGHLIGHT = 'style-scope gr-diff range';
+  const HOVER_HIGHLIGHT = 'style-scope gr-diff rangeHighlight';
 
-  const NORMALIZE_RANGE_EVENT = 'normalize-range';
+  /** @extends Polymer.Element */
+  class GrRangedCommentLayer extends Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element)) {
+    static get is() { return 'gr-ranged-comment-layer'; }
+    /**
+     * Fired when the range in a range comment was malformed and had to be
+     * normalized.
+     *
+     * It's `detail` has a `lineNum` and `side` parameter.
+     *
+     * @event normalize-range
+     */
 
-  Polymer({
-    is: 'gr-ranged-comment-layer',
+    static get properties() {
+      return {
+      /** @type {!Array<!Gerrit.HoveredRange>} */
+        commentRanges: Array,
+        _listeners: {
+          type: Array,
+          value() { return []; },
+        },
+        _rangesMap: {
+          type: Object,
+          value() { return {left: {}, right: {}}; },
+        },
+      };
+    }
 
-    properties: {
-      comments: Object,
-      _listeners: {
-        type: Array,
-        value() { return []; },
-      },
-      _commentMap: {
-        type: Object,
-        value() { return {left: [], right: []}; },
-      },
-    },
+    static get observers() {
+      return [
+        '_handleCommentRangesChange(commentRanges.*)',
+      ];
+    }
 
-    observers: [
-      '_handleCommentChange(comments.*)',
-    ],
+    get styleModuleName() {
+      return 'gr-ranged-comment-styles';
+    }
 
     /**
      * Layer method to add annotations to a line.
      *
      * @param {!HTMLElement} el The DIV.contentText element to apply the
      *     annotation to.
+     * @param {!HTMLElement} lineNumberEl
      * @param {!Object} line The line object. (GrDiffLine)
      */
-    annotate(el, line) {
+    annotate(el, lineNumberEl, line) {
       let ranges = [];
       if (line.type === GrDiffLine.Type.REMOVE || (
         line.type === GrDiffLine.Type.BOTH &&
@@ -69,7 +88,7 @@
             range.end - range.start,
             range.hovering ? HOVER_HIGHLIGHT : RANGE_HIGHLIGHT);
       }
-    },
+    }
 
     /**
      * Register a listener for layer updates.
@@ -80,7 +99,7 @@
      */
     addListener(fn) {
       this._listeners.push(fn);
-    },
+    }
 
     /**
      * Notify Layer listeners of changes to annotations.
@@ -93,117 +112,106 @@
       for (const listener of this._listeners) {
         listener(start, end, side);
       }
-    },
+    }
 
     /**
-     * Handle change in the comments by updating the comment maps and by
+     * Handle change in the ranges by updating the ranges maps and by
      * emitting appropriate update notifications.
      *
      * @param {Object} record The change record.
      */
-    _handleCommentChange(record) {
-      if (!record.path) { return; }
+    _handleCommentRangesChange(record) {
+      if (!record) return;
 
       // If the entire set of comments was changed.
-      if (record.path === 'comments') {
-        this._commentMap.left = this._computeCommentMap(this.comments.left);
-        this._commentMap.right = this._computeCommentMap(this.comments.right);
-        return;
+      if (record.path === 'commentRanges') {
+        this._rangesMap = {left: {}, right: {}};
+        for (const {side, range, hovering} of record.value) {
+          this._updateRangesMap(
+              side, range, hovering, (forLine, start, end, hovering) => {
+                forLine.push({start, end, hovering});
+              });
+        }
       }
 
       // If the change only changed the `hovering` property of a comment.
-      let match = record.path.match(HOVER_PATH_PATTERN);
-      let side;
-
+      const match = record.path.match(HOVER_PATH_PATTERN);
       if (match) {
-        side = match[1];
-        const index = match[2];
-        const comment = this.comments[side][index];
-        if (comment && comment.range) {
-          this._commentMap[side] = this._computeCommentMap(this.comments[side]);
-          this._notifyUpdateRange(
-              comment.range.start_line, comment.range.end_line, side);
-        }
-        return;
+        // The #number indicates the key of that item in the array
+        // not the index, especially in polymer 1.
+        const {side, range, hovering} = this.get(match[1]);
+
+        this._updateRangesMap(
+            side, range, hovering, (forLine, start, end, hovering) => {
+              const index = forLine.findIndex(lineRange =>
+                lineRange.start === start && lineRange.end === end);
+              forLine[index].hovering = hovering;
+            });
       }
 
       // If comments were spliced in or out.
-      match = record.path.match(SPLICE_PATH_PATTERN);
-      if (match) {
-        side = match[1];
-        this._commentMap[side] = this._computeCommentMap(this.comments[side]);
-        this._handleCommentSplice(record.value, side);
-      }
-    },
-
-    /**
-     * Take a list of comments and return a sparse list mapping line numbers to
-     * partial ranges. Uses an end-character-index of -1 to indicate the end of
-     * the line.
-     *
-     * @param {?} commentList The list of comments.
-     *    Getting this param to match closure requirements caused problems.
-     * @return {!Object} The sparse list.
-     */
-    _computeCommentMap(commentList) {
-      const result = {};
-      for (const comment of commentList) {
-        if (!comment.range) { continue; }
-        const range = comment.range;
-        for (let line = range.start_line; line <= range.end_line; line++) {
-          if (!result[line]) { result[line] = []; }
-          result[line].push({
-            comment,
-            start: line === range.start_line ? range.start_character : 0,
-            end: line === range.end_line ? range.end_character : -1,
-          });
+      if (record.path === 'commentRanges.splices') {
+        for (const indexSplice of record.value.indexSplices) {
+          const removed = indexSplice.removed;
+          for (const {side, range, hovering} of removed) {
+            this._updateRangesMap(
+                side, range, hovering, (forLine, start, end) => {
+                  const index = forLine.findIndex(lineRange =>
+                    lineRange.start === start && lineRange.end === end);
+                  forLine.splice(index, 1);
+                });
+          }
+          const added = indexSplice.object.slice(
+              indexSplice.index, indexSplice.index + indexSplice.addedCount);
+          for (const {side, range, hovering} of added) {
+            this._updateRangesMap(
+                side, range, hovering, (forLine, start, end, hovering) => {
+                  forLine.push({start, end, hovering});
+                });
+          }
         }
       }
-      return result;
-    },
+    }
 
-    /**
-     * Translate a splice record into range update notifications.
-     */
-    _handleCommentSplice(record, side) {
-      if (!record || !record.indexSplices) { return; }
-
-      for (const splice of record.indexSplices) {
-        const ranges = splice.removed.length ?
-          splice.removed.map(c => { return c.range; }) :
-          [splice.object[splice.index].range];
-        for (const range of ranges) {
-          if (!range) { continue; }
-          this._notifyUpdateRange(range.start_line, range.end_line, side);
-        }
+    _updateRangesMap(side, range, hovering, operation) {
+      const forSide = this._rangesMap[side] || (this._rangesMap[side] = {});
+      for (let line = range.start_line; line <= range.end_line; line++) {
+        const forLine = forSide[line] || (forSide[line] = []);
+        const start = line === range.start_line ? range.start_character : 0;
+        const end = line === range.end_line ? range.end_character : -1;
+        operation(forLine, start, end, hovering);
       }
-    },
+      this._notifyUpdateRange(range.start_line, range.end_line, side);
+    }
 
     _getRangesForLine(line, side) {
       const lineNum = side === 'left' ? line.beforeNumber : line.afterNumber;
-      const ranges = this.get(['_commentMap', side, lineNum]) || [];
+      const ranges = this.get(['_rangesMap', side, lineNum]) || [];
       return ranges
           .map(range => {
-            range = {
-              start: range.start,
-              end: range.end === -1 ? line.text.length : range.end,
-              hovering: !!range.comment.__hovering,
-            };
+            // Make a copy, so that the normalization below does not mess with
+            // our map.
+            range = Object.assign({}, range);
+            range.end = range.end === -1 ? line.text.length : range.end;
 
             // Normalize invalid ranges where the start is after the end but the
             // start still makes sense. Set the end to the end of the line.
             // @see Issue 5744
             if (range.start >= range.end && range.start < line.text.length) {
               range.end = line.text.length;
-              this.$.reporting.reportInteraction(NORMALIZE_RANGE_EVENT,
-                  'Modified invalid comment range on l.' + lineNum +
-                  ' of the ' + side + ' side');
+              this.dispatchEvent(new CustomEvent('normalize-range', {
+                bubbles: true,
+                composed: true,
+                detail: {lineNum, side},
+              }));
             }
 
             return range;
           })
           // Sort the ranges so that hovering highlights are on top.
-          .sort((a, b) => a.hovering && !b.hovering ? 1 : 0);
-    },
-  });
+          .sort((a, b) => (a.hovering && !b.hovering ? 1 : 0));
+    }
+  }
+
+  customElements.define(GrRangedCommentLayer.is, GrRangedCommentLayer);
 })();

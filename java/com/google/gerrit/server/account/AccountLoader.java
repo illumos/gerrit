@@ -17,8 +17,9 @@ package com.google.gerrit.server.account;
 import static com.google.common.base.Preconditions.checkArgument;
 
 import com.google.common.collect.Iterables;
+import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.common.AccountInfo;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.account.AccountDirectory.FillOptions;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.inject.assistedinject.Assisted;
@@ -41,6 +42,7 @@ public class AccountLoader {
               FillOptions.EMAIL,
               FillOptions.USERNAME,
               FillOptions.STATUS,
+              FillOptions.STATE,
               FillOptions.AVATARS));
 
   public interface Factory {
@@ -67,7 +69,8 @@ public class AccountLoader {
     provided = new ArrayList<>();
   }
 
-  public synchronized AccountInfo get(Account.Id id) {
+  @Nullable
+  public synchronized AccountInfo get(@Nullable Account.Id id) {
     if (id == null) {
       return null;
     }
@@ -95,7 +98,8 @@ public class AccountLoader {
     fill();
   }
 
-  public AccountInfo fillOne(Account.Id id) throws PermissionBackendException {
+  @Nullable
+  public AccountInfo fillOne(@Nullable Account.Id id) throws PermissionBackendException {
     AccountInfo info = get(id);
     fill();
     return info;

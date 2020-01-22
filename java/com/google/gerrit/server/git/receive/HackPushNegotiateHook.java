@@ -14,22 +14,21 @@
 
 package com.google.gerrit.server.git.receive;
 
-import static org.eclipse.jgit.lib.RefDatabase.ALL;
+import static java.util.stream.Collectors.toMap;
 
 import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.git.ObjectIds;
 import java.io.IOException;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
-import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.transport.AdvertiseRefsHook;
-import org.eclipse.jgit.transport.BaseReceivePack;
+import org.eclipse.jgit.transport.ReceivePack;
 import org.eclipse.jgit.transport.ServiceMayNotContinueException;
 import org.eclipse.jgit.transport.UploadPack;
 
@@ -49,7 +48,7 @@ public class HackPushNegotiateHook implements AdvertiseRefsHook {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
   /** Size of an additional ".have" line. */
-  private static final int HAVE_LINE_LEN = 4 + Constants.OBJECT_ID_STRING_LENGTH + 1 + 5 + 1;
+  private static final int HAVE_LINE_LEN = 4 + ObjectIds.STR_LEN + 1 + 5 + 1;
 
   /**
    * Maximum number of bytes to "waste" in the advertisement with a peek at this repository's
@@ -74,11 +73,13 @@ public class HackPushNegotiateHook implements AdvertiseRefsHook {
   }
 
   @Override
-  public void advertiseRefs(BaseReceivePack rp) throws ServiceMayNotContinueException {
+  public void advertiseRefs(ReceivePack rp) throws ServiceMayNotContinueException {
     Map<String, Ref> r = rp.getAdvertisedRefs();
     if (r == null) {
       try {
-        r = rp.getRepository().getRefDatabase().getRefs(ALL);
+        r =
+            rp.getRepository().getRefDatabase().getRefs().stream()
+                .collect(toMap(Ref::getName, x -> x));
       } catch (ServiceMayNotContinueException e) {
         throw e;
       } catch (IOException e) {
@@ -88,37 +89,32 @@ public class HackPushNegotiateHook implements AdvertiseRefsHook {
     rp.setAdvertisedRefs(r, history(r.values(), rp));
   }
 
-  private Set<ObjectId> history(Collection<Ref> refs, BaseReceivePack rp) {
+  private Set<ObjectId> history(Collection<Ref> refs, ReceivePack rp) {
     Set<ObjectId> alreadySending = rp.getAdvertisedObjects();
-    if (alreadySending.isEmpty()) {
-      alreadySending = idsOf(refs);
-    }
-
-    int max = MAX_HISTORY - Math.max(0, alreadySending.size() - refs.size());
-    if (max <= 0) {
-      return Collections.emptySet();
+    if (MAX_HISTORY <= alreadySending.size()) {
+      return alreadySending;
     }
 
     // Scan history until the advertisement is full.
     RevWalk rw = rp.getRevWalk();
     rw.reset();
     try {
-      for (Ref ref : refs) {
+      Set<ObjectId> tips = idsOf(refs);
+      for (ObjectId tip : tips) {
         try {
-          if (ref.getObjectId() != null) {
-            rw.markStart(rw.parseCommit(ref.getObjectId()));
-          }
+          rw.markStart(rw.parseCommit(tip));
         } catch (IOException badCommit) {
           continue;
         }
       }
 
-      Set<ObjectId> history = Sets.newHashSetWithExpectedSize(max);
+      Set<ObjectId> history = Sets.newHashSetWithExpectedSize(MAX_HISTORY);
+      history.addAll(alreadySending);
       try {
         int stepCnt = 0;
-        for (RevCommit c; history.size() < max && (c = rw.next()) != null; ) {
+        for (RevCommit c; history.size() < MAX_HISTORY && (c = rw.next()) != null; ) {
           if (c.getParentCount() <= 1
-              && !alreadySending.contains(c)
+              && !tips.contains(c)
               && (history.size() < BASE_COMMITS || (++stepCnt % STEP_COMMITS) == 0)) {
             history.add(c);
           }

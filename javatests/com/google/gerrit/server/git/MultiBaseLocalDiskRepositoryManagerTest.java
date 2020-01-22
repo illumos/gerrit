@@ -15,17 +15,14 @@
 package com.google.gerrit.server.git;
 
 import static com.google.common.truth.Truth.assertThat;
-import static org.easymock.EasyMock.createNiceMock;
-import static org.easymock.EasyMock.expect;
-import static org.easymock.EasyMock.replay;
-import static org.easymock.EasyMock.reset;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.google.common.collect.ImmutableList;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.config.RepositoryConfig;
 import com.google.gerrit.server.config.SitePaths;
-import com.google.gerrit.testing.GerritBaseTests;
-import com.google.gerrit.testing.TempFileUtil;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -37,11 +34,14 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.RepositoryCache;
 import org.eclipse.jgit.lib.RepositoryCache.FileKey;
 import org.eclipse.jgit.util.FS;
-import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
-public class MultiBaseLocalDiskRepositoryManagerTest extends GerritBaseTests {
+public class MultiBaseLocalDiskRepositoryManagerTest {
+  @Rule public TemporaryFolder temporaryFolder = new TemporaryFolder();
+
   private Config cfg;
   private SitePaths site;
   private MultiBaseLocalDiskRepositoryManager repoManager;
@@ -49,25 +49,19 @@ public class MultiBaseLocalDiskRepositoryManagerTest extends GerritBaseTests {
 
   @Before
   public void setUp() throws IOException {
-    site = new SitePaths(TempFileUtil.createTempDirectory().toPath());
+    site = new SitePaths(temporaryFolder.newFolder().toPath());
     site.resolve("git").toFile().mkdir();
     cfg = new Config();
     cfg.setString("gerrit", null, "basePath", "git");
-    configMock = createNiceMock(RepositoryConfig.class);
-    expect(configMock.getAllBasePaths()).andReturn(ImmutableList.of()).anyTimes();
-    replay(configMock);
+    configMock = mock(RepositoryConfig.class);
+    when(configMock.getAllBasePaths()).thenReturn(ImmutableList.of());
     repoManager = new MultiBaseLocalDiskRepositoryManager(site, cfg, configMock);
-  }
-
-  @After
-  public void tearDown() throws IOException {
-    TempFileUtil.cleanup();
   }
 
   @Test
   public void defaultRepositoryLocation()
       throws RepositoryCaseMismatchException, RepositoryNotFoundException, IOException {
-    Project.NameKey someProjectKey = new Project.NameKey("someProject");
+    Project.NameKey someProjectKey = Project.nameKey("someProject");
     Repository repo = repoManager.createRepository(someProjectKey);
     assertThat(repo.getDirectory()).isNotNull();
     assertThat(repo.getDirectory().exists()).isTrue();
@@ -91,12 +85,10 @@ public class MultiBaseLocalDiskRepositoryManagerTest extends GerritBaseTests {
 
   @Test
   public void alternateRepositoryLocation() throws IOException {
-    Path alternateBasePath = TempFileUtil.createTempDirectory().toPath();
-    Project.NameKey someProjectKey = new Project.NameKey("someProject");
-    reset(configMock);
-    expect(configMock.getBasePath(someProjectKey)).andReturn(alternateBasePath).anyTimes();
-    expect(configMock.getAllBasePaths()).andReturn(ImmutableList.of(alternateBasePath)).anyTimes();
-    replay(configMock);
+    Path alternateBasePath = temporaryFolder.newFolder().toPath();
+    Project.NameKey someProjectKey = Project.nameKey("someProject");
+    when(configMock.getBasePath(someProjectKey)).thenReturn(alternateBasePath);
+    when(configMock.getAllBasePaths()).thenReturn(ImmutableList.of(alternateBasePath));
 
     Repository repo = repoManager.createRepository(someProjectKey);
     assertThat(repo.getDirectory()).isNotNull();
@@ -119,18 +111,16 @@ public class MultiBaseLocalDiskRepositoryManagerTest extends GerritBaseTests {
 
   @Test
   public void listReturnRepoFromProperLocation() throws IOException {
-    Project.NameKey basePathProject = new Project.NameKey("basePathProject");
-    Project.NameKey altPathProject = new Project.NameKey("altPathProject");
-    Project.NameKey misplacedProject1 = new Project.NameKey("misplacedProject1");
-    Project.NameKey misplacedProject2 = new Project.NameKey("misplacedProject2");
+    Project.NameKey basePathProject = Project.nameKey("basePathProject");
+    Project.NameKey altPathProject = Project.nameKey("altPathProject");
+    Project.NameKey misplacedProject1 = Project.nameKey("misplacedProject1");
+    Project.NameKey misplacedProject2 = Project.nameKey("misplacedProject2");
 
-    Path alternateBasePath = TempFileUtil.createTempDirectory().toPath();
+    Path alternateBasePath = temporaryFolder.newFolder().toPath();
 
-    reset(configMock);
-    expect(configMock.getBasePath(altPathProject)).andReturn(alternateBasePath).anyTimes();
-    expect(configMock.getBasePath(misplacedProject2)).andReturn(alternateBasePath).anyTimes();
-    expect(configMock.getAllBasePaths()).andReturn(ImmutableList.of(alternateBasePath)).anyTimes();
-    replay(configMock);
+    when(configMock.getBasePath(altPathProject)).thenReturn(alternateBasePath);
+    when(configMock.getBasePath(misplacedProject2)).thenReturn(alternateBasePath);
+    when(configMock.getAllBasePaths()).thenReturn(ImmutableList.of(alternateBasePath));
 
     repoManager.createRepository(basePathProject);
     repoManager.createRepository(altPathProject);
@@ -153,11 +143,14 @@ public class MultiBaseLocalDiskRepositoryManagerTest extends GerritBaseTests {
     }
   }
 
-  @Test(expected = IllegalStateException.class)
+  @Test
   public void testRelativeAlternateLocation() {
-    configMock = createNiceMock(RepositoryConfig.class);
-    expect(configMock.getAllBasePaths()).andReturn(ImmutableList.of(Paths.get("repos"))).anyTimes();
-    replay(configMock);
-    repoManager = new MultiBaseLocalDiskRepositoryManager(site, cfg, configMock);
+    assertThrows(
+        IllegalStateException.class,
+        () -> {
+          configMock = mock(RepositoryConfig.class);
+          when(configMock.getAllBasePaths()).thenReturn(ImmutableList.of(Paths.get("repos")));
+          repoManager = new MultiBaseLocalDiskRepositoryManager(site, cfg, configMock);
+        });
   }
 }

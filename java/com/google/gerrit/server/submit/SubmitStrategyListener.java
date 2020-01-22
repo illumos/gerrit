@@ -17,9 +17,9 @@ package com.google.gerrit.server.submit;
 import com.google.common.base.CharMatcher;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.Change;
 import com.google.gerrit.extensions.api.changes.SubmitInput;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
-import com.google.gerrit.reviewdb.client.Change;
 import com.google.gerrit.server.change.TestSubmitInput;
 import com.google.gerrit.server.git.CodeReviewCommit;
 import com.google.gerrit.server.submit.MergeOp.CommitStatus;
@@ -99,7 +99,7 @@ public class SubmitStrategyListener implements BatchUpdateListener {
           args.rw,
           args.canMergeFlag,
           args.mergeTip.getCurrentTip(),
-          initialTip == null ? ImmutableSet.<RevCommit>of() : ImmutableSet.of(initialTip));
+          initialTip == null ? ImmutableSet.of() : ImmutableSet.of(initialTip));
     }
   }
 
@@ -129,7 +129,7 @@ public class SubmitStrategyListener implements BatchUpdateListener {
 
         case ALREADY_MERGED:
           // Already an ancestor of tip.
-          alreadyMerged.add(commit.getPatchsetId().getParentKey());
+          alreadyMerged.add(commit.getPatchsetId().changeId());
           break;
 
         case PATH_CONFLICT:

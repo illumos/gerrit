@@ -14,14 +14,13 @@
 
 package com.google.gerrit.server.mail.send;
 
-import com.google.gerrit.common.errors.EmailException;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.EmailException;
 import com.google.gerrit.extensions.api.changes.RecipientType;
 import com.google.gerrit.mail.Address;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.account.ProjectWatches.NotifyType;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 import java.util.ArrayList;
@@ -37,14 +36,13 @@ public class DeleteReviewerSender extends ReplyToChangeSender {
 
   public interface Factory extends ReplyToChangeSender.Factory<DeleteReviewerSender> {
     @Override
-    DeleteReviewerSender create(Project.NameKey project, Change.Id change);
+    DeleteReviewerSender create(Project.NameKey project, Change.Id changeId);
   }
 
   @Inject
   public DeleteReviewerSender(
-      EmailArguments ea, @Assisted Project.NameKey project, @Assisted Change.Id id)
-      throws OrmException {
-    super(ea, "deleteReviewer", newChangeData(ea, project, id));
+      EmailArguments args, @Assisted Project.NameKey project, @Assisted Change.Id changeId) {
+    super(args, "deleteReviewer", newChangeData(args, project, changeId));
   }
 
   public void addReviewers(Collection<Account.Id> cc) {

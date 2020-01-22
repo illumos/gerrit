@@ -24,7 +24,6 @@
     CATEGORY_RPC: 'RPC Timing',
     // Reported events - alphabetize below.
     APP_STARTED: 'App Started',
-    PAGE_LOADED: 'Page Loaded',
   };
 
   // Plugin-related reporting constants.
@@ -41,22 +40,6 @@
     DETECTED: 'Extension detected',
   };
 
-  // Page visibility related constants.
-  const PAGE_VISIBILITY = {
-    TYPE: 'lifecycle',
-    CATEGORY: 'Page Visibility',
-    // Reported events - alphabetize below.
-    STARTED_HIDDEN: 'hidden',
-  };
-
-  // Frame rate related constants.
-  const JANK = {
-    TYPE: 'lifecycle',
-    CATEGORY: 'UI Latency',
-    // Reported events - alphabetize below.
-    COUNT: 'Jank count',
-  };
-
   // Navigation reporting constants.
   const NAVIGATION = {
     TYPE: 'nav-report',
@@ -69,28 +52,42 @@
     CATEGORY: 'exception',
   };
 
+  const ERROR_DIALOG = {
+    TYPE: 'error',
+    CATEGORY: 'Error Dialog',
+  };
+
   const TIMER = {
     CHANGE_DISPLAYED: 'ChangeDisplayed',
     CHANGE_LOAD_FULL: 'ChangeFullyLoaded',
     DASHBOARD_DISPLAYED: 'DashboardDisplayed',
+    DIFF_VIEW_CONTENT_DISPLAYED: 'DiffViewOnlyContent',
     DIFF_VIEW_DISPLAYED: 'DiffViewDisplayed',
+    DIFF_VIEW_LOAD_FULL: 'DiffViewFullyLoaded',
     FILE_LIST_DISPLAYED: 'FileListDisplayed',
     PLUGINS_LOADED: 'PluginsLoaded',
     STARTUP_CHANGE_DISPLAYED: 'StartupChangeDisplayed',
     STARTUP_CHANGE_LOAD_FULL: 'StartupChangeFullyLoaded',
     STARTUP_DASHBOARD_DISPLAYED: 'StartupDashboardDisplayed',
+    STARTUP_DIFF_VIEW_CONTENT_DISPLAYED: 'StartupDiffViewOnlyContent',
     STARTUP_DIFF_VIEW_DISPLAYED: 'StartupDiffViewDisplayed',
+    STARTUP_DIFF_VIEW_LOAD_FULL: 'StartupDiffViewFullyLoaded',
     STARTUP_FILE_LIST_DISPLAYED: 'StartupFileListDisplayed',
     WEB_COMPONENTS_READY: 'WebComponentsReady',
+    METRICS_PLUGIN_LOADED: 'MetricsPluginLoaded',
   };
 
   const STARTUP_TIMERS = {};
   STARTUP_TIMERS[TIMER.PLUGINS_LOADED] = 0;
+  STARTUP_TIMERS[TIMER.METRICS_PLUGIN_LOADED] = 0;
   STARTUP_TIMERS[TIMER.STARTUP_CHANGE_DISPLAYED] = 0;
   STARTUP_TIMERS[TIMER.STARTUP_CHANGE_LOAD_FULL] = 0;
   STARTUP_TIMERS[TIMER.STARTUP_DASHBOARD_DISPLAYED] = 0;
+  STARTUP_TIMERS[TIMER.STARTUP_DIFF_VIEW_CONTENT_DISPLAYED] = 0;
   STARTUP_TIMERS[TIMER.STARTUP_DIFF_VIEW_DISPLAYED] = 0;
+  STARTUP_TIMERS[TIMER.STARTUP_DIFF_VIEW_LOAD_FULL] = 0;
   STARTUP_TIMERS[TIMER.STARTUP_FILE_LIST_DISPLAYED] = 0;
+  STARTUP_TIMERS[TIMING.APP_STARTED] = 0;
   // WebComponentsReady timer is triggered from gr-router.
   STARTUP_TIMERS[TIMER.WEB_COMPONENTS_READY] = 0;
 
@@ -101,6 +98,11 @@
 
   const pending = [];
 
+  // Variables that hold context info in global scope
+  const loadedPlugins = [];
+  const detectedExtensions = [];
+  let reportRepoName = undefined;
+
   const onError = function(oldOnError, msg, url, line, column, error) {
     if (oldOnError) {
       oldOnError(msg, url, line, column, error);
@@ -108,7 +110,13 @@
     if (error) {
       line = line || error.lineNumber;
       column = column || error.columnNumber;
-      msg = msg || error.toString();
+      let shortenedErrorStack = msg;
+      if (error.stack) {
+        const errorStackLines = error.stack.split('\n');
+        shortenedErrorStack = errorStackLines.slice(0,
+            Math.min(3, errorStackLines.length)).join('\n');
+      }
+      msg = shortenedErrorStack || error.toString();
     }
     const payload = {
       url,
@@ -133,7 +141,24 @@
   };
   catchErrors();
 
-  GrJankDetector.start();
+  // PerformanceObserver interface is a browser API.
+  if (window.PerformanceObserver) {
+    const supportedEntryTypes = PerformanceObserver.supportedEntryTypes || [];
+    // Safari doesn't support longtask yet
+    if (supportedEntryTypes.includes('longtask')) {
+      const catchLongJsTasks = new PerformanceObserver(list => {
+        for (const task of list.getEntries()) {
+          // We are interested in longtask longer than 200 ms (default is 50 ms)
+          if (task.duration > 200) {
+            GrReporting.prototype.reporter(TIMING.TYPE,
+                TIMING.CATEGORY_UI_LATENCY, `Task ${task.name}`,
+                Math.round(task.duration), false);
+          }
+        }
+      });
+      catchLongJsTasks.observe({entryTypes: ['longtask']});
+    }
+  }
 
   // The Polymer pass of JSCompiler requires this to be reassignable
   // eslint-disable-next-line prefer-const
@@ -159,7 +184,7 @@
     },
 
     now() {
-      return window.performance.now();
+      return Math.round(window.performance.now());
     },
 
     _arePluginsLoaded() {
@@ -167,9 +192,22 @@
         !this._baselines.hasOwnProperty(TIMER.PLUGINS_LOADED);
     },
 
+    _isMetricsPluginLoaded() {
+      return this._arePluginsLoaded() || this._baselines &&
+        !this._baselines.hasOwnProperty(TIMER.METRICS_PLUGIN_LOADED);
+    },
+
     reporter(...args) {
-      const report = (this._arePluginsLoaded() && !pending.length) ?
+      const report = (this._isMetricsPluginLoaded() && !pending.length) ?
         this.defaultReporter : this.cachingReporter;
+      const contextInfo = {
+        loadedPlugins,
+        detectedExtensions,
+        repoName: reportRepoName,
+        isInBackgroundTab: document.visibilityState === 'hidden',
+        startTimeMs: this.now(),
+      };
+      args.splice(4, 0, contextInfo);
       report.apply(this, args);
     },
 
@@ -180,23 +218,41 @@
      * @param {string} category
      * @param {string} eventName
      * @param {string|number} eventValue
+     * @param {Object} contextInfo
      * @param {boolean|undefined} opt_noLog If true, the event will not be
      *     logged to the JS console.
      */
-    defaultReporter(type, category, eventName, eventValue, opt_noLog) {
+    defaultReporter(type, category, eventName, eventValue, contextInfo,
+        opt_noLog) {
       const detail = {
         type,
         category,
         name: eventName,
         value: eventValue,
       };
+      if (category === TIMING.CATEGORY_UI_LATENCY && contextInfo) {
+        detail.loadedPlugins = contextInfo.loadedPlugins;
+        detail.detectedExtensions = contextInfo.detectedExtensions;
+      }
+      if (contextInfo && contextInfo.repoName) {
+        detail.repoName = contextInfo.repoName;
+      }
+      if (contextInfo && contextInfo.isInBackgroundTab !== undefined) {
+        detail.inBackgroundTab = contextInfo.isInBackgroundTab;
+      }
+      if (contextInfo && contextInfo.startTimeMs) {
+        detail.eventStart = contextInfo.startTimeMs;
+      }
       document.dispatchEvent(new CustomEvent(type, {detail}));
       if (opt_noLog) { return; }
-      if (type === ERROR.TYPE) {
-        console.error(eventValue.error || eventName);
+      if (type === ERROR.TYPE && category === ERROR.CATEGORY) {
+        console.error(eventValue && eventValue.error || eventName);
       } else {
-        console.log(eventName + (eventValue !== undefined ?
-          (': ' + eventValue) : ''));
+        if (eventValue !== undefined) {
+          console.log(`Reporting: ${eventName}: ${eventValue}`);
+        } else {
+          console.log(`Reporting: ${eventName}`);
+        }
       }
     },
 
@@ -208,68 +264,75 @@
      * @param {string} category
      * @param {string} eventName
      * @param {string|number} eventValue
+     * @param {Object} contextInfo
      * @param {boolean|undefined} opt_noLog If true, the event will not be
      *     logged to the JS console.
      */
-    cachingReporter(type, category, eventName, eventValue, opt_noLog) {
-      if (type === ERROR.TYPE) {
-        console.error(eventValue.error || eventName);
+    cachingReporter(type, category, eventName, eventValue, contextInfo,
+        opt_noLog) {
+      if (type === ERROR.TYPE && category === ERROR.CATEGORY) {
+        console.error(eventValue && eventValue.error || eventName);
       }
-      if (this._arePluginsLoaded()) {
+      if (this._isMetricsPluginLoaded()) {
         if (pending.length) {
           for (const args of pending.splice(0)) {
-            this.reporter(...args);
+            this.defaultReporter(...args);
           }
         }
-        this.reporter(type, category, eventName, eventValue, opt_noLog);
+        this.defaultReporter(type, category, eventName, eventValue, contextInfo,
+            opt_noLog);
       } else {
-        pending.push([type, category, eventName, eventValue, opt_noLog]);
+        pending.push([type, category, eventName, eventValue, contextInfo,
+          opt_noLog]);
       }
     },
 
     /**
      * User-perceived app start time, should be reported when the app is ready.
      */
-    appStarted(hidden) {
-      const startTime =
-          new Date().getTime() - this.performanceTiming.navigationStart;
-      this.reporter(TIMING.TYPE, TIMING.CATEGORY_UI_LATENCY,
-          TIMING.APP_STARTED, startTime);
-      if (hidden) {
-        this.reporter(PAGE_VISIBILITY.TYPE, PAGE_VISIBILITY.CATEGORY,
-            PAGE_VISIBILITY.STARTED_HIDDEN);
-      }
+    appStarted() {
+      this.timeEnd(TIMING.APP_STARTED);
     },
 
     /**
-     * Page load time, should be reported at any time after navigation.
+     * Page load time and other metrics, should be reported at any time
+     * after navigation.
      */
     pageLoaded() {
       if (this.performanceTiming.loadEventEnd === 0) {
         console.error('pageLoaded should be called after window.onload');
         this.async(this.pageLoaded, 100);
       } else {
-        const loadTime = this.performanceTiming.loadEventEnd -
+        const perfEvents = Object.keys(this.performanceTiming.toJSON());
+        perfEvents.forEach(
+            eventName => this._reportPerformanceTiming(eventName)
+        );
+      }
+    },
+
+    _reportPerformanceTiming(eventName) {
+      const eventTiming = this.performanceTiming[eventName];
+      if (eventTiming > 0) {
+        const elapsedTime = eventTiming -
             this.performanceTiming.navigationStart;
+        // NavResTime - Navigation and resource timings.
         this.reporter(TIMING.TYPE, TIMING.CATEGORY_UI_LATENCY,
-            TIMING.PAGE_LOADED, loadTime);
+            `NavResTime - ${eventName}`, elapsedTime, true);
       }
     },
 
     beforeLocationChanged() {
-      if (GrJankDetector.jank > 0) {
-        this.reporter(
-            JANK.TYPE, JANK.CATEGORY, JANK.COUNT, GrJankDetector.jank);
-        GrJankDetector.jank = 0;
-      }
       for (const prop of Object.keys(this._baselines)) {
         delete this._baselines[prop];
       }
       this.time(TIMER.CHANGE_DISPLAYED);
       this.time(TIMER.CHANGE_LOAD_FULL);
       this.time(TIMER.DASHBOARD_DISPLAYED);
+      this.time(TIMER.DIFF_VIEW_CONTENT_DISPLAYED);
       this.time(TIMER.DIFF_VIEW_DISPLAYED);
+      this.time(TIMER.DIFF_VIEW_LOAD_FULL);
       this.time(TIMER.FILE_LIST_DISPLAYED);
+      reportRepoName = undefined;
     },
 
     locationChanged(page) {
@@ -309,6 +372,23 @@
       }
     },
 
+    diffViewFullyLoaded() {
+      if (this._baselines.hasOwnProperty(TIMER.STARTUP_DIFF_VIEW_LOAD_FULL)) {
+        this.timeEnd(TIMER.STARTUP_DIFF_VIEW_LOAD_FULL);
+      } else {
+        this.timeEnd(TIMER.DIFF_VIEW_LOAD_FULL);
+      }
+    },
+
+    diffViewContentDisplayed() {
+      if (this._baselines.hasOwnProperty(
+          TIMER.STARTUP_DIFF_VIEW_CONTENT_DISPLAYED)) {
+        this.timeEnd(TIMER.STARTUP_DIFF_VIEW_CONTENT_DISPLAYED);
+      } else {
+        this.timeEnd(TIMER.DIFF_VIEW_CONTENT_DISPLAYED);
+      }
+    },
+
     fileListDisplayed() {
       if (this._baselines.hasOwnProperty(TIMER.STARTUP_FILE_LIST_DISPLAYED)) {
         this.timeEnd(TIMER.STARTUP_FILE_LIST_DISPLAYED);
@@ -319,6 +399,16 @@
 
     reportExtension(name) {
       this.reporter(EXTENSION.TYPE, EXTENSION.DETECTED, name);
+      if (!detectedExtensions.includes(name)) {
+        detectedExtensions.push(name);
+      }
+    },
+
+    pluginLoaded(name) {
+      if (name.startsWith('metrics-')) {
+        this.timeEnd(TIMER.METRICS_PLUGIN_LOADED);
+      }
+      loadedPlugins.push(name);
     },
 
     pluginsLoaded(pluginsList) {
@@ -332,6 +422,7 @@
      */
     time(name) {
       this._baselines[name] = this.now();
+      window.performance.mark(`${name}-start`);
     },
 
     /**
@@ -340,8 +431,18 @@
     timeEnd(name) {
       if (!this._baselines.hasOwnProperty(name)) { return; }
       const baseTime = this._baselines[name];
-      this._reportTiming(name, this.now() - baseTime);
       delete this._baselines[name];
+      this._reportTiming(name, this.now() - baseTime);
+
+      // Finalize the interval. Either from a registered start mark or
+      // the navigation start time (if baseTime is 0).
+      if (baseTime !== 0) {
+        window.performance.measure(name, `${name}-start`);
+      } else {
+        // Microsft Edge does not handle the 2nd param correctly
+        // (if undefined).
+        window.performance.measure(name);
+      }
     },
 
     /**
@@ -360,7 +461,7 @@
 
       // Guard against division by zero.
       if (!denominator) { return; }
-      const time = Math.round(this.now() - baseTime);
+      const time = this.now() - baseTime;
       this._reportTiming(averageName, time / denominator);
     },
 
@@ -371,8 +472,7 @@
      * @param {number} time The time to report as an integer of milliseconds.
      */
     _reportTiming(name, time) {
-      this.reporter(TIMING.TYPE, TIMING.CATEGORY_UI_LATENCY, name,
-          Math.round(time));
+      this.reporter(TIMING.TYPE, TIMING.CATEGORY_UI_LATENCY, name, time);
     },
 
     /**
@@ -457,6 +557,15 @@
 
       // Mark the time and reinitialize the timer.
       timer.end().reset();
+    },
+
+    reportErrorDialog(message) {
+      this.reporter(ERROR_DIALOG.TYPE, ERROR_DIALOG.CATEGORY,
+          'ErrorDialog: ' + message, {error: new Error(message)});
+    },
+
+    setRepoName(repoName) {
+      reportRepoName = repoName;
     },
   });
 

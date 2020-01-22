@@ -16,6 +16,7 @@ package com.google.gerrit.acceptance.api.project;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.gerrit.acceptance.GitUtil.pushHead;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toSet;
 
@@ -50,7 +51,7 @@ public class CheckProjectIT extends AbstractDaemonTest {
   @Test
   public void noProblem() throws Exception {
     PushOneCommit.Result r = createChange("refs/for/master");
-    String branch = r.getChange().change().getDest().get();
+    String branch = r.getChange().change().getDest().branch();
 
     ChangeInfo info = gApi.changes().id(r.getChange().getId().get()).info();
     assertThat(info.status).isEqualTo(ChangeStatus.NEW);
@@ -115,7 +116,7 @@ public class CheckProjectIT extends AbstractDaemonTest {
   @Test
   public void detectAutoCloseableChangeByChangeId() throws Exception {
     PushOneCommit.Result r = createChange("refs/for/master");
-    String branch = r.getChange().change().getDest().get();
+    String branch = r.getChange().change().getDest().branch();
 
     RevCommit amendedCommit = serverSideTestRepo.amend(r.getCommit()).create();
     serverSideTestRepo.branch(branch).update(amendedCommit);
@@ -138,7 +139,7 @@ public class CheckProjectIT extends AbstractDaemonTest {
   @Test
   public void fixAutoCloseableChangeByChangeId() throws Exception {
     PushOneCommit.Result r = createChange("refs/for/master");
-    String branch = r.getChange().change().getDest().get();
+    String branch = r.getChange().change().getDest().branch();
 
     RevCommit amendedCommit = serverSideTestRepo.amend(r.getCommit()).create();
     serverSideTestRepo.branch(branch).update(amendedCommit);
@@ -162,7 +163,7 @@ public class CheckProjectIT extends AbstractDaemonTest {
   @Test
   public void maxCommits() throws Exception {
     PushOneCommit.Result r = createChange("refs/for/master");
-    String branch = r.getChange().change().getDest().get();
+    String branch = r.getChange().change().getDest().branch();
 
     RevCommit amendedCommit = serverSideTestRepo.amend(r.getCommit()).create();
     serverSideTestRepo.branch(branch).update(amendedCommit);
@@ -196,7 +197,7 @@ public class CheckProjectIT extends AbstractDaemonTest {
   @Test
   public void skipCommits() throws Exception {
     PushOneCommit.Result r = createChange("refs/for/master");
-    String branch = r.getChange().change().getDest().get();
+    String branch = r.getChange().change().getDest().branch();
 
     RevCommit amendedCommit = serverSideTestRepo.amend(r.getCommit()).create();
     serverSideTestRepo.branch(branch).update(amendedCommit);
@@ -232,18 +233,21 @@ public class CheckProjectIT extends AbstractDaemonTest {
     CheckProjectInput input = new CheckProjectInput();
     input.autoCloseableChangesCheck = new AutoCloseableChangesCheckInput();
 
-    exception.expect(BadRequestException.class);
-    exception.expectMessage("branch is required");
-    gApi.projects().name(project.get()).check(input);
+    BadRequestException thrown =
+        assertThrows(
+            BadRequestException.class, () -> gApi.projects().name(project.get()).check(input));
+    assertThat(thrown).hasMessageThat().contains("branch is required");
   }
 
   @Test
   public void nonExistingBranch() throws Exception {
     CheckProjectInput input = checkProjectInputForAutoCloseableCheck("non-existing");
 
-    exception.expect(UnprocessableEntityException.class);
-    exception.expectMessage("branch 'non-existing' not found");
-    gApi.projects().name(project.get()).check(input);
+    UnprocessableEntityException thrown =
+        assertThrows(
+            UnprocessableEntityException.class,
+            () -> gApi.projects().name(project.get()).check(input));
+    assertThat(thrown).hasMessageThat().contains("branch 'non-existing' not found");
   }
 
   @Test
@@ -266,11 +270,14 @@ public class CheckProjectIT extends AbstractDaemonTest {
     input.autoCloseableChangesCheck.maxCommits =
         ProjectsConsistencyChecker.AUTO_CLOSE_MAX_COMMITS_LIMIT + 1;
 
-    exception.expect(BadRequestException.class);
-    exception.expectMessage(
-        "max commits can at most be set to "
-            + ProjectsConsistencyChecker.AUTO_CLOSE_MAX_COMMITS_LIMIT);
-    gApi.projects().name(project.get()).check(input);
+    BadRequestException thrown =
+        assertThrows(
+            BadRequestException.class, () -> gApi.projects().name(project.get()).check(input));
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains(
+            "max commits can at most be set to "
+                + ProjectsConsistencyChecker.AUTO_CLOSE_MAX_COMMITS_LIMIT);
   }
 
   private RevCommit pushCommitWithoutChangeIdForReview() throws Exception {
@@ -280,10 +287,12 @@ public class CheckProjectIT extends AbstractDaemonTest {
             .branch("HEAD")
             .commit()
             .message("A change")
-            .author(admin.getIdent())
-            .committer(new PersonIdent(admin.getIdent(), testRepo.getDate()))
+            .insertChangeId()
+            .author(admin.newIdent())
+            .committer(new PersonIdent(admin.newIdent(), testRepo.getDate()))
             .create();
     pushHead(testRepo, "refs/for/master");
+
     return commit;
   }
 

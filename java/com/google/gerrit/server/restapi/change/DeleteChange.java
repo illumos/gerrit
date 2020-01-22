@@ -16,57 +16,48 @@ package com.google.gerrit.server.restapi.change;
 
 import static com.google.gerrit.extensions.conditions.BooleanCondition.and;
 
+import com.google.gerrit.entities.Change;
 import com.google.gerrit.extensions.common.Input;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
+import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.extensions.webui.UiAction;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.change.DeleteChangeOp;
 import com.google.gerrit.server.permissions.ChangePermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.update.BatchUpdate;
-import com.google.gerrit.server.update.Order;
-import com.google.gerrit.server.update.RetryHelper;
-import com.google.gerrit.server.update.RetryingRestModifyView;
 import com.google.gerrit.server.update.UpdateException;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 
 @Singleton
-public class DeleteChange extends RetryingRestModifyView<ChangeResource, Input, Response<?>>
-    implements UiAction<ChangeResource> {
-
-  private final Provider<ReviewDb> db;
-  private final Provider<DeleteChangeOp> opProvider;
+public class DeleteChange
+    implements RestModifyView<ChangeResource, Input>, UiAction<ChangeResource> {
+  private final BatchUpdate.Factory updateFactory;
+  private final DeleteChangeOp.Factory opFactory;
 
   @Inject
-  public DeleteChange(
-      Provider<ReviewDb> db, RetryHelper retryHelper, Provider<DeleteChangeOp> opProvider) {
-    super(retryHelper);
-    this.db = db;
-    this.opProvider = opProvider;
+  public DeleteChange(BatchUpdate.Factory updateFactory, DeleteChangeOp.Factory opFactory) {
+    this.updateFactory = updateFactory;
+    this.opFactory = opFactory;
   }
 
   @Override
-  protected Response<?> applyImpl(
-      BatchUpdate.Factory updateFactory, ChangeResource rsrc, Input input)
+  public Response<Object> apply(ChangeResource rsrc, Input input)
       throws RestApiException, UpdateException, PermissionBackendException {
-    if (!isChangeDeletable(rsrc.getChange().getStatus())) {
+    if (!isChangeDeletable(rsrc)) {
       throw new MethodNotAllowedException("delete not permitted");
     }
-    rsrc.permissions().database(db).check(ChangePermission.DELETE);
+    rsrc.permissions().check(ChangePermission.DELETE);
 
     try (BatchUpdate bu =
-        updateFactory.create(db.get(), rsrc.getProject(), rsrc.getUser(), TimeUtil.nowTs())) {
+        updateFactory.create(rsrc.getProject(), rsrc.getUser(), TimeUtil.nowTs())) {
       Change.Id id = rsrc.getChange().getId();
-      bu.setOrder(Order.DB_BEFORE_REPO);
-      bu.addOp(id, opProvider.get());
+      bu.addOp(id, opFactory.create(id));
       bu.execute();
     }
     return Response.none();
@@ -74,16 +65,16 @@ public class DeleteChange extends RetryingRestModifyView<ChangeResource, Input, 
 
   @Override
   public UiAction.Description getDescription(ChangeResource rsrc) {
-    Change.Status status = rsrc.getChange().getStatus();
-    PermissionBackend.ForChange perm = rsrc.permissions().database(db);
+    PermissionBackend.ForChange perm = rsrc.permissions();
     return new UiAction.Description()
         .setLabel("Delete")
         .setTitle("Delete change " + rsrc.getId())
-        .setVisible(and(isChangeDeletable(status), perm.testCond(ChangePermission.DELETE)));
+        .setVisible(and(isChangeDeletable(rsrc), perm.testCond(ChangePermission.DELETE)));
   }
 
-  private static boolean isChangeDeletable(Change.Status status) {
-    if (status == Change.Status.MERGED) {
+  private static boolean isChangeDeletable(ChangeResource rsrc) {
+    Change change = rsrc.getChange();
+    if (change.isMerged()) {
       // Merged changes should never be deleted.
       return false;
     }

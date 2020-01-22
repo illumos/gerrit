@@ -14,94 +14,63 @@
 
 package com.google.gerrit.server.notedb;
 
-import com.google.gerrit.metrics.Counter1;
 import com.google.gerrit.metrics.Description;
 import com.google.gerrit.metrics.Description.Units;
-import com.google.gerrit.metrics.Field;
 import com.google.gerrit.metrics.MetricMaker;
-import com.google.gerrit.metrics.Timer1;
+import com.google.gerrit.metrics.Timer0;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 
+/** Metrics for accessing and updating changes in NoteDb. */
 @Singleton
 class NoteDbMetrics {
   /** End-to-end latency for writing a collection of updates. */
-  final Timer1<NoteDbTable> updateLatency;
+  final Timer0 updateLatency;
 
   /**
    * The portion of {@link #updateLatency} due to preparing the sequence of updates.
    *
    * <p>May include some I/O (e.g. reading old refs), but excludes writes.
    */
-  final Timer1<NoteDbTable> stageUpdateLatency;
+  final Timer0 stageUpdateLatency;
 
   /** End-to-end latency for reading changes from NoteDb, including reading ref(s) and parsing. */
-  final Timer1<NoteDbTable> readLatency;
+  final Timer0 readLatency;
 
   /**
    * The portion of {@link #readLatency} due to parsing commits, but excluding I/O (to a best
    * effort).
    */
-  final Timer1<NoteDbTable> parseLatency;
-
-  /**
-   * Latency due to auto-rebuilding entities when out of date.
-   *
-   * <p>Excludes latency from reading ref to check whether the entity is up to date.
-   */
-  final Timer1<NoteDbTable> autoRebuildLatency;
-
-  /** Count of auto-rebuild attempts that failed. */
-  final Counter1<NoteDbTable> autoRebuildFailureCount;
+  final Timer0 parseLatency;
 
   @Inject
   NoteDbMetrics(MetricMaker metrics) {
-    Field<NoteDbTable> view = Field.ofEnum(NoteDbTable.class, "table");
-
     updateLatency =
         metrics.newTimer(
             "notedb/update_latency",
-            new Description("NoteDb update latency by table")
+            new Description("NoteDb update latency for changes")
                 .setCumulative()
-                .setUnit(Units.MILLISECONDS),
-            view);
+                .setUnit(Units.MILLISECONDS));
 
     stageUpdateLatency =
         metrics.newTimer(
             "notedb/stage_update_latency",
-            new Description("Latency for staging updates to NoteDb by table")
+            new Description("Latency for staging change updates to NoteDb")
                 .setCumulative()
-                .setUnit(Units.MICROSECONDS),
-            view);
+                .setUnit(Units.MICROSECONDS));
 
     readLatency =
         metrics.newTimer(
             "notedb/read_latency",
-            new Description("NoteDb read latency by table")
+            new Description("NoteDb read latency for changes")
                 .setCumulative()
-                .setUnit(Units.MILLISECONDS),
-            view);
+                .setUnit(Units.MILLISECONDS));
 
     parseLatency =
         metrics.newTimer(
             "notedb/parse_latency",
-            new Description("NoteDb parse latency by table")
+            new Description("NoteDb parse latency for changes")
                 .setCumulative()
-                .setUnit(Units.MICROSECONDS),
-            view);
-
-    autoRebuildLatency =
-        metrics.newTimer(
-            "notedb/auto_rebuild_latency",
-            new Description("NoteDb auto-rebuilding latency by table")
-                .setCumulative()
-                .setUnit(Units.MILLISECONDS),
-            view);
-
-    autoRebuildFailureCount =
-        metrics.newCounter(
-            "notedb/auto_rebuild_failure_count",
-            new Description("NoteDb auto-rebuilding attempts that failed by table").setCumulative(),
-            view);
+                .setUnit(Units.MICROSECONDS));
   }
 }

@@ -15,11 +15,12 @@
 package com.google.gerrit.sshd.commands;
 
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.changes.AddReviewerInput;
 import com.google.gerrit.extensions.api.changes.DeleteReviewerInput;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.change.ReviewerResource;
 import com.google.gerrit.server.permissions.PermissionBackendException;
@@ -29,7 +30,6 @@ import com.google.gerrit.server.restapi.change.PostReviewers;
 import com.google.gerrit.sshd.ChangeArgumentParser;
 import com.google.gerrit.sshd.CommandMetaData;
 import com.google.gerrit.sshd.SshCommand;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -75,7 +75,7 @@ public class SetReviewersCommand extends SshCommand {
       changeArgumentParser.addChange(token, changes, projectState);
     } catch (IOException | UnloggedFailure e) {
       throw new IllegalArgumentException(e.getMessage(), e);
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       throw new IllegalArgumentException("database is down", e);
     } catch (PermissionBackendException e) {
       throw new IllegalArgumentException("can't check permissions", e);
@@ -141,7 +141,7 @@ public class SetReviewersCommand extends SshCommand {
       input.confirmed = true;
       String error;
       try {
-        error = postReviewers.apply(changeRsrc, input).error;
+        error = postReviewers.apply(changeRsrc, input).value().error;
       } catch (Exception e) {
         error = String.format("could not add %s: %s", reviewer, e.getMessage());
       }

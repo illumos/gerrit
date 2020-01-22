@@ -18,15 +18,19 @@ import static java.util.Objects.requireNonNull;
 
 import com.google.common.collect.Lists;
 import com.google.common.flogger.FluentLogger;
-import com.google.gerrit.extensions.registration.DynamicSet;
 import com.google.gerrit.index.Index;
 import com.google.gerrit.index.IndexCollection;
 import com.google.gerrit.index.IndexDefinition;
 import com.google.gerrit.index.SiteIndexer;
-import java.io.IOException;
+import com.google.gerrit.server.plugincontext.PluginSetContext;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * Background thread for running an index schema upgrade by reindexing all documents in an index
+ * using the new version. Intended to be run while Gerrit is serving traffic to prepare for a
+ * near-zero downtime upgrade.
+ */
 public class OnlineReindexer<K, V, I extends Index<K, V>> {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
@@ -35,7 +39,7 @@ public class OnlineReindexer<K, V, I extends Index<K, V>> {
   private final SiteIndexer<K, V, I> batchIndexer;
   private final int oldVersion;
   private final int newVersion;
-  private final DynamicSet<OnlineUpgradeListener> listeners;
+  private final PluginSetContext<OnlineUpgradeListener> listeners;
   private I index;
   private final AtomicBoolean running = new AtomicBoolean();
 
@@ -43,7 +47,7 @@ public class OnlineReindexer<K, V, I extends Index<K, V>> {
       IndexDefinition<K, V, I> def,
       int oldVersion,
       int newVersion,
-      DynamicSet<OnlineUpgradeListener> listeners) {
+      PluginSetContext<OnlineUpgradeListener> listeners) {
     this.name = def.getName();
     this.indexes = def.getIndexCollection();
     this.batchIndexer = def.getSiteIndexer();
@@ -52,39 +56,38 @@ public class OnlineReindexer<K, V, I extends Index<K, V>> {
     this.listeners = listeners;
   }
 
+  /** Starts the background process. */
   public void start() {
     if (running.compareAndSet(false, true)) {
       Thread t =
-          new Thread() {
-            @Override
-            public void run() {
-              boolean ok = false;
-              try {
-                reindex();
-                ok = true;
-              } catch (IOException e) {
-                logger.atSevere().withCause(e).log(
-                    "Online reindex of %s schema version %s failed", name, version(index));
-              } finally {
-                running.set(false);
-                if (!ok) {
-                  for (OnlineUpgradeListener listener : listeners) {
-                    listener.onFailure(name, oldVersion, newVersion);
+          new Thread(
+              () -> {
+                boolean ok = false;
+                try {
+                  reindex();
+                  ok = true;
+                } catch (RuntimeException e) {
+                  logger.atSevere().withCause(e).log(
+                      "Online reindex of %s schema version %s failed", name, version(index));
+                } finally {
+                  running.set(false);
+                  if (!ok) {
+                    listeners.runEach(listener -> listener.onFailure(name, oldVersion, newVersion));
                   }
                 }
-              }
-            }
-          };
+              });
       t.setName(
           String.format("Reindex %s v%d-v%d", name, version(indexes.getSearchIndex()), newVersion));
       t.start();
     }
   }
 
+  /** Returns {@code true} if the background indexer is currently running. */
   public boolean isRunning() {
     return running.get();
   }
 
+  /** Returns the index version that this indexer is creating documents for. */
   public int getVersion() {
     return newVersion;
   }
@@ -93,10 +96,8 @@ public class OnlineReindexer<K, V, I extends Index<K, V>> {
     return i.getSchema().getVersion();
   }
 
-  private void reindex() throws IOException {
-    for (OnlineUpgradeListener listener : listeners) {
-      listener.onStart(name, oldVersion, newVersion);
-    }
+  private void reindex() {
+    listeners.runEach(listener -> listener.onStart(name, oldVersion, newVersion));
     index =
         requireNonNull(
             indexes.getWriteIndex(newVersion),
@@ -118,19 +119,17 @@ public class OnlineReindexer<K, V, I extends Index<K, V>> {
     }
     logger.atInfo().log("Reindex %s to version %s complete", name, version(index));
     activateIndex();
-    for (OnlineUpgradeListener listener : listeners) {
-      listener.onSuccess(name, oldVersion, newVersion);
-    }
+    listeners.runEach(listener -> listener.onSuccess(name, oldVersion, newVersion));
   }
 
+  /**
+   * Switches the search index from the old version to the new version. This method should be called
+   * when the new version is fully ready.
+   */
   public void activateIndex() {
     indexes.setSearchIndex(index);
     logger.atInfo().log("Using %s schema version %s", name, version(index));
-    try {
-      index.markReady(true);
-    } catch (IOException e) {
-      logger.atWarning().log("Error activating new %s schema version %s", name, version(index));
-    }
+    index.markReady(true);
 
     List<I> toRemove = Lists.newArrayListWithExpectedSize(1);
     for (I i : indexes.getWriteIndexes()) {
@@ -139,12 +138,8 @@ public class OnlineReindexer<K, V, I extends Index<K, V>> {
       }
     }
     for (I i : toRemove) {
-      try {
-        i.markReady(false);
-        indexes.removeWriteIndex(version(i));
-      } catch (IOException e) {
-        logger.atWarning().log("Error deactivating old %s schema version %s", name, version(i));
-      }
+      i.markReady(false);
+      indexes.removeWriteIndex(version(i));
     }
   }
 }

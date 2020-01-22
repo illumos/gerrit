@@ -19,9 +19,11 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-repo-detail-list</title>
 
-<script src="../../../bower_components/page/page.js"></script>
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/page/page.js"></script>
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-repo-detail-list.html">
 
@@ -295,9 +297,10 @@ limitations under the License.
 
     suite('filter', () => {
       test('_paramsChanged', done => {
-        sandbox.stub(element.$.restAPI, 'getRepoBranches', () => {
-          return Promise.resolve(branches);
-        });
+        sandbox.stub(
+            element.$.restAPI,
+            'getRepoBranches',
+            () => Promise.resolve(branches));
         const params = {
           detail: 'branches',
           repo: 'test',
@@ -478,9 +481,10 @@ limitations under the License.
 
     suite('filter', () => {
       test('_paramsChanged', done => {
-        sandbox.stub(element.$.restAPI, 'getRepoTags', () => {
-          return Promise.resolve(tags);
-        });
+        sandbox.stub(
+            element.$.restAPI,
+            'getRepoTags',
+            () => Promise.resolve(tags));
         const params = {
           repo: 'test',
           detail: 'tags',

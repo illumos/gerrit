@@ -16,6 +16,7 @@ package com.google.gerrit.server.restapi.change;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toMap;
 
 import com.google.auto.value.AutoValue;
 import com.google.common.annotations.VisibleForTesting;
@@ -24,11 +25,10 @@ import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.MultimapBuilder;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.permissions.ChangePermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
@@ -36,9 +36,7 @@ import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import java.util.ArrayDeque;
@@ -61,28 +59,33 @@ import org.eclipse.jgit.revwalk.RevWalk;
 class RelatedChangesSorter {
   private final GitRepositoryManager repoManager;
   private final PermissionBackend permissionBackend;
-  private final Provider<ReviewDb> dbProvider;
   private final ProjectCache projectCache;
 
   @Inject
   RelatedChangesSorter(
       GitRepositoryManager repoManager,
       PermissionBackend permissionBackend,
-      Provider<ReviewDb> dbProvider,
       ProjectCache projectCache) {
     this.repoManager = repoManager;
     this.permissionBackend = permissionBackend;
-    this.dbProvider = dbProvider;
     this.projectCache = projectCache;
   }
 
   public List<PatchSetData> sort(List<ChangeData> in, PatchSet startPs)
-      throws OrmException, IOException, PermissionBackendException {
+      throws IOException, PermissionBackendException {
     checkArgument(!in.isEmpty(), "Input may not be empty");
     // Map of all patch sets, keyed by commit SHA-1.
-    Map<String, PatchSetData> byId = collectById(in);
-    PatchSetData start = byId.get(startPs.getRevision().get());
-    checkArgument(start != null, "%s not found in %s", startPs, in);
+    Map<ObjectId, PatchSetData> byId = collectById(in);
+    PatchSetData start = byId.get(startPs.commitId());
+    requireNonNull(
+        start,
+        () ->
+            String.format(
+                "commit %s of patch set %s not found in %s",
+                startPs.commitId().name(),
+                startPs.id(),
+                byId.entrySet().stream()
+                    .collect(toMap(e -> e.getKey().name(), e -> e.getValue().patchSet().id()))));
 
     // Map of patch set -> immediate parent.
     ListMultimap<PatchSetData, PatchSetData> parents =
@@ -95,12 +98,12 @@ class RelatedChangesSorter {
 
     for (ChangeData cd : in) {
       for (PatchSet ps : cd.patchSets()) {
-        PatchSetData thisPsd = requireNonNull(byId.get(ps.getRevision().get()));
-        if (cd.getId().equals(start.id()) && !ps.getId().equals(start.psId())) {
+        PatchSetData thisPsd = requireNonNull(byId.get(ps.commitId()));
+        if (cd.getId().equals(start.id()) && !ps.id().equals(start.psId())) {
           otherPatchSetsOfStart.add(thisPsd);
         }
         for (RevCommit p : thisPsd.commit().getParents()) {
-          PatchSetData parentPsd = byId.get(p.name());
+          PatchSetData parentPsd = byId.get(p);
           if (parentPsd != null) {
             parents.put(thisPsd, parentPsd);
             children.put(parentPsd, thisPsd);
@@ -118,10 +121,9 @@ class RelatedChangesSorter {
     return result;
   }
 
-  private Map<String, PatchSetData> collectById(List<ChangeData> in)
-      throws OrmException, IOException {
+  private Map<ObjectId, PatchSetData> collectById(List<ChangeData> in) throws IOException {
     Project.NameKey project = in.get(0).change().getProject();
-    Map<String, PatchSetData> result = Maps.newHashMapWithExpectedSize(in.size() * 3);
+    Map<ObjectId, PatchSetData> result = Maps.newHashMapWithExpectedSize(in.size() * 3);
     try (Repository repo = repoManager.openRepository(project);
         RevWalk rw = new RevWalk(repo)) {
       rw.setRetainBody(true);
@@ -133,10 +135,9 @@ class RelatedChangesSorter {
             project,
             cd.change().getProject());
         for (PatchSet ps : cd.patchSets()) {
-          String id = ps.getRevision().get();
-          RevCommit c = rw.parseCommit(ObjectId.fromString(id));
+          RevCommit c = rw.parseCommit(ps.commitId());
           PatchSetData psd = PatchSetData.create(cd, ps, c);
-          result.put(id, psd);
+          result.put(ps.commitId(), psd);
         }
       }
     }
@@ -235,7 +236,7 @@ class RelatedChangesSorter {
   }
 
   private boolean isVisible(PatchSetData psd) throws PermissionBackendException, IOException {
-    PermissionBackend.WithUser perm = permissionBackend.currentUser().database(dbProvider);
+    PermissionBackend.WithUser perm = permissionBackend.currentUser();
     try {
       perm.change(psd.data()).check(ChangePermission.READ);
     } catch (AuthException e) {
@@ -259,25 +260,25 @@ class RelatedChangesSorter {
     abstract RevCommit commit();
 
     PatchSet.Id psId() {
-      return patchSet().getId();
+      return patchSet().id();
     }
 
     Change.Id id() {
-      return psId().getParentKey();
+      return psId().changeId();
     }
 
     @Override
-    public int hashCode() {
-      return Objects.hash(patchSet().getId(), commit());
+    public final int hashCode() {
+      return Objects.hash(patchSet().id(), commit());
     }
 
     @Override
-    public boolean equals(Object obj) {
+    public final boolean equals(Object obj) {
       if (!(obj instanceof PatchSetData)) {
         return false;
       }
       PatchSetData o = (PatchSetData) obj;
-      return Objects.equals(patchSet().getId(), o.patchSet().getId())
+      return Objects.equals(patchSet().id(), o.patchSet().id())
           && Objects.equals(commit(), o.commit());
     }
   }

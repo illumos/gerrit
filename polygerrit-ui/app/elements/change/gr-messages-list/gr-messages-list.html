@@ -15,8 +15,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
-<link rel="import" href="../../../bower_components/paper-toggle-button/paper-toggle-button.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/paper-toggle-button/paper-toggle-button.html">
 <link rel="import" href="../../core/gr-reporting/gr-reporting.html">
 <link rel="import" href="../../shared/gr-button/gr-button.html">
 <link rel="import" href="../gr-message/gr-message.html">
@@ -38,10 +38,10 @@ limitations under the License.
         display: flex;
         justify-content: space-between;
         min-height: 3.2em;
-        padding: .5em var(--default-horizontal-margin);
+        padding: var(--spacing-s) var(--spacing-l);
       }
       #messageControlsContainer {
-        padding: 0 var(--default-horizontal-margin);
+        padding: 0 var(--spacing-l);
       }
       .highlighted {
         animation: 3s fadeOut;
@@ -58,7 +58,7 @@ limitations under the License.
         justify-content: center;
       }
       #messageControlsContainer gr-button {
-        padding: 0.4em 0;
+        padding: var(--spacing-s) 0;
       }
       .container {
         align-items: center;
@@ -78,14 +78,14 @@ limitations under the License.
         <gr-button
             id="collapse-messages"
             link
-            on-tap="_handleExpandCollapseTap">
+            on-click="_handleExpandCollapseTap">
           [[_computeExpandCollapseMessage(_expanded)]]
         </gr-button>
       </div>
     <span
         id="messageControlsContainer"
         hidden$="[[_computeShowHideTextHidden(_visibleMessages, _processedMessages, _hideAutomated, _visibleMessages.length)]]">
-      <gr-button id="oldMessagesBtn" link on-tap="_handleShowAllTap">
+      <gr-button id="oldMessagesBtn" link on-click="_handleShowAllTap">
           [[_computeNumMessagesText(_visibleMessages, _processedMessages, _hideAutomated, _visibleMessages.length)]]
       </gr-button>
       <span
@@ -93,7 +93,7 @@ limitations under the License.
           hidden$="[[_computeIncrementHidden(_visibleMessages, _processedMessages, _hideAutomated, _visibleMessages.length)]]">
         <span class="transparent separator"></span>
         <gr-button id="incrementMessagesBtn" link
-            on-tap="_handleIncrementShownMessages">
+            on-click="_handleIncrementShownMessages">
           [[_computeIncrementText(_visibleMessages, _processedMessages, _hideAutomated, _visibleMessages.length)]]
         </gr-button>
       </span>
@@ -109,7 +109,7 @@ limitations under the License.
           hide-automated="[[_hideAutomated]]"
           project-name="[[projectName]]"
           show-reply-button="[[showReplyButtons]]"
-          on-scroll-to="_handleScrollTo"
+          on-message-anchor-tap="_handleAnchorClick"
           label-extremes="[[_labelExtremes]]"
           data-message-id$="[[message.id]]"></gr-message>
     </template>

@@ -15,24 +15,69 @@
 package com.google.gerrit.acceptance.server.mail;
 
 import static com.google.common.truth.Truth.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
+import com.google.gerrit.acceptance.testsuite.account.AccountOperations;
+import com.google.gerrit.extensions.annotations.Exports;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.ChangeMessageInfo;
 import com.google.gerrit.extensions.common.CommentInfo;
+import com.google.gerrit.extensions.config.FactoryModule;
+import com.google.gerrit.extensions.validators.CommentForValidation;
+import com.google.gerrit.extensions.validators.CommentValidationContext;
+import com.google.gerrit.extensions.validators.CommentValidator;
 import com.google.gerrit.mail.MailMessage;
 import com.google.gerrit.mail.MailProcessingUtil;
 import com.google.gerrit.server.mail.receive.MailProcessor;
 import com.google.gerrit.testing.FakeEmailSender.Message;
+import com.google.gerrit.testing.TestCommentHelper;
 import com.google.inject.Inject;
+import com.google.inject.Module;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Collection;
 import java.util.List;
+import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 public class MailProcessorIT extends AbstractMailIT {
   @Inject private MailProcessor mailProcessor;
+  @Inject private AccountOperations accountOperations;
+  @Inject private TestCommentHelper testCommentHelper;
+
+  private static final CommentValidator mockCommentValidator = mock(CommentValidator.class);
+
+  private static final String COMMENT_TEXT = "The comment text";
+
+  @Override
+  public Module createModule() {
+    return new FactoryModule() {
+      @Override
+      public void configure() {
+        bind(CommentValidator.class)
+            .annotatedWith(Exports.named(mockCommentValidator.getClass()))
+            .toInstance(mockCommentValidator);
+        bind(CommentValidator.class).toInstance(mockCommentValidator);
+      }
+    };
+  }
+
+  @BeforeClass
+  public static void setUpMock() {
+    // Let the mock comment validator accept all comments during test setup.
+    when(mockCommentValidator.validateComments(any(), any())).thenReturn(ImmutableList.of());
+  }
+
+  @Before
+  public void setUp() {
+    clearInvocations(mockCommentValidator);
+  }
 
   @Test
   public void parseAndPersistChangeMessage() throws Exception {
@@ -163,16 +208,13 @@ public class MailProcessorIT extends AbstractMailIT {
     b.textContent(txt + textFooterForChange(changeInfo._number, ts));
 
     // Set account state to inactive
-    gApi.accounts().id("user").setActive(false);
+    accountOperations.account(user.id()).forUpdate().inactive().update();
 
     mailProcessor.process(b.build());
     comments = gApi.changes().id(changeId).current().commentsAsList();
 
     // Check that comment size has not changed
     assertThat(comments).hasSize(2);
-
-    // Reset
-    gApi.accounts().id("user").setActive(true);
   }
 
   @Test
@@ -190,7 +232,7 @@ public class MailProcessorIT extends AbstractMailIT {
         newPlaintextBody(getChangeUrl(changeInfo) + "/1", "Test Message", null, null, null);
     MailMessage.Builder b =
         messageBuilderWithDefaultFields()
-            .from(user.emailAddress)
+            .from(user.getEmailAddress())
             .textContent(txt + textFooterForChange(changeInfo._number, ts));
 
     sender.clear();
@@ -212,7 +254,7 @@ public class MailProcessorIT extends AbstractMailIT {
         newPlaintextBody(getChangeUrl(changeInfo) + "/1", "Test Message", null, null, null);
     MailMessage.Builder b =
         messageBuilderWithDefaultFields()
-            .from(user.emailAddress)
+            .from(user.getEmailAddress())
             .textContent(txt + textFooterForChange(changeInfo._number, ts));
 
     sender.clear();
@@ -224,7 +266,92 @@ public class MailProcessorIT extends AbstractMailIT {
     assertThat(message.headers()).containsKey("Subject");
   }
 
+  @Test
+  public void validateChangeMessage_rejected() throws Exception {
+    String changeId = createChangeWithReview();
+    ChangeInfo changeInfo = gApi.changes().id(changeId).get();
+    List<CommentInfo> comments = gApi.changes().id(changeId).current().commentsAsList();
+    String ts =
+        MailProcessingUtil.rfcDateformatter.format(
+            ZonedDateTime.ofInstant(comments.get(0).updated.toInstant(), ZoneId.of("UTC")));
+
+    setupFailValidation(
+        CommentForValidation.CommentType.CHANGE_MESSAGE, changeInfo.project, changeInfo._number);
+
+    MailMessage.Builder b = messageBuilderWithDefaultFields();
+    String txt = newPlaintextBody(getChangeUrl(changeInfo) + "/1", COMMENT_TEXT, null, null, null);
+    b.textContent(txt + textFooterForChange(changeInfo._number, ts));
+
+    Collection<CommentInfo> commentsBefore = testCommentHelper.getPublishedComments(changeId);
+    mailProcessor.process(b.build());
+    assertThat(testCommentHelper.getPublishedComments(changeId)).isEqualTo(commentsBefore);
+
+    assertNotifyTo(user);
+    Message message = sender.nextMessage();
+    assertThat(message.body()).contains("rejected one or more comments");
+  }
+
+  @Test
+  public void validateInlineComment_rejected() throws Exception {
+    String changeId = createChangeWithReview();
+    ChangeInfo changeInfo = gApi.changes().id(changeId).get();
+    List<CommentInfo> comments = gApi.changes().id(changeId).current().commentsAsList();
+    String ts =
+        MailProcessingUtil.rfcDateformatter.format(
+            ZonedDateTime.ofInstant(comments.get(0).updated.toInstant(), ZoneId.of("UTC")));
+
+    setupFailValidation(
+        CommentForValidation.CommentType.INLINE_COMMENT, changeInfo.project, changeInfo._number);
+
+    MailMessage.Builder b = messageBuilderWithDefaultFields();
+    String txt = newPlaintextBody(getChangeUrl(changeInfo) + "/1", null, COMMENT_TEXT, null, null);
+    b.textContent(txt + textFooterForChange(changeInfo._number, ts));
+
+    Collection<CommentInfo> commentsBefore = testCommentHelper.getPublishedComments(changeId);
+    mailProcessor.process(b.build());
+    assertThat(testCommentHelper.getPublishedComments(changeId)).isEqualTo(commentsBefore);
+
+    assertNotifyTo(user);
+    Message message = sender.nextMessage();
+    assertThat(message.body()).contains("rejected one or more comments");
+  }
+
+  @Test
+  public void validateFileComment_rejected() throws Exception {
+    String changeId = createChangeWithReview();
+    ChangeInfo changeInfo = gApi.changes().id(changeId).get();
+    List<CommentInfo> comments = gApi.changes().id(changeId).current().commentsAsList();
+    String ts =
+        MailProcessingUtil.rfcDateformatter.format(
+            ZonedDateTime.ofInstant(comments.get(0).updated.toInstant(), ZoneId.of("UTC")));
+
+    setupFailValidation(
+        CommentForValidation.CommentType.FILE_COMMENT, changeInfo.project, changeInfo._number);
+
+    MailMessage.Builder b = messageBuilderWithDefaultFields();
+    String txt = newPlaintextBody(getChangeUrl(changeInfo) + "/1", null, null, COMMENT_TEXT, null);
+    b.textContent(txt + textFooterForChange(changeInfo._number, ts));
+
+    Collection<CommentInfo> commentsBefore = testCommentHelper.getPublishedComments(changeId);
+    mailProcessor.process(b.build());
+    assertThat(testCommentHelper.getPublishedComments(changeId)).isEqualTo(commentsBefore);
+
+    assertNotifyTo(user);
+    Message message = sender.nextMessage();
+    assertThat(message.body()).contains("rejected one or more comments");
+  }
+
   private String getChangeUrl(ChangeInfo changeInfo) {
     return canonicalWebUrl.get() + "c/" + changeInfo.project + "/+/" + changeInfo._number;
+  }
+
+  private void setupFailValidation(
+      CommentForValidation.CommentType type, String failProject, int failChange) {
+    CommentForValidation commentForValidation = CommentForValidation.create(type, COMMENT_TEXT);
+
+    when(mockCommentValidator.validateComments(
+            CommentValidationContext.builder().changeId(failChange).project(failProject).build(),
+            ImmutableList.of(CommentForValidation.create(type, COMMENT_TEXT))))
+        .thenReturn(ImmutableList.of(commentForValidation.failValidation("Oh no!")));
   }
 }

@@ -15,18 +15,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 
 <link rel="import" href="../../../behaviors/base-url-behavior/base-url-behavior.html">
 <link rel="import" href="../../../behaviors/gr-url-encoding-behavior/gr-url-encoding-behavior.html">
-<link rel="import" href="../../../bower_components/iron-input/iron-input.html">
+<link rel="import" href="/bower_components/iron-input/iron-input.html">
 <link rel="import" href="../../../styles/gr-form-styles.html">
 <link rel="import" href="../../../styles/shared-styles.html">
 <link rel="import" href="../../shared/gr-rest-api-interface/gr-rest-api-interface.html">
 
 <dom-module id="gr-create-group-dialog">
   <template>
-    <style include="shared-styles"></style>
+    <style include="shared-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <style include="gr-form-styles">
       :host {
         display: inline-block;
@@ -39,10 +41,12 @@ limitations under the License.
       <div id="form">
         <section>
           <span class="title">Group name</span>
-          <input
-              is="iron-input"
-              id="groupNameInput"
+          <iron-input
               bind-value="{{_name}}">
+            <input
+                is="iron-input"
+                bind-value="{{_name}}">
+          </iron-input>
         </section>
       </div>
     </div>

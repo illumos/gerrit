@@ -17,35 +17,45 @@ package com.google.gerrit.server.mail;
 import static com.google.gerrit.server.notedb.ReviewerStateInternal.CC;
 import static com.google.gerrit.server.notedb.ReviewerStateInternal.REVIEWER;
 
+import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.FooterConstants;
-import com.google.gerrit.common.errors.NoSuchAccountException;
-import com.google.gerrit.reviewdb.client.Account;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
 import com.google.gerrit.server.ReviewerSet;
 import com.google.gerrit.server.account.AccountResolver;
-import com.google.gwtorm.server.OrmException;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.regex.Pattern;
+import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.revwalk.FooterKey;
 import org.eclipse.jgit.revwalk.FooterLine;
 
 public class MailUtil {
+  private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
   public static MailRecipients getRecipientsFromFooters(
       AccountResolver accountResolver, List<FooterLine> footerLines)
-      throws OrmException, IOException {
+      throws IOException, ConfigInvalidException {
     MailRecipients recipients = new MailRecipients();
     for (FooterLine footerLine : footerLines) {
       try {
         if (isReviewer(footerLine)) {
-          recipients.reviewers.add(toAccountId(accountResolver, footerLine.getValue().trim()));
+          Account.Id accountId = toAccountId(accountResolver, footerLine.getValue().trim());
+          recipients.reviewers.add(accountId);
+          logger.atFine().log(
+              "Added account %d from footer line \"%s\" as reviewer", accountId.get(), footerLine);
         } else if (footerLine.matches(FooterKey.CC)) {
-          recipients.cc.add(toAccountId(accountResolver, footerLine.getValue().trim()));
+          Account.Id accountId = toAccountId(accountResolver, footerLine.getValue().trim());
+          recipients.cc.add(accountId);
+          logger.atFine().log(
+              "Added account %d from footer line \"%s\" as cc", accountId.get(), footerLine);
         }
-      } catch (NoSuchAccountException e) {
+      } catch (UnprocessableEntityException e) {
+        logger.atFine().log(
+            "Skip adding reviewer/cc from footer line \"%s\": %s", footerLine, e.getMessage());
         continue;
       }
     }
@@ -59,13 +69,10 @@ public class MailUtil {
     return recipients;
   }
 
+  @SuppressWarnings("deprecation")
   private static Account.Id toAccountId(AccountResolver accountResolver, String nameOrEmail)
-      throws OrmException, NoSuchAccountException, IOException {
-    Account a = accountResolver.findByNameOrEmail(nameOrEmail);
-    if (a == null) {
-      throw new NoSuchAccountException("\"" + nameOrEmail + "\" is not registered");
-    }
-    return a.getId();
+      throws UnprocessableEntityException, IOException, ConfigInvalidException {
+    return accountResolver.resolveByNameOrEmail(nameOrEmail).asUnique().account().id();
   }
 
   private static boolean isReviewer(FooterLine candidateFooterLine) {
@@ -124,7 +131,7 @@ public class MailUtil {
       return Pattern.compile(".*");
     }
 
-    StringBuilder sb = new StringBuilder("");
+    StringBuilder sb = new StringBuilder();
     for (String domain : domains) {
       String quoted = "\\Q" + domain.replace("\\E", "\\E\\\\E\\Q") + "\\E|";
       sb.append(quoted.replace("*", "\\E.*\\Q"));

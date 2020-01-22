@@ -19,10 +19,13 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-dom-hooks</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-dom-hooks.html"/>
+<link rel="import" href="../../shared/gr-js-api-interface/gr-js-api-interface.html">
 
 <script>void(0);</script>
 
@@ -116,7 +119,7 @@ limitations under the License.
         hookInternal.handleInstanceAttached(el1);
         hookInternal.handleInstanceAttached(el2);
         assert.deepEqual([el1, el2], hook.getAllAttached());
-        hookI.handleInstanceDetached(el1);
+        hookInternal.handleInstanceDetached(el1);
         assert.deepEqual([el2], hook.getAllAttached());
       });
 

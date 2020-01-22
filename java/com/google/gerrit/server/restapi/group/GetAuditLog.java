@@ -17,15 +17,16 @@ package com.google.gerrit.server.restapi.group;
 import static java.util.Comparator.comparing;
 
 import com.google.gerrit.common.data.GroupDescription;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.AccountGroupByIdAudit;
+import com.google.gerrit.entities.AccountGroupMemberAudit;
 import com.google.gerrit.extensions.common.AccountInfo;
 import com.google.gerrit.extensions.common.GroupAuditEventInfo;
 import com.google.gerrit.extensions.common.GroupInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.extensions.restapi.Url;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.AccountGroupByIdAud;
-import com.google.gerrit.reviewdb.client.AccountGroupMemberAudit;
 import com.google.gerrit.server.account.AccountLoader;
 import com.google.gerrit.server.account.GroupBackend;
 import com.google.gerrit.server.account.GroupCache;
@@ -36,7 +37,6 @@ import com.google.gerrit.server.group.InternalGroup;
 import com.google.gerrit.server.group.InternalGroupDescription;
 import com.google.gerrit.server.group.db.Groups;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.io.IOException;
@@ -75,9 +75,9 @@ public class GetAuditLog implements RestReadView<GroupResource> {
   }
 
   @Override
-  public List<? extends GroupAuditEventInfo> apply(GroupResource rsrc)
-      throws AuthException, NotInternalGroupException, OrmException, IOException,
-          ConfigInvalidException, PermissionBackendException {
+  public Response<List<? extends GroupAuditEventInfo>> apply(GroupResource rsrc)
+      throws AuthException, NotInternalGroupException, IOException, ConfigInvalidException,
+          PermissionBackendException {
     GroupDescription.Internal group =
         rsrc.asInternalGroup().orElseThrow(NotInternalGroupException::new);
     if (!rsrc.getControl().isOwner()) {
@@ -91,22 +91,24 @@ public class GetAuditLog implements RestReadView<GroupResource> {
     try (Repository allUsersRepo = repoManager.openRepository(allUsers)) {
       for (AccountGroupMemberAudit auditEvent :
           groups.getMembersAudit(allUsersRepo, group.getGroupUUID())) {
-        AccountInfo member = accountLoader.get(auditEvent.getMemberId());
+        AccountInfo member = accountLoader.get(auditEvent.memberId());
 
         auditEvents.add(
             GroupAuditEventInfo.createAddUserEvent(
-                accountLoader.get(auditEvent.getAddedBy()), auditEvent.getAddedOn(), member));
+                accountLoader.get(auditEvent.addedBy()), auditEvent.addedOn(), member));
 
         if (!auditEvent.isActive()) {
           auditEvents.add(
               GroupAuditEventInfo.createRemoveUserEvent(
-                  accountLoader.get(auditEvent.getRemovedBy()), auditEvent.getRemovedOn(), member));
+                  accountLoader.get(auditEvent.removedBy().orElse(null)),
+                  auditEvent.removedOn(),
+                  member));
         }
       }
 
-      for (AccountGroupByIdAud auditEvent :
+      for (AccountGroupByIdAudit auditEvent :
           groups.getSubgroupsAudit(allUsersRepo, group.getGroupUUID())) {
-        AccountGroup.UUID includedGroupUUID = auditEvent.getIncludeUUID();
+        AccountGroup.UUID includedGroupUUID = auditEvent.includeUuid();
         Optional<InternalGroup> includedGroup = groupCache.get(includedGroupUUID);
         GroupInfo member;
         if (includedGroup.isPresent()) {
@@ -122,14 +124,14 @@ public class GetAuditLog implements RestReadView<GroupResource> {
 
         auditEvents.add(
             GroupAuditEventInfo.createAddGroupEvent(
-                accountLoader.get(auditEvent.getAddedBy()),
-                auditEvent.getKey().getAddedOn(),
-                member));
+                accountLoader.get(auditEvent.addedBy()), auditEvent.addedOn(), member));
 
         if (!auditEvent.isActive()) {
           auditEvents.add(
               GroupAuditEventInfo.createRemoveGroupEvent(
-                  accountLoader.get(auditEvent.getRemovedBy()), auditEvent.getRemovedOn(), member));
+                  accountLoader.get(auditEvent.removedBy().orElse(null)),
+                  auditEvent.removedOn(),
+                  member));
         }
       }
     }
@@ -138,6 +140,6 @@ public class GetAuditLog implements RestReadView<GroupResource> {
 
     // sort by date and then reverse so that the newest audit event comes first
     auditEvents.sort(comparing((GroupAuditEventInfo a) -> a.date).reversed());
-    return auditEvents;
+    return Response.ok(auditEvents);
   }
 }

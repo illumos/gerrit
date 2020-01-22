@@ -15,7 +15,7 @@
 package com.google.gerrit.server.restapi.account;
 
 import com.google.common.flogger.FluentLogger;
-import com.google.gerrit.common.errors.EmailException;
+import com.google.gerrit.exceptions.EmailException;
 import com.google.gerrit.extensions.common.Input;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.Response;
@@ -29,7 +29,6 @@ import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.ssh.SshKeyCache;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -37,6 +36,12 @@ import java.io.IOException;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.errors.RepositoryNotFoundException;
 
+/**
+ * REST endpoint to delete an SSH key of an account.
+ *
+ * <p>This REST endpoint handles {@code DELETE
+ * /accounts/<account-identifier>/sshkeys/<ssh-key-identifier>} requests.
+ */
 @Singleton
 public class DeleteSshKey implements RestModifyView<AccountResource.SshKey, Input> {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
@@ -63,8 +68,8 @@ public class DeleteSshKey implements RestModifyView<AccountResource.SshKey, Inpu
 
   @Override
   public Response<?> apply(AccountResource.SshKey rsrc, Input input)
-      throws AuthException, OrmException, RepositoryNotFoundException, IOException,
-          ConfigInvalidException, PermissionBackendException {
+      throws AuthException, RepositoryNotFoundException, IOException, ConfigInvalidException,
+          PermissionBackendException {
     if (!self.get().hasSameAccountId(rsrc.getUser())) {
       permissionBackend.currentUser().check(GlobalPermission.ADMINISTRATE_SERVER);
     }
@@ -75,7 +80,7 @@ public class DeleteSshKey implements RestModifyView<AccountResource.SshKey, Inpu
       deleteKeySenderFactory.create(user, rsrc.getSshKey()).send();
     } catch (EmailException e) {
       logger.atSevere().withCause(e).log(
-          "Cannot send SSH key deletion message to %s", user.getAccount().getPreferredEmail());
+          "Cannot send SSH key deletion message to %s", user.getAccount().preferredEmail());
     }
     user.getUserName().ifPresent(sshKeyCache::evict);
 

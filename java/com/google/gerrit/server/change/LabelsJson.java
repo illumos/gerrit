@@ -36,16 +36,14 @@ import com.google.gerrit.common.data.LabelType;
 import com.google.gerrit.common.data.LabelTypes;
 import com.google.gerrit.common.data.LabelValue;
 import com.google.gerrit.common.data.SubmitRecord;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.extensions.client.ListChangesOption;
 import com.google.gerrit.extensions.common.ApprovalInfo;
 import com.google.gerrit.extensions.common.LabelInfo;
 import com.google.gerrit.extensions.common.VotingRangeInfo;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Account.Id;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSetApproval;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.ApprovalsUtil;
+import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.account.AccountLoader;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ReviewerStateInternal;
@@ -53,9 +51,7 @@ import com.google.gerrit.server.permissions.LabelPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.assistedinject.Assisted;
 import java.sql.Timestamp;
 import java.util.ArrayList;
@@ -79,7 +75,6 @@ public class LabelsJson {
     LabelsJson create(Iterable<ListChangesOption> options);
   }
 
-  private final Provider<ReviewDb> db;
   private final ApprovalsUtil approvalsUtil;
   private final ChangeNotes.Factory notesFactory;
   private final PermissionBackend permissionBackend;
@@ -87,12 +82,10 @@ public class LabelsJson {
 
   @Inject
   LabelsJson(
-      Provider<ReviewDb> db,
       ApprovalsUtil approvalsUtil,
       ChangeNotes.Factory notesFactory,
       PermissionBackend permissionBackend,
       @Assisted Iterable<ListChangesOption> options) {
-    this.db = db;
     this.approvalsUtil = approvalsUtil;
     this.notesFactory = notesFactory;
     this.permissionBackend = permissionBackend;
@@ -106,14 +99,14 @@ public class LabelsJson {
    */
   Map<String, LabelInfo> labelsFor(
       AccountLoader accountLoader, ChangeData cd, boolean standard, boolean detailed)
-      throws OrmException, PermissionBackendException {
+      throws PermissionBackendException {
     if (!standard && !detailed) {
       return null;
     }
 
     LabelTypes labelTypes = cd.getLabelTypes();
     Map<String, LabelWithStatus> withStatus =
-        cd.change().getStatus() == Change.Status.MERGED
+        cd.change().isMerged()
             ? labelsForSubmittedChange(accountLoader, cd, labelTypes, standard, detailed)
             : labelsForUnsubmittedChange(accountLoader, cd, labelTypes, standard, detailed);
     return ImmutableMap.copyOf(Maps.transformValues(withStatus, LabelWithStatus::label));
@@ -121,8 +114,8 @@ public class LabelsJson {
 
   /** Returns all labels that the provided user has permission to vote on. */
   Map<String, Collection<String>> permittedLabels(Account.Id filterApprovalsBy, ChangeData cd)
-      throws OrmException, PermissionBackendException {
-    boolean isMerged = cd.change().getStatus() == Change.Status.MERGED;
+      throws PermissionBackendException {
+    boolean isMerged = cd.change().isMerged();
     LabelTypes labelTypes = cd.getLabelTypes();
     Map<String, LabelType> toCheck = new HashMap<>();
     for (SubmitRecord rec : submitRecords(cd)) {
@@ -200,7 +193,7 @@ public class LabelsJson {
       LabelTypes labelTypes,
       boolean standard,
       boolean detailed)
-      throws OrmException, PermissionBackendException {
+      throws PermissionBackendException {
     Map<String, LabelWithStatus> labels = initLabels(accountLoader, cd, labelTypes, standard);
     if (detailed) {
       setAllApprovals(accountLoader, cd, labels);
@@ -213,8 +206,8 @@ public class LabelsJson {
       if (standard) {
         for (PatchSetApproval psa : cd.currentApprovals()) {
           if (type.matches(psa)) {
-            short val = psa.getValue();
-            Account.Id accountId = psa.getAccountId();
+            short val = psa.value();
+            Account.Id accountId = psa.accountId();
             setLabelScores(accountLoader, type, e.getValue(), val, accountId);
           }
         }
@@ -258,18 +251,16 @@ public class LabelsJson {
     }
   }
 
-  private Map<String, Short> currentLabels(Account.Id accountId, ChangeData cd)
-      throws OrmException {
+  private Map<String, Short> currentLabels(Account.Id accountId, ChangeData cd) {
     Map<String, Short> result = new HashMap<>();
     for (PatchSetApproval psa :
         approvalsUtil.byPatchSetUser(
-            db.get(),
             lazyLoad ? cd.notes() : notesFactory.createFromIndexedChange(cd.change()),
             cd.change().currentPatchSetId(),
             accountId,
             null,
             null)) {
-      result.put(psa.getLabel(), psa.getValue());
+      result.put(psa.label(), psa.value());
     }
     return result;
   }
@@ -280,7 +271,7 @@ public class LabelsJson {
       LabelTypes labelTypes,
       boolean standard,
       boolean detailed)
-      throws OrmException, PermissionBackendException {
+      throws PermissionBackendException {
     Set<Account.Id> allUsers = new HashSet<>();
     if (detailed) {
       // Users expect to see all reviewers on closed changes, even if they
@@ -288,20 +279,21 @@ public class LabelsJson {
       // we aren't including 0 votes for all users below, so we can just look at
       // the latest patch set (in the next loop).
       for (PatchSetApproval psa : cd.approvals().values()) {
-        allUsers.add(psa.getAccountId());
+        allUsers.add(psa.accountId());
       }
     }
 
     Set<String> labelNames = new HashSet<>();
-    SetMultimap<Id, PatchSetApproval> current = MultimapBuilder.hashKeys().hashSetValues().build();
+    SetMultimap<Account.Id, PatchSetApproval> current =
+        MultimapBuilder.hashKeys().hashSetValues().build();
     for (PatchSetApproval a : cd.currentApprovals()) {
-      allUsers.add(a.getAccountId());
-      LabelType type = labelTypes.byLabel(a.getLabelId());
+      allUsers.add(a.accountId());
+      LabelType type = labelTypes.byLabel(a.labelId());
       if (type != null) {
         labelNames.add(type.getName());
         // Not worth the effort to distinguish between votable/non-votable for 0
         // values on closed changes, since they can't vote anyway.
-        current.put(a.getAccountId(), a);
+        current.put(a.accountId(), a);
       }
     }
 
@@ -343,19 +335,19 @@ public class LabelsJson {
         }
       }
       for (PatchSetApproval psa : current.get(accountId)) {
-        LabelType type = labelTypes.byLabel(psa.getLabelId());
+        LabelType type = labelTypes.byLabel(psa.labelId());
         if (type == null) {
           continue;
         }
 
-        short val = psa.getValue();
+        short val = psa.value();
         ApprovalInfo info = byLabel.get(type.getName());
         if (info != null) {
           info.value = Integer.valueOf(val);
           info.permittedVotingRange = pvr.getOrDefault(type.getName(), null);
-          info.date = psa.getGranted();
-          info.tag = psa.getTag();
-          if (psa.isPostSubmit()) {
+          info.date = psa.granted();
+          info.tag = psa.tag().orElse(null);
+          if (psa.postSubmit()) {
             info.postSubmit = true;
           }
         }
@@ -437,24 +429,25 @@ public class LabelsJson {
 
   private void setAllApprovals(
       AccountLoader accountLoader, ChangeData cd, Map<String, LabelWithStatus> labels)
-      throws OrmException, PermissionBackendException {
-    Change.Status status = cd.change().getStatus();
+      throws PermissionBackendException {
     checkState(
-        status != Change.Status.MERGED, "should not call setAllApprovals on %s change", status);
+        !cd.change().isMerged(),
+        "should not call setAllApprovals on %s change",
+        ChangeUtil.status(cd.change()));
 
     // Include a user in the output for this label if either:
     //  - They are an explicit reviewer.
     //  - They ever voted on this change.
-    Set<Id> allUsers = new HashSet<>();
+    Set<Account.Id> allUsers = new HashSet<>();
     allUsers.addAll(cd.reviewers().byState(ReviewerStateInternal.REVIEWER));
     for (PatchSetApproval psa : cd.approvals().values()) {
-      allUsers.add(psa.getAccountId());
+      allUsers.add(psa.accountId());
     }
 
-    Table<Id, String, PatchSetApproval> current =
+    Table<Account.Id, String, PatchSetApproval> current =
         HashBasedTable.create(allUsers.size(), cd.getLabelTypes().getLabelTypes().size());
     for (PatchSetApproval psa : cd.currentApprovals()) {
-      current.put(psa.getAccountId(), psa.getLabel(), psa);
+      current.put(psa.accountId(), psa.label(), psa);
     }
 
     LabelTypes labelTypes = cd.getLabelTypes();
@@ -474,16 +467,16 @@ public class LabelsJson {
         Timestamp date = null;
         PatchSetApproval psa = current.get(accountId, lt.getName());
         if (psa != null) {
-          value = Integer.valueOf(psa.getValue());
+          value = Integer.valueOf(psa.value());
           if (value == 0) {
             // This may be a dummy approval that was inserted when the reviewer
             // was added. Explicitly check whether the user can vote on this
             // label.
             value = perm.test(new LabelPermission(lt)) ? 0 : null;
           }
-          tag = psa.getTag();
-          date = psa.getGranted();
-          if (psa.isPostSubmit()) {
+          tag = psa.tag().orElse(null);
+          date = psa.granted();
+          if (psa.postSubmit()) {
             logger.atWarning().log("unexpected post-submit approval on open change: %s", psa);
           }
         } else {
@@ -504,9 +497,8 @@ public class LabelsJson {
    *     from either an index-backed or a database-backed {@link ChangeData} depending on {@code
    *     lazyload}.
    */
-  private PermissionBackend.ForChange permissionBackendForChange(Account.Id user, ChangeData cd)
-      throws OrmException {
-    PermissionBackend.WithUser withUser = permissionBackend.absentUser(user).database(db);
+  private PermissionBackend.ForChange permissionBackendForChange(Account.Id user, ChangeData cd) {
+    PermissionBackend.WithUser withUser = permissionBackend.absentUser(user);
     return lazyLoad
         ? withUser.change(cd)
         : withUser.indexedChange(cd, notesFactory.createFromIndexedChange(cd.change()));

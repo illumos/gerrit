@@ -20,37 +20,43 @@ import com.google.common.io.CharStreams;
 import com.google.common.truth.FailureMetadata;
 import com.google.common.truth.StringSubject;
 import com.google.common.truth.Subject;
-import com.google.common.truth.Truth;
 import com.google.gerrit.extensions.restapi.RawInput;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 
-public class ChangeFileContentModificationSubject
-    extends Subject<ChangeFileContentModificationSubject, ChangeFileContentModification> {
+public class ChangeFileContentModificationSubject extends Subject {
 
   public static ChangeFileContentModificationSubject assertThat(
       ChangeFileContentModification modification) {
-    return assertAbout(ChangeFileContentModificationSubject::new).that(modification);
+    return assertAbout(modifications()).that(modification);
   }
+
+  public static Factory<ChangeFileContentModificationSubject, ChangeFileContentModification>
+      modifications() {
+    return ChangeFileContentModificationSubject::new;
+  }
+
+  private final ChangeFileContentModification modification;
 
   private ChangeFileContentModificationSubject(
       FailureMetadata failureMetadata, ChangeFileContentModification modification) {
     super(failureMetadata, modification);
+    this.modification = modification;
   }
 
   public StringSubject filePath() {
     isNotNull();
-    return Truth.assertThat(actual().getFilePath()).named("filePath");
+    return check("getFilePath()").that(modification.getFilePath());
   }
 
   public StringSubject newContent() throws IOException {
     isNotNull();
-    RawInput newContent = actual().getNewContent();
-    Truth.assertThat(newContent).named("newContent").isNotNull();
+    RawInput newContent = modification.getNewContent();
+    check("getNewContent()").that(newContent).isNotNull();
     String contentString =
         CharStreams.toString(
             new InputStreamReader(newContent.getInputStream(), StandardCharsets.UTF_8));
-    return Truth.assertThat(contentString).named("newContent");
+    return check("getNewContent()").that(contentString);
   }
 }

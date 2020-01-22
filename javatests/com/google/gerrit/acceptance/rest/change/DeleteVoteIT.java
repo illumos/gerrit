@@ -22,19 +22,23 @@ import com.google.common.collect.Iterables;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.acceptance.RestResponse;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.common.AccountInfo;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.ChangeMessageInfo;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.testing.FakeEmailSender;
 import com.google.gson.reflect.TypeToken;
+import com.google.inject.Inject;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import org.junit.Test;
 
 public class DeleteVoteIT extends AbstractDaemonTest {
+  @Inject private RequestScopeOperations requestScopeOperations;
+
   @Test
   public void deleteVoteOnChange() throws Exception {
     deleteVote(false);
@@ -51,7 +55,7 @@ public class DeleteVoteIT extends AbstractDaemonTest {
 
     PushOneCommit.Result r2 = amendChange(r.getChangeId());
 
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     recommend(r.getChangeId());
 
     sender.clear();
@@ -60,7 +64,7 @@ public class DeleteVoteIT extends AbstractDaemonTest {
             + r.getChangeId()
             + (onRevisionLevel ? ("/revisions/" + r2.getCommit().getName()) : "")
             + "/reviewers/"
-            + user.getId().toString()
+            + user.id().toString()
             + "/votes/Code-Review";
 
     RestResponse response = adminRestSession.delete(endPoint);
@@ -69,17 +73,17 @@ public class DeleteVoteIT extends AbstractDaemonTest {
     List<FakeEmailSender.Message> messages = sender.getMessages();
     assertThat(messages).hasSize(1);
     FakeEmailSender.Message msg = messages.get(0);
-    assertThat(msg.rcpt()).containsExactly(user.emailAddress);
-    assertThat(msg.body()).contains(admin.fullName + " has removed a vote from this change.");
+    assertThat(msg.rcpt()).containsExactly(user.getEmailAddress());
+    assertThat(msg.body()).contains(admin.fullName() + " has removed a vote from this change.");
     assertThat(msg.body())
-        .contains("Removed Code-Review+1 by " + user.fullName + " <" + user.email + ">\n");
+        .contains("Removed Code-Review+1 by " + user.fullName() + " <" + user.email() + ">\n");
 
     endPoint =
         "/changes/"
             + r.getChangeId()
             + (onRevisionLevel ? ("/revisions/" + r2.getCommit().getName()) : "")
             + "/reviewers/"
-            + user.getId().toString()
+            + user.id().toString()
             + "/votes";
 
     response = adminRestSession.get(endPoint);
@@ -93,13 +97,13 @@ public class DeleteVoteIT extends AbstractDaemonTest {
     ChangeInfo c = gApi.changes().id(r.getChangeId()).get();
 
     ChangeMessageInfo message = Iterables.getLast(c.messages);
-    assertThat(message.author._accountId).isEqualTo(admin.getId().get());
+    assertThat(message.author._accountId).isEqualTo(admin.id().get());
     assertThat(message.message).isEqualTo("Removed Code-Review+1 by User <user@example.com>\n");
     assertThat(getReviewers(c.reviewers.get(REVIEWER)))
-        .containsExactlyElementsIn(ImmutableSet.of(admin.getId(), user.getId()));
+        .containsExactlyElementsIn(ImmutableSet.of(admin.id(), user.id()));
   }
 
   private Iterable<Account.Id> getReviewers(Collection<AccountInfo> r) {
-    return Iterables.transform(r, a -> new Account.Id(a._accountId));
+    return Iterables.transform(r, a -> Account.id(a._accountId));
   }
 }

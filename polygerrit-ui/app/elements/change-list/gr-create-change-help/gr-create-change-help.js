@@ -17,8 +17,11 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-create-change-help',
+  /** @extends Polymer.Element */
+  class GrCreateChangeHelp extends Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element)) {
+    static get is() { return 'gr-create-change-help'; }
 
     /**
      * Fired when the "Create change" button is tapped.
@@ -28,7 +31,10 @@
 
     _handleCreateTap(e) {
       e.preventDefault();
-      this.dispatchEvent(new CustomEvent('create-tap', {bubbles: true}));
-    },
-  });
+      this.dispatchEvent(
+          new CustomEvent('create-tap', {bubbles: true, composed: true}));
+    }
+  }
+
+  customElements.define(GrCreateChangeHelp.is, GrCreateChangeHelp);
 })();

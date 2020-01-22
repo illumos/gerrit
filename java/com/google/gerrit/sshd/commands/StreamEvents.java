@@ -16,26 +16,22 @@ package com.google.gerrit.sshd.commands;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-import com.google.common.base.Supplier;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.data.GlobalCapability;
 import com.google.gerrit.extensions.annotations.RequiresCapability;
 import com.google.gerrit.extensions.registration.DynamicSet;
 import com.google.gerrit.extensions.registration.RegistrationHandle;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.events.Event;
+import com.google.gerrit.server.events.EventGson;
 import com.google.gerrit.server.events.EventTypes;
-import com.google.gerrit.server.events.ProjectNameKeySerializer;
-import com.google.gerrit.server.events.SupplierSerializer;
 import com.google.gerrit.server.events.UserScopedEventListener;
 import com.google.gerrit.server.git.WorkQueue.CancelableRunnable;
 import com.google.gerrit.sshd.BaseCommand;
 import com.google.gerrit.sshd.CommandMetaData;
 import com.google.gerrit.sshd.StreamCommandExecutor;
 import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import com.google.inject.Inject;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -45,11 +41,12 @@ import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import org.apache.sshd.server.Environment;
+import org.apache.sshd.server.channel.ChannelSession;
 import org.kohsuke.args4j.Option;
 
 @RequiresCapability(GlobalCapability.STREAM_EVENTS)
 @CommandMetaData(name = "stream-events", description = "Monitor events occurring in real time")
-final class StreamEvents extends BaseCommand {
+public final class StreamEvents extends BaseCommand {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
   /** Maximum number of events that may be queued up for each connection. */
@@ -71,10 +68,10 @@ final class StreamEvents extends BaseCommand {
 
   @Inject @StreamCommandExecutor private ScheduledThreadPoolExecutor pool;
 
+  @Inject @EventGson private Gson gson;
+
   /** Queue of events to stream to the connected user. */
   private final LinkedBlockingQueue<Event> queue = new LinkedBlockingQueue<>(MAX_EVENTS);
-
-  private Gson gson;
 
   private RegistrationHandle eventListenerRegistration;
 
@@ -90,29 +87,6 @@ final class StreamEvents extends BaseCommand {
   static {
     EventTypes.register(DroppedOutputEvent.TYPE, DroppedOutputEvent.class);
   }
-
-  private final CancelableRunnable writer =
-      new CancelableRunnable() {
-        @Override
-        public void run() {
-          writeEvents();
-        }
-
-        @Override
-        public void cancel() {
-          onExit(0);
-        }
-
-        @Override
-        public String toString() {
-          StringBuilder b = new StringBuilder();
-          b.append("Stream Events");
-          if (currentUser.getUserName().isPresent()) {
-            b.append(" (").append(currentUser.getUserName().get()).append(")");
-          }
-          return b.toString();
-        }
-      };
 
   /** True if {@link DroppedOutputEvent} needs to be sent. */
   private volatile boolean dropped;
@@ -131,10 +105,8 @@ final class StreamEvents extends BaseCommand {
    */
   private Future<?> task;
 
-  private PrintWriter stdout;
-
   @Override
-  public void start(Environment env) throws IOException {
+  public void start(ChannelSession channel, Environment env) throws IOException {
     try {
       parseCommandLine();
     } catch (UnloggedFailure e) {
@@ -148,7 +120,30 @@ final class StreamEvents extends BaseCommand {
       return;
     }
 
-    stdout = toPrintWriter(out);
+    PrintWriter stdout = toPrintWriter(out);
+    CancelableRunnable writer =
+        new CancelableRunnable() {
+          @Override
+          public void run() {
+            writeEvents(this, stdout);
+          }
+
+          @Override
+          public void cancel() {
+            onExit(0);
+          }
+
+          @Override
+          public String toString() {
+            StringBuilder b = new StringBuilder();
+            b.append("Stream Events");
+            if (currentUser.getUserName().isPresent()) {
+              b.append(" (").append(currentUser.getUserName().get()).append(")");
+            }
+            return b.toString();
+          }
+        };
+
     eventListenerRegistration =
         eventListeners.add(
             "gerrit",
@@ -156,7 +151,7 @@ final class StreamEvents extends BaseCommand {
               @Override
               public void onEvent(Event event) {
                 if (subscribedToEvents.isEmpty() || subscribedToEvents.contains(event.getType())) {
-                  offer(event);
+                  offer(writer, event);
                 }
               }
 
@@ -165,12 +160,6 @@ final class StreamEvents extends BaseCommand {
                 return currentUser;
               }
             });
-
-    gson =
-        new GsonBuilder()
-            .registerTypeAdapter(Supplier.class, new SupplierSerializer())
-            .registerTypeAdapter(Project.NameKey.class, new ProjectNameKeySerializer())
-            .create();
   }
 
   private void removeEventListenerRegistration() {
@@ -191,7 +180,7 @@ final class StreamEvents extends BaseCommand {
   }
 
   @Override
-  public void destroy() {
+  public void destroy(ChannelSession channel) {
     removeEventListenerRegistration();
 
     final boolean exit;
@@ -209,7 +198,7 @@ final class StreamEvents extends BaseCommand {
     }
   }
 
-  private void offer(Event event) {
+  private void offer(CancelableRunnable writer, Event event) {
     synchronized (taskLock) {
       if (!queue.offer(event)) {
         dropped = true;
@@ -231,7 +220,7 @@ final class StreamEvents extends BaseCommand {
     }
   }
 
-  private void writeEvents() {
+  private void writeEvents(CancelableRunnable writer, PrintWriter stdout) {
     int processed = 0;
 
     while (processed < BATCH_SIZE) {
@@ -241,13 +230,13 @@ final class StreamEvents extends BaseCommand {
         // accepting output. Either way terminate this instance.
         //
         removeEventListenerRegistration();
-        flush();
+        flush(stdout);
         onExit(0);
         return;
       }
 
       if (dropped) {
-        write(new DroppedOutputEvent());
+        write(stdout, new DroppedOutputEvent());
         dropped = false;
       }
 
@@ -256,11 +245,11 @@ final class StreamEvents extends BaseCommand {
         break;
       }
 
-      write(event);
+      write(stdout, event);
       processed++;
     }
 
-    flush();
+    flush(stdout);
 
     if (BATCH_SIZE <= processed) {
       // We processed the limit, but more might remain in the queue.
@@ -273,7 +262,7 @@ final class StreamEvents extends BaseCommand {
     }
   }
 
-  private void write(Object message) {
+  private void write(PrintWriter stdout, Object message) {
     String msg = null;
     try {
       msg = gson.toJson(message) + "\n";
@@ -287,7 +276,7 @@ final class StreamEvents extends BaseCommand {
     }
   }
 
-  private void flush() {
+  private void flush(PrintWriter stdout) {
     synchronized (stdout) {
       stdout.flush();
     }

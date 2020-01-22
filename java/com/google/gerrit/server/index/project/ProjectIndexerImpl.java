@@ -17,12 +17,14 @@ package com.google.gerrit.server.index.project;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.events.ProjectIndexedListener;
 import com.google.gerrit.index.project.ProjectData;
 import com.google.gerrit.index.project.ProjectIndex;
 import com.google.gerrit.index.project.ProjectIndexCollection;
 import com.google.gerrit.index.project.ProjectIndexer;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.logging.TraceContext.TraceTimer;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
@@ -30,10 +32,13 @@ import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.inject.assistedinject.Assisted;
 import com.google.inject.assistedinject.AssistedInject;
-import java.io.IOException;
 import java.util.Collection;
 import java.util.Collections;
 
+/**
+ * Implementation for indexing a Gerrit-managed repository (project). The project will be loaded
+ * from {@link ProjectCache}.
+ */
 public class ProjectIndexerImpl implements ProjectIndexer {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
@@ -71,7 +76,7 @@ public class ProjectIndexerImpl implements ProjectIndexer {
   }
 
   @Override
-  public void index(Project.NameKey nameKey) throws IOException {
+  public void index(Project.NameKey nameKey) {
     ProjectState projectState = projectCache.get(nameKey);
     if (projectState != null) {
       logger.atFine().log("Replace project %s in index", nameKey.get());
@@ -79,9 +84,18 @@ public class ProjectIndexerImpl implements ProjectIndexer {
       for (ProjectIndex i : getWriteIndexes()) {
         try (TraceTimer traceTimer =
             TraceContext.newTimer(
-                "Replacing project %s in index version %d",
-                nameKey.get(), i.getSchema().getVersion())) {
+                "Replacing project",
+                Metadata.builder()
+                    .projectName(nameKey.get())
+                    .indexVersion(i.getSchema().getVersion())
+                    .build())) {
           i.replace(projectData);
+        } catch (RuntimeException e) {
+          throw new StorageException(
+              String.format(
+                  "Failed to replace project %s in index version %d",
+                  nameKey.get(), i.getSchema().getVersion()),
+              e);
         }
       }
       fireProjectIndexedEvent(nameKey.get());
@@ -90,9 +104,18 @@ public class ProjectIndexerImpl implements ProjectIndexer {
       for (ProjectIndex i : getWriteIndexes()) {
         try (TraceTimer traceTimer =
             TraceContext.newTimer(
-                "Deleting project %s in index version %d",
-                nameKey.get(), i.getSchema().getVersion())) {
+                "Deleting project",
+                Metadata.builder()
+                    .projectName(nameKey.get())
+                    .indexVersion(i.getSchema().getVersion())
+                    .build())) {
           i.delete(nameKey);
+        } catch (RuntimeException e) {
+          throw new StorageException(
+              String.format(
+                  "Failed to delete project %s from index version %d",
+                  nameKey.get(), i.getSchema().getVersion()),
+              e);
         }
       }
     }

@@ -15,11 +15,10 @@
 package com.google.gerrit.sshd.commands;
 
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RevId;
-import com.google.gerrit.reviewdb.server.ReviewDb;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.git.ObjectIds;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.change.ChangeFinder;
 import com.google.gerrit.server.notedb.ChangeNotes;
@@ -28,7 +27,6 @@ import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
 import com.google.gerrit.sshd.BaseCommand.UnloggedFailure;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -37,7 +35,6 @@ import java.util.List;
 
 @Singleton
 public class PatchSetParser {
-  private final Provider<ReviewDb> db;
   private final Provider<InternalChangeQuery> queryProvider;
   private final ChangeNotes.Factory notesFactory;
   private final PatchSetUtil psUtil;
@@ -45,12 +42,10 @@ public class PatchSetParser {
 
   @Inject
   PatchSetParser(
-      Provider<ReviewDb> db,
       Provider<InternalChangeQuery> queryProvider,
       ChangeNotes.Factory notesFactory,
       PatchSetUtil psUtil,
       ChangeFinder changeFinder) {
-    this.db = db;
     this.queryProvider = queryProvider;
     this.notesFactory = notesFactory;
     this.psUtil = psUtil;
@@ -58,10 +53,10 @@ public class PatchSetParser {
   }
 
   public PatchSet parsePatchSet(String token, ProjectState projectState, String branch)
-      throws UnloggedFailure, OrmException {
+      throws UnloggedFailure {
     // By commit?
     //
-    if (token.matches("^([0-9a-fA-F]{4," + RevId.LEN + "})$")) {
+    if (token.matches("^([0-9a-fA-F]{4," + ObjectIds.STR_LEN + "})$")) {
       InternalChangeQuery query = queryProvider.get();
       List<ChangeData> cds;
       if (projectState != null) {
@@ -81,7 +76,7 @@ public class PatchSetParser {
           continue;
         }
         for (PatchSet ps : cd.patchSets()) {
-          if (ps.getRevision().matches(token)) {
+          if (ObjectIds.matchesAbbreviation(ps.commitId(), token)) {
             matches.add(ps);
           }
         }
@@ -106,8 +101,8 @@ public class PatchSetParser {
       } catch (IllegalArgumentException e) {
         throw error("\"" + token + "\" is not a valid patch set");
       }
-      ChangeNotes notes = getNotes(projectState, patchSetId.getParentKey());
-      PatchSet patchSet = psUtil.get(db.get(), notes, patchSetId);
+      ChangeNotes notes = getNotes(projectState, patchSetId.changeId());
+      PatchSet patchSet = psUtil.get(notes, patchSetId);
       if (patchSet == null) {
         throw error("\"" + token + "\" no such patch set");
       }
@@ -127,13 +122,13 @@ public class PatchSetParser {
   }
 
   private ChangeNotes getNotes(@Nullable ProjectState projectState, Change.Id changeId)
-      throws OrmException, UnloggedFailure {
+      throws UnloggedFailure {
     if (projectState != null) {
-      return notesFactory.create(db.get(), projectState.getNameKey(), changeId);
+      return notesFactory.create(projectState.getNameKey(), changeId);
     }
     try {
       ChangeNotes notes = changeFinder.findOne(changeId);
-      return notesFactory.create(db.get(), notes.getProjectName(), changeId);
+      return notesFactory.create(notes.getProjectName(), changeId);
     } catch (NoSuchChangeException e) {
       throw error("\"" + changeId + "\" no such change");
     }
@@ -152,7 +147,7 @@ public class PatchSetParser {
       // No --branch option, so they want every branch.
       return true;
     }
-    return change.getDest().get().equals(branch);
+    return change.getDest().branch().equals(branch);
   }
 
   public static UnloggedFailure error(String msg) {

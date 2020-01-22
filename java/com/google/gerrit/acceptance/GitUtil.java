@@ -15,13 +15,14 @@
 package com.google.gerrit.acceptance;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
 
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.primitives.Ints;
 import com.google.gerrit.acceptance.testsuite.account.TestSshKeys;
 import com.google.gerrit.common.FooterConstants;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Project;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.JSchException;
 import com.jcraft.jsch.KeyPair;
@@ -109,19 +110,14 @@ public class GitUtil {
       throws Exception {
     DfsRepositoryDescription desc = new DfsRepositoryDescription("clone of " + project.get());
 
-    FS fs = FS.detect();
-
-    // Avoid leaking user state into our tests.
-    fs.setUserHome(null);
-
-    InMemoryRepository dest =
-        new InMemoryRepository.Builder()
-            .setRepositoryDescription(desc)
-            // SshTransport depends on a real FS to read ~/.ssh/config, but
-            // InMemoryRepository by default uses a null FS.
-            // TODO(dborowitz): Remove when we no longer depend on SSH.
-            .setFS(fs)
-            .build();
+    InMemoryRepository.Builder b = new InMemoryRepository.Builder().setRepositoryDescription(desc);
+    if (uri.startsWith("ssh://")) {
+      // SshTransport depends on a real FS to read ~/.ssh/config, but InMemoryRepository by default
+      // uses a null FS.
+      // Avoid leaking user state into our tests.
+      b.setFS(FS.detect().setUserHome(null));
+    }
+    InMemoryRepository dest = b.build();
     Config cfg = dest.getConfig();
     cfg.setString("remote", "origin", "url", uri);
     cfg.setString("remote", "origin", "fetch", "+refs/heads/*:refs/remotes/origin/*");
@@ -132,11 +128,6 @@ public class GitUtil {
       testRepo.reset(originMaster);
     }
     return testRepo;
-  }
-
-  public static TestRepository<InMemoryRepository> cloneProject(
-      Project.NameKey project, SshSession sshSession) throws Exception {
-    return cloneProject(project, sshSession.getUrl() + "/" + project.get());
   }
 
   public static Ref createAnnotatedTag(TestRepository<?> testRepo, String name, PersonIdent tagger)
@@ -209,13 +200,13 @@ public class GitUtil {
 
   public static void assertPushOk(PushResult result, String ref) {
     RemoteRefUpdate rru = result.getRemoteUpdate(ref);
-    assertThat(rru.getStatus()).named(rru.toString()).isEqualTo(RemoteRefUpdate.Status.OK);
+    assertWithMessage(rru.toString()).that(rru.getStatus()).isEqualTo(RemoteRefUpdate.Status.OK);
   }
 
   public static void assertPushRejected(PushResult result, String ref, String expectedMessage) {
     RemoteRefUpdate rru = result.getRemoteUpdate(ref);
-    assertThat(rru.getStatus())
-        .named(rru.toString())
+    assertWithMessage(rru.toString())
+        .that(rru.getStatus())
         .isEqualTo(RemoteRefUpdate.Status.REJECTED_OTHER_REASON);
     assertThat(rru.getMessage()).isEqualTo(expectedMessage);
   }

@@ -22,10 +22,10 @@ import com.google.common.cache.LoadingCache;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.data.GroupReference;
 import com.google.gerrit.common.data.ParameterizedString;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.extensions.client.AccountFieldName;
 import com.google.gerrit.extensions.client.AuthType;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
 import com.google.gerrit.server.account.AbstractRealm;
 import com.google.gerrit.server.account.AccountException;
 import com.google.gerrit.server.account.AuthRequest;
@@ -37,6 +37,7 @@ import com.google.gerrit.server.auth.AuthenticationUnavailableException;
 import com.google.gerrit.server.auth.NoSuchUserException;
 import com.google.gerrit.server.config.AuthConfig;
 import com.google.gerrit.server.config.GerritServerConfig;
+import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.logging.TraceContext.TraceTimer;
 import com.google.inject.Inject;
@@ -301,7 +302,7 @@ class LdapRealm extends AbstractRealm {
 
   @Override
   public void onCreateAccount(AuthRequest who, Account account) {
-    usernameCache.put(who.getLocalUser(), Optional.of(account.getId()));
+    usernameCache.put(who.getLocalUser(), Optional.of(account.id()));
   }
 
   @Override
@@ -353,7 +354,9 @@ class LdapRealm extends AbstractRealm {
 
     @Override
     public Optional<Account.Id> load(String username) throws Exception {
-      try (TraceTimer timer = TraceContext.newTimer("Loading account for username %s", username)) {
+      try (TraceTimer timer =
+          TraceContext.newTimer(
+              "Loading account for username", Metadata.builder().username(username).build())) {
         return externalIds
             .get(ExternalId.Key.create(SCHEME_GERRIT, username))
             .map(ExternalId::accountId);
@@ -372,7 +375,9 @@ class LdapRealm extends AbstractRealm {
     @Override
     public Set<AccountGroup.UUID> load(String username) throws Exception {
       try (TraceTimer timer =
-          TraceContext.newTimer("Loading group for member with username %s", username)) {
+          TraceContext.newTimer(
+              "Loading group for member with username",
+              Metadata.builder().username(username).build())) {
         final DirContext ctx = helper.open();
         try {
           return helper.queryForGroups(ctx, username, null);
@@ -393,7 +398,9 @@ class LdapRealm extends AbstractRealm {
 
     @Override
     public Boolean load(String groupDn) throws Exception {
-      try (TraceTimer timer = TraceContext.newTimer("Loading groupDn %s", groupDn)) {
+      try (TraceTimer timer =
+          TraceContext.newTimer(
+              "Loading groupDn", Metadata.builder().authDomainName(groupDn).build())) {
         final DirContext ctx = helper.open();
         try {
           Name compositeGroupName = new CompositeName().add(groupDn);

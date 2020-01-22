@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-create-pointer-dialog</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-create-pointer-dialog.html">
 
@@ -37,6 +39,10 @@ limitations under the License.
     let element;
     let sandbox;
 
+    const ironInput = function(element) {
+      return Polymer.dom(element).querySelector('iron-input');
+    };
+
     setup(() => {
       sandbox = sinon.sandbox.create();
       stub('gr-rest-api-interface', {
@@ -49,50 +55,55 @@ limitations under the License.
       sandbox.restore();
     });
 
-    test('branch created', () => {
-      sandbox.stub(element.$.restAPI, 'createRepoBranch', () => {
-        return Promise.resolve({});
-      });
+    test('branch created', done => {
+      sandbox.stub(
+          element.$.restAPI,
+          'createRepoBranch',
+          () => Promise.resolve({}));
 
       assert.isFalse(element.hasNewItemName);
 
       element._itemName = 'test-branch';
       element.itemDetail = 'branches';
 
-      element.$.itemNameInput.bindValue = 'test-branch2';
-      element.$.itemRevisionInput.bindValue = 'HEAD';
+      ironInput(element.$.itemNameSection).bindValue = 'test-branch2';
+      ironInput(element.$.itemRevisionSection).bindValue = 'HEAD';
 
-      assert.isTrue(element.hasNewItemName);
-
-      assert.equal(element._itemName, 'test-branch2');
-
-      assert.equal(element._itemRevision, 'HEAD');
+      setTimeout(() => {
+        assert.isTrue(element.hasNewItemName);
+        assert.equal(element._itemName, 'test-branch2');
+        assert.equal(element._itemRevision, 'HEAD');
+        done();
+      });
     });
 
-    test('tag created', () => {
-      sandbox.stub(element.$.restAPI, 'createRepoTag', () => {
-        return Promise.resolve({});
-      });
+    test('tag created', done => {
+      sandbox.stub(
+          element.$.restAPI,
+          'createRepoTag',
+          () => Promise.resolve({}));
 
       assert.isFalse(element.hasNewItemName);
 
       element._itemName = 'test-tag';
       element.itemDetail = 'tags';
 
-      element.$.itemNameInput.bindValue = 'test-tag2';
-      element.$.itemRevisionInput.bindValue = 'HEAD';
+      ironInput(element.$.itemNameSection).bindValue = 'test-tag2';
+      ironInput(element.$.itemRevisionSection).bindValue = 'HEAD';
 
-      assert.isTrue(element.hasNewItemName);
-
-      assert.equal(element._itemName, 'test-tag2');
-
-      assert.equal(element._itemRevision, 'HEAD');
+      setTimeout(() => {
+        assert.isTrue(element.hasNewItemName);
+        assert.equal(element._itemName, 'test-tag2');
+        assert.equal(element._itemRevision, 'HEAD');
+        done();
+      });
     });
 
-    test('tag created with annotations', () => {
-      sandbox.stub(element.$.restAPI, 'createRepoTag', () => {
-        return Promise.resolve({});
-      });
+    test('tag created with annotations', done => {
+      sandbox.stub(
+          element.$.restAPI,
+          'createRepoTag',
+          () => Promise.resolve({}));
 
       assert.isFalse(element.hasNewItemName);
 
@@ -100,17 +111,17 @@ limitations under the License.
       element._itemAnnotation = 'test-message';
       element.itemDetail = 'tags';
 
-      element.$.itemNameInput.bindValue = 'test-tag2';
-      element.$.itemAnnotationInput.bindValue = 'test-message2';
-      element.$.itemRevisionInput.bindValue = 'HEAD';
+      ironInput(element.$.itemNameSection).bindValue = 'test-tag2';
+      ironInput(element.$.itemAnnotationSection).bindValue = 'test-message2';
+      ironInput(element.$.itemRevisionSection).bindValue = 'HEAD';
 
-      assert.isTrue(element.hasNewItemName);
-
-      assert.equal(element._itemName, 'test-tag2');
-
-      assert.equal(element._itemAnnotation, 'test-message2');
-
-      assert.equal(element._itemRevision, 'HEAD');
+      setTimeout(() => {
+        assert.isTrue(element.hasNewItemName);
+        assert.equal(element._itemName, 'test-tag2');
+        assert.equal(element._itemAnnotation, 'test-message2');
+        assert.equal(element._itemRevision, 'HEAD');
+        done();
+      });
     });
 
     test('_computeHideItemClass returns hideItem if type is branches', () => {

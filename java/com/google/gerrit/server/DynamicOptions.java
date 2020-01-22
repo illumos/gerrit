@@ -26,7 +26,6 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.WeakHashMap;
 
 /** Helper class to define and parse options from plugins on ssh and RestAPI commands. */
@@ -50,8 +49,18 @@ public class DynamicOptions {
    *   }
    * </pre>
    *
-   * The option will be prefixed by the plugin name. In the example above, if the plugin name was
+   * <p>The option will be prefixed by the plugin name. In the example above, if the plugin name was
    * my-plugin, then the --verbose option as used by the caller would be --my-plugin--verbose.
+   *
+   * <p>Additional options can be annotated with @RequiresOption which will cause them to be ignored
+   * unless the required option is present. For example:
+   *
+   * <pre>
+   *   {@literal @}RequiresOptions("--help")
+   *   {@literal @}Option(name = "--help-as-json",
+   *           usage = "display help text in json format")
+   *   public boolean displayHelpAsJson;
+   * </pre>
    */
   public interface DynamicBean {}
 
@@ -71,7 +80,7 @@ public class DynamicOptions {
    *       .to(MyOptionsClassNameProvider.class);
    *
    *   static class MyOptionsClassNameProvider implements DynamicOptions.ClassNameProvider {
-   *     @Override
+   *     {@literal @}Override
    *     public String getClassName() {
    *       return "com.googlesource.gerrit.plugins.myplugin.CommandOptions";
    *     }
@@ -98,11 +107,11 @@ public class DynamicOptions {
    *       .to(MyOptionsModulesClassNamesProvider.class);
    *
    *   static class MyOptionsModulesClassNamesProvider implements DynamicOptions.ClassNameProvider {
-   *     @Override
+   *     {@literal @}Override
    *     public String getClassName() {
    *       return "com.googlesource.gerrit.plugins.myplugin.CommandOptions";
    *     }
-   *     @Override
+   *     {@literal @}Override
    *     public Iterable<String> getModulesClassNames()() {
    *       return "com.googlesource.gerrit.plugins.myplugin.MyOptionsModule";
    *     }
@@ -144,6 +153,21 @@ public class DynamicOptions {
    */
   public interface BeanReceiver {
     void setDynamicBean(String plugin, DynamicBean dynamicBean);
+
+    /**
+     * Returns the class that should be used for looking up exported DynamicBean bindings from
+     * plugins. Override when a particular REST/SSH endpoint should respect DynamicBeans bound on a
+     * different endpoint. For example, {@code GetDetail} is just a synonym for a variant of {@code
+     * GetChange}, and it should respect any DynamicBeans on GetChange. GetChange}. So it should
+     * return {@code GetChange.class} from this method.
+     */
+    default Class<? extends BeanReceiver> getExportedBeanReceiver() {
+      return getClass();
+    }
+  }
+
+  public interface BeanProvider {
+    DynamicBean getDynamicBean(String plugin);
   }
 
   /**
@@ -161,8 +185,7 @@ public class DynamicOptions {
    * classloaders.
    */
   protected static Map<ClassLoader, Map<ClassLoader, WeakReference<ClassLoader>>> mergedClByCls =
-      Collections.synchronizedMap(
-          new WeakHashMap<ClassLoader, Map<ClassLoader, WeakReference<ClassLoader>>>());
+      Collections.synchronizedMap(new WeakHashMap<>());
 
   protected Object bean;
   protected Map<String, DynamicBean> beansByPlugin;
@@ -187,9 +210,13 @@ public class DynamicOptions {
     this.bean = bean;
     this.injector = injector;
     beansByPlugin = new HashMap<>();
+    Class<?> beanClass =
+        (bean instanceof BeanReceiver)
+            ? ((BeanReceiver) bean).getExportedBeanReceiver()
+            : getClass();
     for (String plugin : dynamicBeans.plugins()) {
       Provider<DynamicBean> provider =
-          dynamicBeans.byPlugin(plugin).get(bean.getClass().getCanonicalName());
+          dynamicBeans.byPlugin(plugin).get(beanClass.getCanonicalName());
       if (provider != null) {
         beansByPlugin.put(plugin, getDynamicBean(bean, provider.get()));
       }
@@ -258,22 +285,23 @@ public class DynamicOptions {
   }
 
   public void parseDynamicBeans(CmdLineParser clp) {
-    for (Entry<String, DynamicBean> e : beansByPlugin.entrySet()) {
+    for (Map.Entry<String, DynamicBean> e : beansByPlugin.entrySet()) {
       clp.parseWithPrefix("--" + e.getKey(), e.getValue());
     }
+    clp.drainOptionQueue();
   }
 
   public void setDynamicBeans() {
     if (bean instanceof BeanReceiver) {
       BeanReceiver receiver = (BeanReceiver) bean;
-      for (Entry<String, DynamicBean> e : beansByPlugin.entrySet()) {
+      for (Map.Entry<String, DynamicBean> e : beansByPlugin.entrySet()) {
         receiver.setDynamicBean(e.getKey(), e.getValue());
       }
     }
   }
 
   public void onBeanParseStart() {
-    for (Entry<String, DynamicBean> e : beansByPlugin.entrySet()) {
+    for (Map.Entry<String, DynamicBean> e : beansByPlugin.entrySet()) {
       DynamicBean instance = e.getValue();
       if (instance instanceof BeanParseListener) {
         BeanParseListener listener = (BeanParseListener) instance;
@@ -283,7 +311,7 @@ public class DynamicOptions {
   }
 
   public void onBeanParseEnd() {
-    for (Entry<String, DynamicBean> e : beansByPlugin.entrySet()) {
+    for (Map.Entry<String, DynamicBean> e : beansByPlugin.entrySet()) {
       DynamicBean instance = e.getValue();
       if (instance instanceof BeanParseListener) {
         BeanParseListener listener = (BeanParseListener) instance;

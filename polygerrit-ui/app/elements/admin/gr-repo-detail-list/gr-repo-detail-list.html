@@ -17,8 +17,9 @@ limitations under the License.
 
 <link rel="import" href="../../../behaviors/gr-list-view-behavior/gr-list-view-behavior.html">
 <link rel="import" href="../../../behaviors/gr-url-encoding-behavior/gr-url-encoding-behavior.html">
-<link rel="import" href="../../../bower_components/iron-input/iron-input.html">
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/iron-input/iron-input.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../styles/gr-form-styles.html">
 <link rel="import" href="../../../styles/gr-table-styles.html">
 <link rel="import" href="../../../styles/shared-styles.html">
@@ -34,8 +35,12 @@ limitations under the License.
 
 <dom-module id="gr-repo-detail-list">
   <template>
-    <style include="gr-form-styles"></style>
-    <style include="gr-table-styles"></style>
+    <style include="gr-form-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
+    <style include="gr-table-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <style include="shared-styles">
       .tags td.name {
         min-width: 25em;
@@ -64,15 +69,14 @@ limitations under the License.
         display: none;
       }
       .revisionEdit gr-button {
-        margin-left: .6em;
+        margin-left: var(--spacing-m);
       }
       .editBtn {
-        margin-left: 1em;
+        margin-left: var(--spacing-l);
       }
       .canEdit .revisionEdit{
         align-items: center;
         display: flex;
-        line-height: 1;
       }
       .deleteButton:not(.show) {
         display: none;
@@ -81,7 +85,9 @@ limitations under the License.
         display: none;
       }
     </style>
-    <style include="gr-table-styles"></style>
+    <style include="gr-table-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <gr-list-view
         create-new="[[_loggedIn]]"
         filter="[[_filter]]"
@@ -120,23 +126,26 @@ limitations under the License.
                   </span>
                   <gr-button
                       link
-                      on-tap="_handleEditRevision"
+                      on-click="_handleEditRevision"
                       class="editBtn">
                     edit
                   </gr-button>
-                  <input
-                      is=iron-input
+                  <iron-input
                       bind-value="{{_revisedRef}}"
                       class="editItem">
+                    <input
+                        is="iron-input"
+                        bind-value="{{_revisedRef}}">
+                  </iron-input>
                   <gr-button
                       link
-                      on-tap="_handleCancelRevision"
+                      on-click="_handleCancelRevision"
                       class="cancelBtn editItem">
                     Cancel
                   </gr-button>
                   <gr-button
                       link
-                      on-tap="_handleSaveRevision"
+                      on-click="_handleSaveRevision"
                       class="saveBtn editItem"
                       disabled="[[!_revisedRef]]">
                     Save
@@ -172,7 +181,7 @@ limitations under the License.
                 <gr-button
                     link
                     class$="deleteButton [[_computeHideDeleteClass(_isOwner, item.can_delete)]]"
-                    on-tap="_handleDeleteItem">
+                    on-click="_handleDeleteItem">
                   Delete
                 </gr-button>
               </td>

@@ -28,9 +28,9 @@ import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Multimap;
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.Patch;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.client.DiffPreferencesInfo.Whitespace;
-import com.google.gerrit.reviewdb.client.Patch;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.config.ConfigUtil;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.git.GitRepositoryManager;
@@ -314,12 +314,12 @@ public class PatchListLoader implements Callable<PatchList> {
   }
 
   private static boolean areParentChild(RevCommit commitA, RevCommit commitB) {
-    return ObjectId.equals(commitA.getParent(0), commitB)
-        || ObjectId.equals(commitB.getParent(0), commitA);
+    return ObjectId.isEqual(commitA.getParent(0), commitB)
+        || ObjectId.isEqual(commitB.getParent(0), commitA);
   }
 
   private static boolean haveCommonParent(RevCommit commitA, RevCommit commitB) {
-    return ObjectId.equals(commitA.getParent(0), commitB.getParent(0));
+    return ObjectId.isEqual(commitA.getParent(0), commitB.getParent(0));
   }
 
   private static Set<String> getTouchedFilePaths(PatchListEntry patchListEntry) {

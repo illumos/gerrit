@@ -17,13 +17,12 @@ package com.google.gerrit.server.git;
 import static java.util.Objects.requireNonNull;
 
 import com.google.common.flogger.FluentLogger;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.ChangeMessage;
-import com.google.gerrit.reviewdb.client.LabelId;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.PatchSetApproval;
-import com.google.gerrit.reviewdb.client.PatchSetInfo;
-import com.google.gerrit.server.ApprovalsUtil;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.ChangeMessage;
+import com.google.gerrit.entities.LabelId;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.PatchSetInfo;
+import com.google.gerrit.entities.SubmissionId;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.config.SendEmailExecutor;
@@ -35,20 +34,23 @@ import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
 import com.google.gerrit.server.update.Context;
 import com.google.gerrit.server.util.RequestScopePropagator;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.assistedinject.Assisted;
 import java.io.IOException;
-import java.util.Collections;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import org.eclipse.jgit.lib.Constants;
-import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 
+/**
+ * Operation to close a change on push.
+ *
+ * <p>When we find a change corresponding to a commit that is pushed to a branch directly, we close
+ * the change. This class marks the change as merged, and sends out the email notification.
+ */
 public class MergedByPushOp implements BatchUpdateOp {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
@@ -56,6 +58,7 @@ public class MergedByPushOp implements BatchUpdateOp {
     MergedByPushOp create(
         RequestScopePropagator requestScopePropagator,
         PatchSet.Id psId,
+        @Assisted SubmissionId submissionId,
         @Assisted("refName") String refName,
         @Assisted("mergeResultRevId") String mergeResultRevId);
   }
@@ -69,6 +72,7 @@ public class MergedByPushOp implements BatchUpdateOp {
   private final ChangeMerged changeMerged;
 
   private final PatchSet.Id psId;
+  private final SubmissionId submissionId;
   private final String refName;
   private final String mergeResultRevId;
 
@@ -88,6 +92,7 @@ public class MergedByPushOp implements BatchUpdateOp {
       ChangeMerged changeMerged,
       @Assisted RequestScopePropagator requestScopePropagator,
       @Assisted PatchSet.Id psId,
+      @Assisted SubmissionId submissionId,
       @Assisted("refName") String refName,
       @Assisted("mergeResultRevId") String mergeResultRevId) {
     this.patchSetInfoFactory = patchSetInfoFactory;
@@ -97,6 +102,7 @@ public class MergedByPushOp implements BatchUpdateOp {
     this.sendEmailExecutor = sendEmailExecutor;
     this.changeMerged = changeMerged;
     this.requestScopePropagator = requestScopePropagator;
+    this.submissionId = submissionId;
     this.psId = psId;
     this.refName = refName;
     this.mergeResultRevId = mergeResultRevId;
@@ -112,9 +118,9 @@ public class MergedByPushOp implements BatchUpdateOp {
   }
 
   @Override
-  public boolean updateChange(ChangeContext ctx) throws OrmException, IOException {
+  public boolean updateChange(ChangeContext ctx) throws IOException {
     change = ctx.getChange();
-    correctBranch = refName.equals(change.getDest().get());
+    correctBranch = refName.equals(change.getDest().branch());
     if (!correctBranch) {
       return false;
     }
@@ -126,21 +132,21 @@ public class MergedByPushOp implements BatchUpdateOp {
     } else {
       patchSet =
           requireNonNull(
-              psUtil.get(ctx.getDb(), ctx.getNotes(), psId),
+              psUtil.get(ctx.getNotes(), psId),
               () -> String.format("patch set %s not found", psId));
     }
     info = getPatchSetInfo(ctx);
 
     ChangeUpdate update = ctx.getUpdate(psId);
-    Change.Status status = change.getStatus();
-    if (status == Change.Status.MERGED) {
+    if (change.isMerged()) {
       return true;
     }
     change.setCurrentPatchSet(info);
     change.setStatus(Change.Status.MERGED);
+    change.setSubmissionId(submissionId.toString());
     // we cannot reconstruct the submit records for when this change was
-    // submitted, this is why we must fix the status
-    update.fixStatus(Change.Status.MERGED);
+    // submitted, this is why we must fix the status and other details.
+    update.fixStatusToMerged(submissionId);
     update.setCurrentPatchSet();
     if (change.isWorkInProgress()) {
       change.setWorkInProgress(false);
@@ -148,7 +154,7 @@ public class MergedByPushOp implements BatchUpdateOp {
     }
     StringBuilder msgBuf = new StringBuilder();
     msgBuf.append("Change has been successfully pushed");
-    if (!refName.equals(change.getDest().get())) {
+    if (!refName.equals(change.getDest().branch())) {
       msgBuf.append(" into ");
       if (refName.startsWith(Constants.R_HEADS)) {
         msgBuf.append("branch ");
@@ -161,14 +167,8 @@ public class MergedByPushOp implements BatchUpdateOp {
     ChangeMessage msg =
         ChangeMessagesUtil.newMessage(
             psId, ctx.getUser(), ctx.getWhen(), msgBuf.toString(), ChangeMessagesUtil.TAG_MERGED);
-    cmUtil.addChangeMessage(ctx.getDb(), update, msg);
-
-    PatchSetApproval submitter =
-        ApprovalsUtil.newApproval(
-            change.currentPatchSetId(), ctx.getUser(), LabelId.legacySubmit(), 1, ctx.getWhen());
-    update.putApproval(submitter.getLabel(), submitter.getValue());
-    ctx.getDb().patchSetApprovals().upsert(Collections.singleton(submitter));
-
+    cmUtil.addChangeMessage(update, msg);
+    update.putApproval(LabelId.legacySubmit().get(), (short) 1);
     return true;
   }
 
@@ -186,7 +186,7 @@ public class MergedByPushOp implements BatchUpdateOp {
                   public void run() {
                     try {
                       MergedSender cm =
-                          mergedSenderFactory.create(ctx.getProject(), psId.getParentKey());
+                          mergedSenderFactory.create(ctx.getProject(), psId.changeId());
                       cm.setFrom(ctx.getAccountId());
                       cm.setPatchSet(patchSet, info);
                       cm.send();
@@ -205,10 +205,9 @@ public class MergedByPushOp implements BatchUpdateOp {
     changeMerged.fire(change, patchSet, ctx.getAccount(), mergeResultRevId, ctx.getWhen());
   }
 
-  private PatchSetInfo getPatchSetInfo(ChangeContext ctx) throws IOException, OrmException {
+  private PatchSetInfo getPatchSetInfo(ChangeContext ctx) throws IOException {
     RevWalk rw = ctx.getRevWalk();
-    RevCommit commit =
-        rw.parseCommit(ObjectId.fromString(requireNonNull(patchSet).getRevision().get()));
+    RevCommit commit = rw.parseCommit(requireNonNull(patchSet).commitId());
     return patchSetInfoFactory.get(rw, commit, psId);
   }
 }

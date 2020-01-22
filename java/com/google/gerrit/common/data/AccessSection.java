@@ -16,32 +16,47 @@ package com.google.gerrit.common.data;
 
 import static java.util.Objects.requireNonNull;
 
+import com.google.common.collect.ImmutableList;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Project;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
 /** Portion of a {@link Project} describing access rules. */
-public class AccessSection extends RefConfigSection implements Comparable<AccessSection> {
+public final class AccessSection implements Comparable<AccessSection> {
   /** Special name given to the global capabilities; not a valid reference. */
   public static final String GLOBAL_CAPABILITIES = "GLOBAL_CAPABILITIES";
+  /** Pattern that matches all references in a project. */
+  public static final String ALL = "refs/*";
 
-  protected List<Permission> permissions;
+  /** Pattern that matches all branches in a project. */
+  public static final String HEADS = "refs/heads/*";
 
-  protected AccessSection() {}
+  /** Prefix that triggers a regular expression pattern. */
+  public static final String REGEX_PREFIX = "^";
 
-  public AccessSection(String refPattern) {
-    super(refPattern);
+  /** Name of the access section. It could be a ref pattern or something else. */
+  private String name;
+
+  private List<Permission> permissions;
+
+  public AccessSection(String name) {
+    this.name = name;
   }
 
-  // TODO(ekempin): Make this method return an ImmutableList once the GWT UI is gone.
-  public List<Permission> getPermissions() {
-    if (permissions == null) {
-      return new ArrayList<>();
-    }
-    return new ArrayList<>(permissions);
+  /** @return true if the name is likely to be a valid reference section name. */
+  public static boolean isValidRefSectionName(String name) {
+    return name.startsWith("refs/") || name.startsWith("^refs/");
+  }
+
+  public String getName() {
+    return name;
+  }
+
+  public ImmutableList<Permission> getPermissions() {
+    return permissions == null ? ImmutableList.of() : ImmutableList.copyOf(permissions);
   }
 
   public void setPermissions(List<Permission> list) {
@@ -148,7 +163,12 @@ public class AccessSection extends RefConfigSection implements Comparable<Access
 
   @Override
   public boolean equals(Object obj) {
-    if (!super.equals(obj) || !(obj instanceof AccessSection)) {
+    if (!(obj instanceof AccessSection)) {
+      return false;
+    }
+
+    AccessSection other = (AccessSection) obj;
+    if (!getName().equals(other.getName())) {
       return false;
     }
     return new HashSet<>(getPermissions())
@@ -163,6 +183,7 @@ public class AccessSection extends RefConfigSection implements Comparable<Access
         hashCode += permission.hashCode();
       }
     }
+    hashCode += getName().hashCode();
     return hashCode;
   }
 }

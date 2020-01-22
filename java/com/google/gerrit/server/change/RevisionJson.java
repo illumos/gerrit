@@ -28,10 +28,15 @@ import static com.google.gerrit.extensions.client.ListChangesOption.PUSH_CERTIFI
 import static com.google.gerrit.extensions.client.ListChangesOption.WEB_LINKS;
 import static com.google.gerrit.server.CommonConverters.toGitPerson;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Patch;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.client.ListChangesOption;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.CommitInfo;
@@ -44,11 +49,7 @@ import com.google.gerrit.extensions.config.DownloadScheme;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.registration.Extension;
 import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Patch;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.PatchSet.Id;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.server.AnonymousUser;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.GpgException;
@@ -66,14 +67,12 @@ import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.assistedinject.Assisted;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.eclipse.jgit.lib.ObjectId;
@@ -156,8 +155,7 @@ public class RevisionJson {
    * depending on the options provided when constructing this instance.
    */
   public RevisionInfo getRevisionInfo(ChangeData cd, PatchSet in)
-      throws PatchListNotAvailableException, GpgException, OrmException, IOException,
-          PermissionBackendException {
+      throws PatchListNotAvailableException, GpgException, IOException, PermissionBackendException {
     AccountLoader accountLoader = accountLoaderFactory.create(has(DETAILED_ACCOUNTS));
     try (Repository repo = openRepoIfNecessary(cd.project());
         RevWalk rw = newRevWalk(repo)) {
@@ -185,7 +183,7 @@ public class RevisionJson {
     info.message = commit.getFullMessage();
 
     if (addLinks) {
-      List<WebLinkInfo> links = webLinks.getPatchSetLinks(project, commit.name());
+      ImmutableList<WebLinkInfo> links = webLinks.getPatchSetLinks(project, commit.name());
       info.webLinks = links.isEmpty() ? null : links;
     }
 
@@ -195,7 +193,7 @@ public class RevisionJson {
       i.commit = parent.name();
       i.subject = parent.getShortMessage();
       if (addLinks) {
-        List<WebLinkInfo> parentLinks = webLinks.getParentLinks(project, parent.name());
+        ImmutableList<WebLinkInfo> parentLinks = webLinks.getParentLinks(project, parent.name());
         i.webLinks = parentLinks.isEmpty() ? null : parentLinks;
       }
       info.parents.add(i);
@@ -212,15 +210,14 @@ public class RevisionJson {
       AccountLoader accountLoader,
       ChangeData cd,
       Map<PatchSet.Id, PatchSet> map,
-      Optional<Id> limitToPsId,
+      Optional<PatchSet.Id> limitToPsId,
       ChangeInfo changeInfo)
-      throws PatchListNotAvailableException, GpgException, OrmException, IOException,
-          PermissionBackendException {
+      throws PatchListNotAvailableException, GpgException, IOException, PermissionBackendException {
     Map<String, RevisionInfo> res = new LinkedHashMap<>();
     try (Repository repo = openRepoIfNecessary(cd.project());
         RevWalk rw = newRevWalk(repo)) {
       for (PatchSet in : map.values()) {
-        PatchSet.Id id = in.getId();
+        PatchSet.Id id = in.id();
         boolean want;
         if (has(ALL_REVISIONS)) {
           want = true;
@@ -231,7 +228,7 @@ public class RevisionJson {
         }
         if (want) {
           res.put(
-              in.getRevision().get(),
+              in.commitId().name(),
               toRevisionInfo(accountLoader, cd, in, repo, rw, false, changeInfo));
         }
       }
@@ -240,7 +237,7 @@ public class RevisionJson {
   }
 
   private Map<String, FetchInfo> makeFetchMap(ChangeData cd, PatchSet in)
-      throws PermissionBackendException, OrmException, IOException {
+      throws PermissionBackendException, IOException {
     Map<String, FetchInfo> r = new LinkedHashMap<>();
     for (Extension<DownloadScheme> e : downloadSchemes) {
       String schemeName = e.getExportName();
@@ -255,7 +252,7 @@ public class RevisionJson {
 
       String projectName = cd.project().get();
       String url = scheme.getUrl(projectName);
-      String refName = in.getRefName();
+      String refName = in.refName();
       FetchInfo fetchInfo = new FetchInfo(url, refName);
       r.put(schemeName, fetchInfo);
 
@@ -276,18 +273,17 @@ public class RevisionJson {
       @Nullable RevWalk rw,
       boolean fillCommit,
       @Nullable ChangeInfo changeInfo)
-      throws PatchListNotAvailableException, GpgException, OrmException, IOException,
-          PermissionBackendException {
+      throws PatchListNotAvailableException, GpgException, IOException, PermissionBackendException {
     Change c = cd.change();
     RevisionInfo out = new RevisionInfo();
-    out.isCurrent = in.getId().equals(c.currentPatchSetId());
-    out._number = in.getId().get();
-    out.ref = in.getRefName();
-    out.created = in.getCreatedOn();
-    out.uploader = accountLoader.get(in.getUploader());
+    out.isCurrent = in.id().equals(c.currentPatchSetId());
+    out._number = in.id().get();
+    out.ref = in.refName();
+    out.created = in.createdOn();
+    out.uploader = accountLoader.get(in.uploader());
     out.fetch = makeFetchMap(cd, in);
     out.kind = changeKindCache.getChangeKind(rw, repo != null ? repo.getConfig() : null, cd, in);
-    out.description = in.getDescription();
+    out.description = in.description().orElse(null);
 
     boolean setCommit = has(ALL_COMMITS) || (out.isCurrent && has(CURRENT_COMMIT));
     boolean addFooters = out.isCurrent && has(COMMIT_FOOTERS);
@@ -295,14 +291,14 @@ public class RevisionJson {
       checkState(rw != null);
       checkState(repo != null);
       Project.NameKey project = c.getProject();
-      String rev = in.getRevision().get();
+      String rev = in.commitId().name();
       RevCommit commit = rw.parseCommit(ObjectId.fromString(rev));
       rw.parseBody(commit);
       if (setCommit) {
         out.commit = getCommitInfo(project, rw, commit, has(WEB_LINKS), fillCommit);
       }
       if (addFooters) {
-        Ref ref = repo.exactRef(cd.change().getDest().get());
+        Ref ref = repo.exactRef(cd.change().getDest().branch());
         RevCommit mergeTip = null;
         if (ref != null) {
           mergeTip = rw.parseCommit(ref.getObjectId());
@@ -311,14 +307,18 @@ public class RevisionJson {
         out.commitWithFooters =
             mergeUtilFactory
                 .create(projectCache.get(project))
-                .createCommitMessageOnSubmit(commit, mergeTip, cd.notes(), in.getId());
+                .createCommitMessageOnSubmit(commit, mergeTip, cd.notes(), in.id());
       }
     }
 
     if (has(ALL_FILES) || (out.isCurrent && has(CURRENT_FILES))) {
-      out.files = fileInfoJson.toFileInfoMap(c, in);
-      out.files.remove(Patch.COMMIT_MSG);
-      out.files.remove(Patch.MERGE_LIST);
+      try {
+        out.files = fileInfoJson.toFileInfoMap(c, in);
+        out.files.remove(Patch.COMMIT_MSG);
+        out.files.remove(Patch.MERGE_LIST);
+      } catch (ResourceConflictException e) {
+        logger.atWarning().withCause(e).log("creating file list failed");
+      }
     }
 
     if (out.isCurrent && has(CURRENT_ACTIONS) && userProvider.get().isIdentifiedUser()) {
@@ -329,10 +329,10 @@ public class RevisionJson {
     }
 
     if (gpgApi.isEnabled() && has(PUSH_CERTIFICATES)) {
-      if (in.getPushCertificate() != null) {
+      if (in.pushCertificate().isPresent()) {
         out.pushCertificate =
             gpgApi.checkPushCertificate(
-                in.getPushCertificate(), userFactory.create(in.getUploader()));
+                in.pushCertificate().get(), userFactory.create(in.uploader()));
       } else {
         out.pushCertificate = new PushCertificateInfo();
       }
@@ -351,14 +351,13 @@ public class RevisionJson {
    *     lazyload}.
    */
   private PermissionBackend.ForChange permissionBackendForChange(
-      PermissionBackend.WithUser withUser, ChangeData cd) throws OrmException {
+      PermissionBackend.WithUser withUser, ChangeData cd) {
     return lazyLoad
         ? withUser.change(cd)
         : withUser.indexedChange(cd, notesFactory.createFromIndexedChange(cd.change()));
   }
 
-  private boolean isWorldReadable(ChangeData cd)
-      throws OrmException, PermissionBackendException, IOException {
+  private boolean isWorldReadable(ChangeData cd) throws PermissionBackendException, IOException {
     try {
       permissionBackendForChange(permissionBackend.user(anonymous), cd)
           .check(ChangePermission.READ);

@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-reply-dialog</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="../../plugins/gr-plugin-host/gr-plugin-host.html">
@@ -86,7 +88,6 @@ limitations under the License.
           '+1',
         ],
       };
-      element.serverConfig = {note_db_enabled: true};
       sandbox.stub(element, 'fetchChangeUpdates')
           .returns(Promise.resolve({isLatest: true}));
     };
@@ -119,18 +120,18 @@ limitations under the License.
       // resolving.
       sandbox.stub(element, '_purgeReviewersPendingRemove');
 
-      element.$$('#ccs').$.entry.setText('test');
+      element.$.ccs.$.entry.setText('test');
       MockInteractions.tap(element.$$('gr-button.send'));
       assert.isFalse(sendStub.called);
       flushAsynchronousOperations();
 
-      element.$$('#ccs').$.entry.setText('test@test.test');
+      element.$.ccs.$.entry.setText('test@test.test');
       MockInteractions.tap(element.$$('gr-button.send'));
       assert.isTrue(sendStub.called);
     });
 
     test('lgtm plugin', done => {
-      Gerrit._resetPlugins();
+      Gerrit._testOnly_resetPlugins();
       const pluginHost = fixture('plugin-host');
       pluginHost.config = {
         plugin: {
@@ -150,11 +151,12 @@ limitations under the License.
           flush(() => {
             const textarea = element.$.textarea.getNativeTextarea();
             textarea.value = 'LGTM';
-            textarea.dispatchEvent(new CustomEvent('input', {bubbles: true}));
+            textarea.dispatchEvent(new CustomEvent(
+                'input', {bubbles: true, composed: true}));
             const labelScoreRows = Polymer.dom(element.$.labelScores.root)
                 .querySelector('gr-label-score-row[name="Code-Review"]');
             const selectedBtn = Polymer.dom(labelScoreRows.root)
-                .querySelector('gr-button[value="+1"].iron-selected');
+                .querySelector('gr-button[data-value="+1"].iron-selected');
             assert.isOk(selectedBtn);
             done();
           });

@@ -19,20 +19,14 @@ import static com.google.gerrit.server.notedb.ReviewerStateInternal.CC;
 import static com.google.gerrit.server.notedb.ReviewerStateInternal.REVIEWER;
 import static java.util.Objects.requireNonNull;
 
-import com.google.common.collect.ImmutableListMultimap;
-import com.google.common.collect.ListMultimap;
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.ChangeMessage;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.PatchSetInfo;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
-import com.google.gerrit.extensions.api.changes.RecipientType;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.ChangeMessage;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.PatchSetInfo;
-import com.google.gerrit.reviewdb.server.ReviewDb;
-import com.google.gerrit.server.ApprovalCopier;
 import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.ChangeUtil;
@@ -55,7 +49,6 @@ import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
 import com.google.gerrit.server.update.Context;
 import com.google.gerrit.server.update.RepoContext;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 import java.io.IOException;
@@ -79,7 +72,6 @@ public class PatchSetInserter implements BatchUpdateOp {
   private final ProjectCache projectCache;
   private final RevisionCreated revisionCreated;
   private final ApprovalsUtil approvalsUtil;
-  private final ApprovalCopier approvalCopier;
   private final ChangeMessagesUtil cmUtil;
   private final PatchSetUtil psUtil;
 
@@ -98,10 +90,8 @@ public class PatchSetInserter implements BatchUpdateOp {
   private boolean checkAddPatchSetPermission = true;
   private List<String> groups = Collections.emptyList();
   private boolean fireRevisionCreated = true;
-  private NotifyHandling notify = NotifyHandling.ALL;
-  private ListMultimap<RecipientType, Account.Id> accountsToNotify = ImmutableListMultimap.of();
   private boolean allowClosed;
-  private boolean copyApprovals = true;
+  private boolean sendEmail = true;
 
   // Fields set during some phase of BatchUpdate.Op.
   private Change change;
@@ -114,7 +104,6 @@ public class PatchSetInserter implements BatchUpdateOp {
   public PatchSetInserter(
       PermissionBackend permissionBackend,
       ApprovalsUtil approvalsUtil,
-      ApprovalCopier approvalCopier,
       ChangeMessagesUtil cmUtil,
       PatchSetInfoFactory patchSetInfoFactory,
       CommitValidators.Factory commitValidatorsFactory,
@@ -127,7 +116,6 @@ public class PatchSetInserter implements BatchUpdateOp {
       @Assisted ObjectId commitId) {
     this.permissionBackend = permissionBackend;
     this.approvalsUtil = approvalsUtil;
-    this.approvalCopier = approvalCopier;
     this.cmUtil = cmUtil;
     this.patchSetInfoFactory = patchSetInfoFactory;
     this.commitValidatorsFactory = commitValidatorsFactory;
@@ -176,24 +164,13 @@ public class PatchSetInserter implements BatchUpdateOp {
     return this;
   }
 
-  public PatchSetInserter setNotify(NotifyHandling notify) {
-    this.notify = requireNonNull(notify);
-    return this;
-  }
-
-  public PatchSetInserter setAccountsToNotify(
-      ListMultimap<RecipientType, Account.Id> accountsToNotify) {
-    this.accountsToNotify = requireNonNull(accountsToNotify);
-    return this;
-  }
-
   public PatchSetInserter setAllowClosed(boolean allowClosed) {
     this.allowClosed = allowClosed;
     return this;
   }
 
-  public PatchSetInserter setCopyApprovals(boolean copyApprovals) {
-    this.copyApprovals = copyApprovals;
+  public PatchSetInserter setSendEmail(boolean sendEmail) {
+    this.sendEmail = sendEmail;
     return this;
   }
 
@@ -209,22 +186,18 @@ public class PatchSetInserter implements BatchUpdateOp {
 
   @Override
   public void updateRepo(RepoContext ctx)
-      throws AuthException, ResourceConflictException, IOException, OrmException,
-          PermissionBackendException {
+      throws AuthException, ResourceConflictException, IOException, PermissionBackendException {
     validate(ctx);
     ctx.addRefUpdate(ObjectId.zeroId(), commitId, getPatchSetId().toRefName());
   }
 
   @Override
-  public boolean updateChange(ChangeContext ctx)
-      throws ResourceConflictException, OrmException, IOException {
-    ReviewDb db = ctx.getDb();
-
+  public boolean updateChange(ChangeContext ctx) throws ResourceConflictException, IOException {
     change = ctx.getChange();
     ChangeUpdate update = ctx.getUpdate(psId);
     update.setSubjectForCommit("Create patch set " + psId.get());
 
-    if (!change.getStatus().isOpen() && !allowClosed) {
+    if (!change.isNew() && !allowClosed) {
       throw new ResourceConflictException(
           String.format(
               "Cannot create new patch set of change %s because it is %s",
@@ -233,30 +206,23 @@ public class PatchSetInserter implements BatchUpdateOp {
 
     List<String> newGroups = groups;
     if (newGroups.isEmpty()) {
-      PatchSet prevPs = psUtil.current(db, ctx.getNotes());
+      PatchSet prevPs = psUtil.current(ctx.getNotes());
       if (prevPs != null) {
-        newGroups = prevPs.getGroups();
+        newGroups = prevPs.groups();
       }
     }
     patchSet =
         psUtil.insert(
-            db,
-            ctx.getRevWalk(),
-            ctx.getUpdate(psId),
-            psId,
-            commitId,
-            newGroups,
-            null,
-            description);
+            ctx.getRevWalk(), ctx.getUpdate(psId), psId, commitId, newGroups, null, description);
 
-    if (notify != NotifyHandling.NONE) {
-      oldReviewers = approvalsUtil.getReviewers(db, ctx.getNotes());
+    if (ctx.getNotify(change.getId()).handling() != NotifyHandling.NONE) {
+      oldReviewers = approvalsUtil.getReviewers(ctx.getNotes());
     }
 
     if (message != null) {
       changeMessage =
           ChangeMessagesUtil.newMessage(
-              patchSet.getId(),
+              patchSet.id(),
               ctx.getUser(),
               ctx.getWhen(),
               message,
@@ -270,19 +236,17 @@ public class PatchSetInserter implements BatchUpdateOp {
       change.setStatus(Change.Status.NEW);
     }
     change.setCurrentPatchSet(patchSetInfo);
-    if (copyApprovals) {
-      approvalCopier.copyInReviewDb(
-          db, ctx.getNotes(), patchSet, ctx.getRevWalk(), ctx.getRepoView().getConfig());
-    }
     if (changeMessage != null) {
-      cmUtil.addChangeMessage(db, update, changeMessage);
+      cmUtil.addChangeMessage(update, changeMessage);
     }
     return true;
   }
 
   @Override
-  public void postUpdate(Context ctx) throws OrmException {
-    if (notify != NotifyHandling.NONE || !accountsToNotify.isEmpty()) {
+  public void postUpdate(Context ctx) {
+    NotifyResolver.Result notify = ctx.getNotify(change.getId());
+    if (notify.shouldNotify() && sendEmail) {
+      requireNonNull(changeMessage);
       try {
         ReplacePatchSetSender cm = replacePatchSetFactory.create(ctx.getProject(), change.getId());
         cm.setFrom(ctx.getAccountId());
@@ -291,7 +255,6 @@ public class PatchSetInserter implements BatchUpdateOp {
         cm.addReviewers(oldReviewers.byState(REVIEWER));
         cm.addExtraCC(oldReviewers.byState(CC));
         cm.setNotify(notify);
-        cm.setAccountsToNotify(accountsToNotify);
         cm.send();
       } catch (Exception err) {
         logger.atSevere().withCause(err).log(
@@ -305,17 +268,12 @@ public class PatchSetInserter implements BatchUpdateOp {
   }
 
   private void validate(RepoContext ctx)
-      throws AuthException, ResourceConflictException, IOException, PermissionBackendException,
-          OrmException {
+      throws AuthException, ResourceConflictException, IOException, PermissionBackendException {
     // Not allowed to create a new patch set if the current patch set is locked.
     psUtil.checkPatchSetNotLocked(origNotes);
 
     if (checkAddPatchSetPermission) {
-      permissionBackend
-          .user(ctx.getUser())
-          .database(ctx.getDb())
-          .change(origNotes)
-          .check(ChangePermission.ADD_PATCH_SET);
+      permissionBackend.user(ctx.getUser()).change(origNotes).check(ChangePermission.ADD_PATCH_SET);
     }
     projectCache.checkedGet(ctx.getProject()).checkStatePermitsWrite();
     if (!validate) {
@@ -330,7 +288,7 @@ public class PatchSetInserter implements BatchUpdateOp {
                 commitId,
                 refName.substring(0, refName.lastIndexOf('/') + 1) + "new"),
             projectCache.checkedGet(origNotes.getProjectName()).getProject(),
-            origNotes.getChange().getDest().get(),
+            origNotes.getChange().getDest().branch(),
             ctx.getRevWalk().getObjectReader(),
             commitId,
             ctx.getIdentifiedUser())) {

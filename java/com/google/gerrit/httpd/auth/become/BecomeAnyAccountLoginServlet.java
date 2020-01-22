@@ -18,13 +18,12 @@ import static com.google.gerrit.server.account.externalids.ExternalId.SCHEME_USE
 import static com.google.gerrit.server.account.externalids.ExternalId.SCHEME_UUID;
 
 import com.google.gerrit.common.PageLinks;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.registration.DynamicItem;
 import com.google.gerrit.httpd.HtmlDomUtil;
 import com.google.gerrit.httpd.LoginUrlToken;
 import com.google.gerrit.httpd.WebSession;
 import com.google.gerrit.httpd.template.SiteHeaderFooter;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountException;
 import com.google.gerrit.server.account.AccountManager;
@@ -35,8 +34,6 @@ import com.google.gerrit.server.account.AuthResult;
 import com.google.gerrit.server.account.externalids.ExternalId;
 import com.google.gerrit.server.query.account.InternalAccountQuery;
 import com.google.gerrit.util.http.CacheHeaders;
-import com.google.gwtorm.server.OrmException;
-import com.google.gwtorm.server.SchemaFactory;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -60,7 +57,6 @@ class BecomeAnyAccountLoginServlet extends HttpServlet {
   private static final long serialVersionUID = 1L;
 
   private final DynamicItem<WebSession> webSession;
-  private final SchemaFactory<ReviewDb> schema;
   private final Accounts accounts;
   private final AccountCache accountCache;
   private final AccountManager accountManager;
@@ -70,14 +66,12 @@ class BecomeAnyAccountLoginServlet extends HttpServlet {
   @Inject
   BecomeAnyAccountLoginServlet(
       DynamicItem<WebSession> ws,
-      SchemaFactory<ReviewDb> sf,
       Accounts a,
       AccountCache ac,
       AccountManager am,
       SiteHeaderFooter shf,
       Provider<InternalAccountQuery> qp) {
     webSession = ws;
-    schema = sf;
     accounts = a;
     accountCache = ac;
     accountManager = am;
@@ -92,8 +86,7 @@ class BecomeAnyAccountLoginServlet extends HttpServlet {
   }
 
   @Override
-  protected void doPost(HttpServletRequest req, HttpServletResponse rsp)
-      throws IOException, ServletException {
+  protected void doPost(HttpServletRequest req, HttpServletResponse rsp) throws IOException {
     CacheHeaders.setNotCacheable(rsp);
 
     final AuthResult res;
@@ -111,11 +104,7 @@ class BecomeAnyAccountLoginServlet extends HttpServlet {
 
     } else {
       byte[] raw;
-      try {
-        raw = prepareHtmlOutput();
-      } catch (OrmException e) {
-        throw new ServletException(e);
-      }
+      raw = prepareHtmlOutput();
       rsp.setContentType("text/html");
       rsp.setCharacterEncoding(HtmlDomUtil.ENC.name());
       rsp.setContentLength(raw.length);
@@ -151,7 +140,7 @@ class BecomeAnyAccountLoginServlet extends HttpServlet {
     }
   }
 
-  private byte[] prepareHtmlOutput() throws IOException, OrmException {
+  private byte[] prepareHtmlOutput() throws IOException {
     final String pageName = "BecomeAnyAccount.html";
     Document doc = headers.parse(getClass(), pageName);
     if (doc == null) {
@@ -159,37 +148,35 @@ class BecomeAnyAccountLoginServlet extends HttpServlet {
     }
 
     Element userlistElement = HtmlDomUtil.find(doc, "userlist");
-    try (ReviewDb db = schema.open()) {
-      for (Account.Id accountId : accounts.firstNIds(100)) {
-        Optional<AccountState> accountState = accountCache.get(accountId);
-        if (!accountState.isPresent()) {
-          continue;
-        }
-        Account account = accountState.get().getAccount();
-        String displayName;
-        if (accountState.get().getUserName().isPresent()) {
-          displayName = accountState.get().getUserName().get();
-        } else if (account.getFullName() != null && !account.getFullName().isEmpty()) {
-          displayName = account.getFullName();
-        } else if (account.getPreferredEmail() != null) {
-          displayName = account.getPreferredEmail();
-        } else {
-          displayName = accountId.toString();
-        }
-
-        Element linkElement = doc.createElement("a");
-        linkElement.setAttribute("href", "?account_id=" + account.getId().toString());
-        linkElement.setTextContent(displayName);
-        userlistElement.appendChild(linkElement);
-        userlistElement.appendChild(doc.createElement("br"));
+    for (Account.Id accountId : accounts.firstNIds(100)) {
+      Optional<AccountState> accountState = accountCache.get(accountId);
+      if (!accountState.isPresent()) {
+        continue;
       }
+      Account account = accountState.get().account();
+      String displayName;
+      if (accountState.get().userName().isPresent()) {
+        displayName = accountState.get().userName().get();
+      } else if (account.fullName() != null && !account.fullName().isEmpty()) {
+        displayName = account.fullName();
+      } else if (account.preferredEmail() != null) {
+        displayName = account.preferredEmail();
+      } else {
+        displayName = accountId.toString();
+      }
+
+      Element linkElement = doc.createElement("a");
+      linkElement.setAttribute("href", "?account_id=" + account.id().toString());
+      linkElement.setTextContent(displayName);
+      userlistElement.appendChild(linkElement);
+      userlistElement.appendChild(doc.createElement("br"));
     }
 
     return HtmlDomUtil.toUTF8(doc);
   }
 
   private Optional<AuthResult> auth(Optional<AccountState> account) {
-    return account.map(a -> new AuthResult(a.getAccount().getId(), null, false));
+    return account.map(a -> new AuthResult(a.account().id(), null, false));
   }
 
   private AuthResult auth(Account.Id account) {
@@ -200,33 +187,20 @@ class BecomeAnyAccountLoginServlet extends HttpServlet {
   }
 
   private AuthResult byUserName(String userName) {
-    try {
-      List<AccountState> accountStates =
-          queryProvider.get().byExternalId(SCHEME_USERNAME, userName);
-      if (accountStates.isEmpty()) {
-        getServletContext().log("No accounts with username " + userName + " found");
-        return null;
-      }
-      if (accountStates.size() > 1) {
-        getServletContext().log("Multiple accounts with username " + userName + " found");
-        return null;
-      }
-      return auth(accountStates.get(0).getAccount().getId());
-    } catch (OrmException e) {
-      getServletContext().log("cannot query account index", e);
+    List<AccountState> accountStates = queryProvider.get().byExternalId(SCHEME_USERNAME, userName);
+    if (accountStates.isEmpty()) {
+      getServletContext().log("No accounts with username " + userName + " found");
       return null;
     }
+    if (accountStates.size() > 1) {
+      getServletContext().log("Multiple accounts with username " + userName + " found");
+      return null;
+    }
+    return auth(accountStates.get(0).account().id());
   }
 
   private Optional<AuthResult> byPreferredEmail(String email) {
-    try (ReviewDb db = schema.open()) {
-      Optional<AccountState> match =
-          queryProvider.get().byPreferredEmail(email).stream().findFirst();
-      return auth(match);
-    } catch (OrmException e) {
-      getServletContext().log("cannot query database", e);
-      return Optional.empty();
-    }
+    return auth(queryProvider.get().byPreferredEmail(email).stream().findFirst());
   }
 
   private Optional<AuthResult> byAccountId(String idStr) {

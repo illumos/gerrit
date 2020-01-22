@@ -21,10 +21,11 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 import com.google.gerrit.common.data.GroupDescription;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.extensions.common.AccountInfo;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
 import com.google.gerrit.server.account.AccountInfoComparator;
 import com.google.gerrit.server.account.AccountLoader;
 import com.google.gerrit.server.account.GroupCache;
@@ -33,7 +34,6 @@ import com.google.gerrit.server.group.GroupResource;
 import com.google.gerrit.server.group.InternalGroup;
 import com.google.gerrit.server.group.InternalGroupDescription;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -66,14 +66,14 @@ public class ListMembers implements RestReadView<GroupResource> {
   }
 
   @Override
-  public List<AccountInfo> apply(GroupResource resource)
-      throws NotInternalGroupException, OrmException, PermissionBackendException {
+  public Response<List<AccountInfo>> apply(GroupResource resource)
+      throws NotInternalGroupException, PermissionBackendException {
     GroupDescription.Internal group =
         resource.asInternalGroup().orElseThrow(NotInternalGroupException::new);
     if (recursive) {
-      return getTransitiveMembers(group, resource.getControl());
+      return Response.ok(getTransitiveMembers(group, resource.getControl()));
     }
-    return getDirectMembers(group, resource.getControl());
+    return Response.ok(getDirectMembers(group, resource.getControl()));
   }
 
   public List<AccountInfo> getTransitiveMembers(AccountGroup.UUID groupUuid)

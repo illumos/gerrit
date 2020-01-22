@@ -15,7 +15,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../behaviors/gr-patch-set-behavior/gr-patch-set-behavior.html">
 <link rel="import" href="../../../styles/shared-styles.html">
 <link rel="import" href="../../core/gr-navigation/gr-navigation.html">
@@ -29,6 +30,7 @@ limitations under the License.
 <link rel="import" href="../../shared/gr-button/gr-button.html">
 <link rel="import" href="../../shared/gr-icons/gr-icons.html">
 <link rel="import" href="../gr-file-list-constants.html">
+<link rel="import" href="../gr-commit-info/gr-commit-info.html">
 
 <dom-module id="gr-file-list-header">
   <template>
@@ -47,7 +49,7 @@ limitations under the License.
         background-color: var(--table-header-background-color);
         border-top: 1px solid var(--border-color);
         display: flex;
-        padding: 6px var(--default-horizontal-margin);
+        padding: var(--spacing-s) var(--spacing-l);
       }
       .patchInfo-left {
         align-items: baseline;
@@ -143,7 +145,7 @@ limitations under the License.
         margin-right: -5px;
       }
       .fileViewActionsLabel {
-        margin-right: .2rem;
+        margin-right: var(--spacing-xs);
       }
       @media screen and (max-width: 50em) {
         .patchInfo-header .desktop {
@@ -153,7 +155,10 @@ limitations under the License.
     </style>
     <div class$="patchInfo-header [[_computeEditModeClass(editMode)]] [[_computePatchInfoClass(patchNum, allPatchSets)]]">
       <div class="patchInfo-left">
-        <h3 class="label">Files</h3>
+        <template is="dom-if"
+            if="[[showTitle]]">
+          <h3 class="label">Files</h3>
+        </template>
         <div class="patchInfoContent">
           <gr-patch-range-select
               id="rangeSelect"
@@ -213,28 +218,28 @@ limitations under the License.
         <span class$="[[_computeUploadHelpContainerClass(change, account)]]">
           <gr-button link
               class="upload"
-              on-tap="_handleUploadTap">Update Change</gr-button>
+              on-click="_handleUploadTap">Update Change</gr-button>
         </span>
         <span class="downloadContainer desktop">
           <gr-button link
               class="download"
-              on-tap="_handleDownloadTap">Download</gr-button>
+              on-click="_handleDownloadTap">Download</gr-button>
         </span>
         <span class$="includedInContainer [[_hideIncludedIn(change)]] desktop">
           <gr-button link
               class="includedIn"
-              on-tap="_handleIncludedInTap">Included In</gr-button>
+              on-click="_handleIncludedInTap">Included In</gr-button>
         </span>
         <template is="dom-if"
             if="[[_fileListActionsVisible(shownFileCount, _maxFilesForBulkActions)]]">
           <gr-button
               id="expandBtn"
               link
-              on-tap="_expandAllDiffs">Expand All</gr-button>
+              on-click="_expandAllDiffs">Expand All</gr-button>
           <gr-button
               id="collapseBtn"
               link
-              on-tap="_collapseAllDiffs">Collapse All</gr-button>
+              on-click="_collapseAllDiffs">Collapse All</gr-button>
         </template>
         <template is="dom-if"
             if="[[!_fileListActionsVisible(shownFileCount, _maxFilesForBulkActions)]]">
@@ -248,17 +253,17 @@ limitations under the License.
           <gr-diff-mode-selector
               id="modeSelect"
               mode="{{diffViewMode}}"
-              save-on-change="[[loggedIn]]"></gr-diff-mode-selector>
+              save-on-change="[[!diffPrefsDisabled]]"></gr-diff-mode-selector>
           <span id="diffPrefsContainer"
               class="hideOnEdit"
-              hidden$="[[_computePrefsButtonHidden(diffPrefs, loggedIn)]]"
+              hidden$="[[_computePrefsButtonHidden(diffPrefs, diffPrefsDisabled)]]"
               hidden>
             <gr-button
                 link
                 has-tooltip
                 title="Diff preferences"
                 class="prefsButton desktop"
-                on-tap="_handlePrefsTap"><iron-icon icon="gr-icons:settings"></iron-icon></gr-button>
+                on-click="_handlePrefsTap"><iron-icon icon="gr-icons:settings"></iron-icon></gr-button>
           </span>
         </div>
       </div>

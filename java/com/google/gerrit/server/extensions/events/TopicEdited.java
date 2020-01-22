@@ -15,18 +15,19 @@
 package com.google.gerrit.server.extensions.events;
 
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.common.AccountInfo;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.events.TopicEditedListener;
-import com.google.gerrit.reviewdb.client.Change;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.sql.Timestamp;
 
+/** Helper class to fire an event when the topic of a change has been edited. */
 @Singleton
 public class TopicEdited {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
@@ -48,11 +49,12 @@ public class TopicEdited {
       Event event =
           new Event(util.changeInfo(change), util.accountInfo(account), oldTopicName, when);
       listeners.runEach(l -> l.onTopicEdited(event));
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       logger.atSevere().withCause(e).log("Couldn't fire event");
     }
   }
 
+  /** Event to be fired when the topic of a change has been edited. */
   private static class Event extends AbstractChangeEvent implements TopicEditedListener.Event {
     private final String oldTopic;
 

@@ -15,6 +15,11 @@
 package com.google.gerrit.server.restapi.change;
 
 import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableList;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.extensions.api.changes.FileContentInput;
 import com.google.gerrit.extensions.common.DiffWebLinkInfo;
 import com.google.gerrit.extensions.common.EditInfo;
 import com.google.gerrit.extensions.common.Input;
@@ -25,7 +30,6 @@ import com.google.gerrit.extensions.restapi.BinaryResult;
 import com.google.gerrit.extensions.restapi.ChildCollection;
 import com.google.gerrit.extensions.restapi.DefaultInput;
 import com.google.gerrit.extensions.restapi.IdString;
-import com.google.gerrit.extensions.restapi.RawInput;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.Response;
@@ -35,9 +39,6 @@ import com.google.gerrit.extensions.restapi.RestCollectionModifyView;
 import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.extensions.restapi.RestView;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.WebLinks;
 import com.google.gerrit.server.change.ChangeEditResource;
 import com.google.gerrit.server.change.ChangeResource;
@@ -54,14 +55,12 @@ import com.google.gerrit.server.patch.PatchListNotAvailableException;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.InvalidChangeOperationException;
 import com.google.gerrit.server.project.ProjectCache;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
-import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
@@ -95,7 +94,7 @@ public class ChangeEdits implements ChildCollection<ChangeResource, ChangeEditRe
 
   @Override
   public ChangeEditResource parse(ChangeResource rsrc, IdString id)
-      throws ResourceNotFoundException, AuthException, IOException, OrmException {
+      throws ResourceNotFoundException, AuthException, IOException {
     Optional<ChangeEdit> edit = editUtil.byChange(rsrc.getNotes(), rsrc.getUser());
     if (!edit.isPresent()) {
       throw new ResourceNotFoundException(id);
@@ -108,8 +107,9 @@ public class ChangeEdits implements ChildCollection<ChangeResource, ChangeEditRe
    * PUT request with a path was called but change edit wasn't created yet. Change edit is created
    * and PUT handler is called.
    */
+  @Singleton
   public static class Create
-      implements RestCollectionCreateView<ChangeResource, ChangeEditResource, Put.Input> {
+      implements RestCollectionCreateView<ChangeResource, ChangeEditResource, FileContentInput> {
     private final Put putEdit;
 
     @Inject
@@ -118,14 +118,15 @@ public class ChangeEdits implements ChildCollection<ChangeResource, ChangeEditRe
     }
 
     @Override
-    public Response<?> apply(ChangeResource resource, IdString id, Put.Input input)
-        throws AuthException, ResourceConflictException, IOException, OrmException,
+    public Response<?> apply(ChangeResource resource, IdString id, FileContentInput input)
+        throws AuthException, BadRequestException, ResourceConflictException, IOException,
             PermissionBackendException {
-      putEdit.apply(resource, id.get(), input.content);
+      putEdit.apply(resource, id.get(), input);
       return Response.none();
     }
   }
 
+  @Singleton
   public static class DeleteFile
       implements RestCollectionDeleteMissingView<ChangeResource, ChangeEditResource, Input> {
     private final DeleteContent deleteContent;
@@ -137,7 +138,7 @@ public class ChangeEdits implements ChildCollection<ChangeResource, ChangeEditRe
 
     @Override
     public Response<?> apply(ChangeResource rsrc, IdString id, Input in)
-        throws IOException, AuthException, ResourceConflictException, OrmException,
+        throws IOException, AuthException, BadRequestException, ResourceConflictException,
             PermissionBackendException {
       return deleteContent.apply(rsrc, id.get());
     }
@@ -184,7 +185,7 @@ public class ChangeEdits implements ChildCollection<ChangeResource, ChangeEditRe
 
     @Override
     public Response<EditInfo> apply(ChangeResource rsrc)
-        throws AuthException, IOException, ResourceNotFoundException, OrmException,
+        throws AuthException, IOException, ResourceNotFoundException, ResourceConflictException,
             PermissionBackendException {
       Optional<ChangeEdit> edit = editUtil.byChange(rsrc.getNotes(), rsrc.getUser());
       if (!edit.isPresent()) {
@@ -240,7 +241,7 @@ public class ChangeEdits implements ChildCollection<ChangeResource, ChangeEditRe
 
     @Override
     public Response<?> apply(ChangeResource resource, Post.Input input)
-        throws AuthException, IOException, ResourceConflictException, OrmException,
+        throws AuthException, BadRequestException, IOException, ResourceConflictException,
             PermissionBackendException {
       Project.NameKey project = resource.getProject();
       try (Repository repository = repositoryManager.openRepository(project)) {
@@ -270,11 +271,7 @@ public class ChangeEdits implements ChildCollection<ChangeResource, ChangeEditRe
 
   /** Put handler that is activated when PUT request is called on collection element. */
   @Singleton
-  public static class Put implements RestModifyView<ChangeEditResource, Put.Input> {
-    public static class Input {
-      @DefaultInput public RawInput content;
-    }
-
+  public static class Put implements RestModifyView<ChangeEditResource, FileContentInput> {
     private final ChangeEditModifier editModifier;
     private final GitRepositoryManager repositoryManager;
 
@@ -285,21 +282,25 @@ public class ChangeEdits implements ChildCollection<ChangeResource, ChangeEditRe
     }
 
     @Override
-    public Response<?> apply(ChangeEditResource rsrc, Input input)
-        throws AuthException, ResourceConflictException, IOException, OrmException,
+    public Response<?> apply(ChangeEditResource rsrc, FileContentInput input)
+        throws AuthException, BadRequestException, ResourceConflictException, IOException,
             PermissionBackendException {
-      return apply(rsrc.getChangeResource(), rsrc.getPath(), input.content);
+      return apply(rsrc.getChangeResource(), rsrc.getPath(), input);
     }
 
-    public Response<?> apply(ChangeResource rsrc, String path, RawInput newContent)
-        throws ResourceConflictException, AuthException, IOException, OrmException,
+    public Response<?> apply(ChangeResource rsrc, String path, FileContentInput input)
+        throws AuthException, BadRequestException, ResourceConflictException, IOException,
             PermissionBackendException {
       if (Strings.isNullOrEmpty(path) || path.charAt(0) == '/') {
         throw new ResourceConflictException("Invalid path: " + path);
       }
 
+      if (input.content == null) {
+        throw new BadRequestException("new content required");
+      }
+
       try (Repository repository = repositoryManager.openRepository(rsrc.getProject())) {
-        editModifier.modifyFile(repository, rsrc.getNotes(), path, newContent);
+        editModifier.modifyFile(repository, rsrc.getNotes(), path, input.content);
       } catch (InvalidChangeOperationException e) {
         throw new ResourceConflictException(e.getMessage());
       }
@@ -327,13 +328,13 @@ public class ChangeEdits implements ChildCollection<ChangeResource, ChangeEditRe
 
     @Override
     public Response<?> apply(ChangeEditResource rsrc, Input input)
-        throws AuthException, ResourceConflictException, OrmException, IOException,
+        throws AuthException, BadRequestException, ResourceConflictException, IOException,
             PermissionBackendException {
       return apply(rsrc.getChangeResource(), rsrc.getPath());
     }
 
     public Response<?> apply(ChangeResource rsrc, String filePath)
-        throws AuthException, IOException, OrmException, ResourceConflictException,
+        throws AuthException, BadRequestException, IOException, ResourceConflictException,
             PermissionBackendException {
       try (Repository repository = repositoryManager.openRepository(rsrc.getProject())) {
         editModifier.deleteFile(repository, rsrc.getNotes(), filePath);
@@ -367,9 +368,7 @@ public class ChangeEdits implements ChildCollection<ChangeResource, ChangeEditRe
         return Response.ok(
             fileContentUtil.getContent(
                 projectCache.checkedGet(rsrc.getChangeResource().getProject()),
-                base
-                    ? ObjectId.fromString(edit.getBasePatchSet().getRevision().get())
-                    : edit.getEditCommit(),
+                base ? edit.getBasePatchSet().commitId() : edit.getEditCommit(),
                 rsrc.getPath(),
                 null));
       } catch (ResourceNotFoundException | BadRequestException e) {
@@ -388,22 +387,22 @@ public class ChangeEdits implements ChildCollection<ChangeResource, ChangeEditRe
     }
 
     @Override
-    public FileInfo apply(ChangeEditResource rsrc) {
+    public Response<FileInfo> apply(ChangeEditResource rsrc) {
       FileInfo r = new FileInfo();
       ChangeEdit edit = rsrc.getChangeEdit();
       Change change = edit.getChange();
-      List<DiffWebLinkInfo> links =
+      ImmutableList<DiffWebLinkInfo> links =
           webLinks.getDiffLinks(
               change.getProject().get(),
               change.getChangeId(),
-              edit.getBasePatchSet().getPatchSetId(),
-              edit.getBasePatchSet().getRefName(),
+              edit.getBasePatchSet().number(),
+              edit.getBasePatchSet().refName(),
               rsrc.getPath(),
               0,
               edit.getRefName(),
               rsrc.getPath());
       r.webLinks = links.isEmpty() ? null : links;
-      return r;
+      return Response.ok(r);
     }
 
     public static class FileInfo {
@@ -427,9 +426,9 @@ public class ChangeEdits implements ChildCollection<ChangeResource, ChangeEditRe
     }
 
     @Override
-    public Object apply(ChangeResource rsrc, Input input)
+    public Response<Object> apply(ChangeResource rsrc, Input input)
         throws AuthException, IOException, BadRequestException, ResourceConflictException,
-            OrmException, PermissionBackendException {
+            PermissionBackendException {
       if (input == null || Strings.isNullOrEmpty(input.message)) {
         throw new BadRequestException("commit message must be provided");
       }
@@ -462,26 +461,25 @@ public class ChangeEdits implements ChildCollection<ChangeResource, ChangeEditRe
     }
 
     @Override
-    public BinaryResult apply(ChangeResource rsrc)
-        throws AuthException, IOException, ResourceNotFoundException, OrmException {
+    public Response<BinaryResult> apply(ChangeResource rsrc)
+        throws AuthException, IOException, ResourceNotFoundException {
       Optional<ChangeEdit> edit = editUtil.byChange(rsrc.getNotes(), rsrc.getUser());
       String msg;
       if (edit.isPresent()) {
         if (base) {
           try (Repository repo = repoManager.openRepository(rsrc.getProject());
               RevWalk rw = new RevWalk(repo)) {
-            RevCommit commit =
-                rw.parseCommit(
-                    ObjectId.fromString(edit.get().getBasePatchSet().getRevision().get()));
+            RevCommit commit = rw.parseCommit(edit.get().getBasePatchSet().commitId());
             msg = commit.getFullMessage();
           }
         } else {
           msg = edit.get().getEditCommit().getFullMessage();
         }
 
-        return BinaryResult.create(msg)
-            .setContentType(FileContentUtil.TEXT_X_GERRIT_COMMIT_MESSAGE)
-            .base64();
+        return Response.ok(
+            BinaryResult.create(msg)
+                .setContentType(FileContentUtil.TEXT_X_GERRIT_COMMIT_MESSAGE)
+                .base64());
       }
       throw new ResourceNotFoundException();
     }

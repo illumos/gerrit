@@ -17,11 +17,19 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-settings-item',
-    properties: {
-      anchor: String,
-      title: String,
-    },
-  });
+  /** @extends Polymer.Element */
+  class GrSettingsItem extends Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element)) {
+    static get is() { return 'gr-settings-item'; }
+
+    static get properties() {
+      return {
+        anchor: String,
+        title: String,
+      };
+    }
+  }
+
+  customElements.define(GrSettingsItem.is, GrSettingsItem);
 })();

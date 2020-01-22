@@ -14,20 +14,19 @@
 
 package com.google.gerrit.server.restapi.project;
 
-import static com.google.gerrit.reviewdb.client.RefNames.isConfigRef;
+import static com.google.gerrit.entities.RefNames.isConfigRef;
 import static org.eclipse.jgit.lib.Constants.R_HEADS;
 
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.common.Input;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestModifyView;
-import com.google.gerrit.reviewdb.client.RefNames;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.BranchResource;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -47,13 +46,13 @@ public class DeleteBranch implements RestModifyView<BranchResource, Input> {
 
   @Override
   public Response<?> apply(BranchResource rsrc, Input input)
-      throws RestApiException, OrmException, IOException, PermissionBackendException {
-    if (RefNames.HEAD.equals(rsrc.getBranchKey().get())) {
+      throws RestApiException, IOException, PermissionBackendException {
+    if (RefNames.HEAD.equals(rsrc.getBranchKey().branch())) {
       throw new MethodNotAllowedException("not allowed to delete HEAD");
-    } else if (isConfigRef(rsrc.getBranchKey().get())) {
+    } else if (isConfigRef(rsrc.getBranchKey().branch())) {
       // Never allow to delete the meta config branch.
       throw new MethodNotAllowedException(
-          "not allowed to delete branch " + rsrc.getBranchKey().get());
+          "not allowed to delete branch " + rsrc.getBranchKey().branch());
     }
 
     if (!queryProvider.get().setLimit(1).byBranchOpen(rsrc.getBranchKey()).isEmpty()) {

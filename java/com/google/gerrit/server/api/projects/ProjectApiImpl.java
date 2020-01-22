@@ -37,12 +37,16 @@ import com.google.gerrit.extensions.api.projects.DeleteTagsInput;
 import com.google.gerrit.extensions.api.projects.DescriptionInput;
 import com.google.gerrit.extensions.api.projects.HeadInput;
 import com.google.gerrit.extensions.api.projects.IndexProjectInput;
+import com.google.gerrit.extensions.api.projects.LabelApi;
 import com.google.gerrit.extensions.api.projects.ParentInput;
 import com.google.gerrit.extensions.api.projects.ProjectApi;
 import com.google.gerrit.extensions.api.projects.ProjectInput;
 import com.google.gerrit.extensions.api.projects.TagApi;
 import com.google.gerrit.extensions.api.projects.TagInfo;
+import com.google.gerrit.extensions.common.BatchLabelInput;
 import com.google.gerrit.extensions.common.ChangeInfo;
+import com.google.gerrit.extensions.common.Input;
+import com.google.gerrit.extensions.common.LabelDefinitionInfo;
 import com.google.gerrit.extensions.common.ProjectInfo;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.IdString;
@@ -69,9 +73,12 @@ import com.google.gerrit.server.restapi.project.GetDescription;
 import com.google.gerrit.server.restapi.project.GetHead;
 import com.google.gerrit.server.restapi.project.GetParent;
 import com.google.gerrit.server.restapi.project.Index;
+import com.google.gerrit.server.restapi.project.IndexChanges;
 import com.google.gerrit.server.restapi.project.ListBranches;
 import com.google.gerrit.server.restapi.project.ListDashboards;
+import com.google.gerrit.server.restapi.project.ListLabels;
 import com.google.gerrit.server.restapi.project.ListTags;
+import com.google.gerrit.server.restapi.project.PostLabels;
 import com.google.gerrit.server.restapi.project.ProjectsCollection;
 import com.google.gerrit.server.restapi.project.PutConfig;
 import com.google.gerrit.server.restapi.project.PutDescription;
@@ -124,6 +131,10 @@ public class ProjectApiImpl implements ProjectApi {
   private final GetParent getParent;
   private final SetParent setParent;
   private final Index index;
+  private final IndexChanges indexChanges;
+  private final Provider<ListLabels> listLabels;
+  private final PostLabels postLabels;
+  private final LabelApiImpl.Factory labelApi;
 
   @AssistedInject
   ProjectApiImpl(
@@ -158,6 +169,10 @@ public class ProjectApiImpl implements ProjectApi {
       GetParent getParent,
       SetParent setParent,
       Index index,
+      IndexChanges indexChanges,
+      Provider<ListLabels> listLabels,
+      PostLabels postLabels,
+      LabelApiImpl.Factory labelApi,
       @Assisted ProjectResource project) {
     this(
         permissionBackend,
@@ -192,6 +207,10 @@ public class ProjectApiImpl implements ProjectApi {
         getParent,
         setParent,
         index,
+        indexChanges,
+        listLabels,
+        postLabels,
+        labelApi,
         null);
   }
 
@@ -228,6 +247,10 @@ public class ProjectApiImpl implements ProjectApi {
       GetParent getParent,
       SetParent setParent,
       Index index,
+      IndexChanges indexChanges,
+      Provider<ListLabels> listLabels,
+      PostLabels postLabels,
+      LabelApiImpl.Factory labelApi,
       @Assisted String name) {
     this(
         permissionBackend,
@@ -262,6 +285,10 @@ public class ProjectApiImpl implements ProjectApi {
         getParent,
         setParent,
         index,
+        indexChanges,
+        listLabels,
+        postLabels,
+        labelApi,
         name);
   }
 
@@ -298,6 +325,10 @@ public class ProjectApiImpl implements ProjectApi {
       GetParent getParent,
       SetParent setParent,
       Index index,
+      IndexChanges indexChanges,
+      Provider<ListLabels> listLabels,
+      PostLabels postLabels,
+      LabelApiImpl.Factory labelApi,
       String name) {
     this.permissionBackend = permissionBackend;
     this.createProject = createProject;
@@ -332,6 +363,10 @@ public class ProjectApiImpl implements ProjectApi {
     this.setParent = setParent;
     this.name = name;
     this.index = index;
+    this.indexChanges = indexChanges;
+    this.listLabels = listLabels;
+    this.postLabels = postLabels;
+    this.labelApi = labelApi;
   }
 
   @Override
@@ -368,13 +403,17 @@ public class ProjectApiImpl implements ProjectApi {
 
   @Override
   public String description() throws RestApiException {
-    return getDescription.apply(checkExists());
+    try {
+      return getDescription.apply(checkExists()).value();
+    } catch (Exception e) {
+      throw asRestApiException("Cannot get description", e);
+    }
   }
 
   @Override
   public ProjectAccessInfo access() throws RestApiException {
     try {
-      return getAccess.apply(checkExists());
+      return getAccess.apply(checkExists()).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot get access rights", e);
     }
@@ -383,7 +422,7 @@ public class ProjectApiImpl implements ProjectApi {
   @Override
   public ProjectAccessInfo access(ProjectAccessInput p) throws RestApiException {
     try {
-      return setAccess.apply(checkExists(), p);
+      return setAccess.apply(checkExists(), p).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot put access rights", e);
     }
@@ -401,7 +440,7 @@ public class ProjectApiImpl implements ProjectApi {
   @Override
   public AccessCheckInfo checkAccess(AccessCheckInput in) throws RestApiException {
     try {
-      return checkAccess.apply(checkExists(), in);
+      return checkAccess.apply(checkExists(), in).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot check access rights", e);
     }
@@ -410,7 +449,7 @@ public class ProjectApiImpl implements ProjectApi {
   @Override
   public CheckProjectResultInfo check(CheckProjectInput in) throws RestApiException {
     try {
-      return check.apply(checkExists(), in);
+      return check.apply(checkExists(), in).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot check project", e);
     }
@@ -427,13 +466,17 @@ public class ProjectApiImpl implements ProjectApi {
 
   @Override
   public ConfigInfo config() throws RestApiException {
-    return getConfig.apply(checkExists());
+    try {
+      return getConfig.apply(checkExists()).value();
+    } catch (Exception e) {
+      throw asRestApiException("Cannot get config", e);
+    }
   }
 
   @Override
   public ConfigInfo config(ConfigInput in) throws RestApiException {
     try {
-      return putConfig.apply(checkExists(), in);
+      return putConfig.apply(checkExists(), in).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot list tags", e);
     }
@@ -445,7 +488,7 @@ public class ProjectApiImpl implements ProjectApi {
       @Override
       public List<BranchInfo> get() throws RestApiException {
         try {
-          return listBranches.get().request(this).apply(checkExists());
+          return listBranches.get().request(this).apply(checkExists()).value();
         } catch (Exception e) {
           throw asRestApiException("Cannot list branches", e);
         }
@@ -459,7 +502,7 @@ public class ProjectApiImpl implements ProjectApi {
       @Override
       public List<TagInfo> get() throws RestApiException {
         try {
-          return listTags.get().request(this).apply(checkExists());
+          return listTags.get().request(this).apply(checkExists()).value();
         } catch (Exception e) {
           throw asRestApiException("Cannot list tags", e);
         }
@@ -475,7 +518,7 @@ public class ProjectApiImpl implements ProjectApi {
   @Override
   public List<ProjectInfo> children(boolean recursive) throws RestApiException {
     try {
-      return children.list().withRecursive(recursive).apply(checkExists());
+      return children.list().withRecursive(recursive).apply(checkExists()).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot list children", e);
     }
@@ -484,7 +527,7 @@ public class ProjectApiImpl implements ProjectApi {
   @Override
   public List<ProjectInfo> children(int limit) throws RestApiException {
     try {
-      return children.list().withLimit(limit).apply(checkExists());
+      return children.list().withLimit(limit).apply(checkExists()).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot list children", e);
     }
@@ -574,7 +617,7 @@ public class ProjectApiImpl implements ProjectApi {
       @Override
       public List<DashboardInfo> get() throws RestApiException {
         try {
-          List<?> r = listDashboards.get().apply(checkExists());
+          List<?> r = listDashboards.get().apply(checkExists()).value();
           if (r.isEmpty()) {
             return Collections.emptyList();
           }
@@ -592,7 +635,7 @@ public class ProjectApiImpl implements ProjectApi {
   @Override
   public String head() throws RestApiException {
     try {
-      return getHead.apply(checkExists());
+      return getHead.apply(checkExists()).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot get HEAD", e);
     }
@@ -612,7 +655,7 @@ public class ProjectApiImpl implements ProjectApi {
   @Override
   public String parent() throws RestApiException {
     try {
-      return getParent.apply(checkExists());
+      return getParent.apply(checkExists()).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot get parent", e);
     }
@@ -640,10 +683,51 @@ public class ProjectApiImpl implements ProjectApi {
     }
   }
 
+  @Override
+  public void indexChanges() throws RestApiException {
+    try {
+      indexChanges.apply(checkExists(), new Input());
+    } catch (Exception e) {
+      throw asRestApiException("Cannot index changes", e);
+    }
+  }
+
   private ProjectResource checkExists() throws ResourceNotFoundException {
     if (project == null) {
       throw new ResourceNotFoundException(name);
     }
     return project;
+  }
+
+  @Override
+  public ListLabelsRequest labels() {
+    return new ListLabelsRequest() {
+      @Override
+      public List<LabelDefinitionInfo> get() throws RestApiException {
+        try {
+          return listLabels.get().withInherited(inherited).apply(checkExists()).value();
+        } catch (Exception e) {
+          throw asRestApiException("Cannot list labels", e);
+        }
+      }
+    };
+  }
+
+  @Override
+  public LabelApi label(String labelName) throws RestApiException {
+    try {
+      return labelApi.create(checkExists(), labelName);
+    } catch (Exception e) {
+      throw asRestApiException("Cannot parse label", e);
+    }
+  }
+
+  @Override
+  public void labels(BatchLabelInput input) throws RestApiException {
+    try {
+      postLabels.apply(checkExists(), input);
+    } catch (Exception e) {
+      throw asRestApiException("Cannot update labels", e);
+    }
   }
 }

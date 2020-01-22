@@ -1,3 +1,4 @@
+:linkattrs:
 = Creating and Editing Changes in the Gerrit Web Interface
 
 == Overview
@@ -16,7 +17,7 @@ To learn more, see the link:intro-user.html[Gerrit User's Guide].
 
 To create a change in the Gerrit web interface:
 
-. From the link:http://gerrit-review.googlesource.com[Gerrit Code Review]
+. From the link:http://gerrit-review.googlesource.com[Gerrit Code Review,role=external,window=_blank]
   dashboard, select Browse > Repositories.
 
 . Under Repository Name, click the name of the repository you want to work
@@ -72,7 +73,7 @@ base.
 
 To add a file to the change:
 
-. In the top left corner of the change, click Edit.
+. In the top right corner of the change, click Edit.
 . Next to Files, click Open:
 
 +

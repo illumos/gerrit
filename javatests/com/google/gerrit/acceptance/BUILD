@@ -6,8 +6,10 @@ junit_tests(
     deps = [
         "//java/com/google/gerrit/acceptance:lib",
         "//java/com/google/gerrit/server/util/time",
+        "//java/com/google/gerrit/testing:gerrit-test-util",
+        "//java/com/google/gerrit/truth",
         "//lib:guava",
-        "//lib/jgit/org.eclipse.jgit:jgit",
+        "//lib:jgit",
         "//lib/truth",
     ],
 )

@@ -16,19 +16,18 @@ package com.google.gerrit.acceptance.testsuite.group;
 
 import static com.google.common.base.Preconditions.checkState;
 
-import com.google.gerrit.common.errors.NoSuchGroupException;
-import com.google.gerrit.reviewdb.client.AccountGroup;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.exceptions.DuplicateKeyException;
+import com.google.gerrit.exceptions.NoSuchGroupException;
 import com.google.gerrit.server.GerritPersonIdent;
-import com.google.gerrit.server.Sequences;
 import com.google.gerrit.server.ServerInitiated;
-import com.google.gerrit.server.account.GroupUUID;
+import com.google.gerrit.server.account.GroupUuid;
 import com.google.gerrit.server.group.InternalGroup;
 import com.google.gerrit.server.group.db.Groups;
 import com.google.gerrit.server.group.db.GroupsUpdate;
 import com.google.gerrit.server.group.db.InternalGroupCreation;
 import com.google.gerrit.server.group.db.InternalGroupUpdate;
-import com.google.gwtorm.server.OrmDuplicateKeyException;
-import com.google.gwtorm.server.OrmException;
+import com.google.gerrit.server.notedb.Sequences;
 import com.google.inject.Inject;
 import java.io.IOException;
 import java.util.Optional;
@@ -60,8 +59,8 @@ public class GroupOperationsImpl implements GroupOperations {
   }
 
   @Override
-  public MoreGroupOperations group(AccountGroup.UUID groupUuid) {
-    return new MoreGroupOperationsImpl(groupUuid);
+  public PerGroupOperations group(AccountGroup.UUID groupUuid) {
+    return new PerGroupOperationsImpl(groupUuid);
   }
 
   @Override
@@ -70,7 +69,7 @@ public class GroupOperationsImpl implements GroupOperations {
   }
 
   private AccountGroup.UUID createNewGroup(TestGroupCreation groupCreation)
-      throws ConfigInvalidException, IOException, OrmException {
+      throws ConfigInvalidException, IOException {
     InternalGroupCreation internalGroupCreation = toInternalGroupCreation(groupCreation);
     InternalGroupUpdate internalGroupUpdate = toInternalGroupUpdate(groupCreation);
     InternalGroup internalGroup =
@@ -78,12 +77,11 @@ public class GroupOperationsImpl implements GroupOperations {
     return internalGroup.getGroupUUID();
   }
 
-  private InternalGroupCreation toInternalGroupCreation(TestGroupCreation groupCreation)
-      throws OrmException {
-    AccountGroup.Id groupId = new AccountGroup.Id(seq.nextGroupId());
+  private InternalGroupCreation toInternalGroupCreation(TestGroupCreation groupCreation) {
+    AccountGroup.Id groupId = AccountGroup.id(seq.nextGroupId());
     String groupName = groupCreation.name().orElse("group-with-id-" + groupId.get());
-    AccountGroup.UUID groupUuid = GroupUUID.make(groupName, serverIdent);
-    AccountGroup.NameKey nameKey = new AccountGroup.NameKey(groupName);
+    AccountGroup.UUID groupUuid = GroupUuid.make(groupName, serverIdent);
+    AccountGroup.NameKey nameKey = AccountGroup.nameKey(groupName);
     return InternalGroupCreation.builder()
         .setId(groupId)
         .setGroupUUID(groupUuid)
@@ -101,23 +99,31 @@ public class GroupOperationsImpl implements GroupOperations {
     return builder.build();
   }
 
-  private class MoreGroupOperationsImpl implements MoreGroupOperations {
+  private class PerGroupOperationsImpl implements PerGroupOperations {
     private final AccountGroup.UUID groupUuid;
 
-    MoreGroupOperationsImpl(AccountGroup.UUID groupUuid) {
+    PerGroupOperationsImpl(AccountGroup.UUID groupUuid) {
       this.groupUuid = groupUuid;
     }
 
     @Override
-    public boolean exists() throws Exception {
-      return groups.getGroup(groupUuid).isPresent();
+    public boolean exists() {
+      return getGroup(groupUuid).isPresent();
     }
 
     @Override
-    public TestGroup get() throws Exception {
-      Optional<InternalGroup> group = groups.getGroup(groupUuid);
+    public TestGroup get() {
+      Optional<InternalGroup> group = getGroup(groupUuid);
       checkState(group.isPresent(), "Tried to get non-existing test group");
       return toTestGroup(group.get());
+    }
+
+    private Optional<InternalGroup> getGroup(AccountGroup.UUID groupUuid) {
+      try {
+        return groups.getGroup(groupUuid);
+      } catch (IOException | ConfigInvalidException e) {
+        throw new IllegalStateException(e);
+      }
     }
 
     private TestGroup toTestGroup(InternalGroup internalGroup) {
@@ -140,14 +146,14 @@ public class GroupOperationsImpl implements GroupOperations {
     }
 
     private void updateGroup(TestGroupUpdate groupUpdate)
-        throws OrmDuplicateKeyException, NoSuchGroupException, ConfigInvalidException, IOException {
+        throws DuplicateKeyException, NoSuchGroupException, ConfigInvalidException, IOException {
       InternalGroupUpdate internalGroupUpdate = toInternalGroupUpdate(groupUpdate);
       groupsUpdate.updateGroup(groupUuid, internalGroupUpdate);
     }
 
     private InternalGroupUpdate toInternalGroupUpdate(TestGroupUpdate groupUpdate) {
       InternalGroupUpdate.Builder builder = InternalGroupUpdate.builder();
-      groupUpdate.name().map(AccountGroup.NameKey::new).ifPresent(builder::setName);
+      groupUpdate.name().map(AccountGroup::nameKey).ifPresent(builder::setName);
       groupUpdate.description().ifPresent(builder::setDescription);
       groupUpdate.ownerGroupUuid().ifPresent(builder::setOwnerGroupUUID);
       groupUpdate.visibleToAll().ifPresent(builder::setVisibleToAll);

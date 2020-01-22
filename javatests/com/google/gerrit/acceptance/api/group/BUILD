@@ -21,7 +21,6 @@ java_library(
     deps = [
         "//java/com/google/gerrit/extensions:api",
         "//java/com/google/gerrit/server",
-        "//lib:gwtorm",
         "//lib/truth",
     ],
 )

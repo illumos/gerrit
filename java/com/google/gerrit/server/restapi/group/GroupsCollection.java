@@ -42,7 +42,7 @@ public class GroupsCollection
   private final GroupResolver groupResolver;
   private final Provider<CurrentUser> self;
 
-  private boolean hasQuery2;
+  private boolean hasQuery;
 
   @Inject
   public GroupsCollection(
@@ -62,12 +62,7 @@ public class GroupsCollection
 
   @Override
   public void setParams(ListMultimap<String, String> params) throws BadRequestException {
-    if (params.containsKey("query") && params.containsKey("query2")) {
-      throw new BadRequestException("\"query\" and \"query2\" options are mutually exclusive");
-    }
-
-    // The --query2 option is defined in QueryGroups
-    this.hasQuery2 = params.containsKey("query2");
+    this.hasQuery = params.containsKey("query");
   }
 
   @Override
@@ -79,7 +74,7 @@ public class GroupsCollection
       throw new ResourceNotFoundException();
     }
 
-    if (hasQuery2) {
+    if (hasQuery) {
       return queryGroups.get();
     }
 

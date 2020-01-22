@@ -23,6 +23,7 @@ import com.google.gerrit.metrics.Field;
 import com.google.gerrit.metrics.Histogram1;
 import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.metrics.Timer1;
+import com.google.gerrit.server.logging.Metadata;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import org.eclipse.jgit.storage.pack.PackStatistics;
@@ -43,14 +44,15 @@ public class UploadPackMetricsHook implements PostUploadHook {
 
   @Inject
   UploadPackMetricsHook(MetricMaker metricMaker) {
-    Field<Operation> operation = Field.ofEnum(Operation.class, "operation");
+    Field<Operation> operationField =
+        Field.ofEnum(Operation.class, "operation", Metadata.Builder::gitOperation).build();
     requestCount =
         metricMaker.newCounter(
             "git/upload-pack/request_count",
             new Description("Total number of git-upload-pack requests")
                 .setRate()
                 .setUnit("requests"),
-            operation);
+            operationField);
 
     counting =
         metricMaker.newTimer(
@@ -58,7 +60,7 @@ public class UploadPackMetricsHook implements PostUploadHook {
             new Description("Time spent in the 'Counting...' phase")
                 .setCumulative()
                 .setUnit(Units.MILLISECONDS),
-            operation);
+            operationField);
 
     compressing =
         metricMaker.newTimer(
@@ -66,7 +68,7 @@ public class UploadPackMetricsHook implements PostUploadHook {
             new Description("Time spent in the 'Compressing...' phase")
                 .setCumulative()
                 .setUnit(Units.MILLISECONDS),
-            operation);
+            operationField);
 
     writing =
         metricMaker.newTimer(
@@ -74,7 +76,7 @@ public class UploadPackMetricsHook implements PostUploadHook {
             new Description("Time spent transferring bytes to client")
                 .setCumulative()
                 .setUnit(Units.MILLISECONDS),
-            operation);
+            operationField);
 
     packBytes =
         metricMaker.newHistogram(
@@ -82,7 +84,7 @@ public class UploadPackMetricsHook implements PostUploadHook {
             new Description("Distribution of sizes of packs sent to clients")
                 .setCumulative()
                 .setUnit(Units.BYTES),
-            operation);
+            operationField);
   }
 
   @Override

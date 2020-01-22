@@ -14,9 +14,8 @@
 
 package com.google.gerrit.server.query.change;
 
-import com.google.gerrit.reviewdb.client.Change;
+import com.google.gerrit.entities.Change;
 import com.google.gerrit.server.index.change.ChangeField;
-import com.google.gwtorm.server.OrmException;
 import dk.brics.automaton.RegExp;
 import dk.brics.automaton.RunAutomaton;
 
@@ -38,12 +37,12 @@ public class RegexRefPredicate extends ChangeRegexPredicate {
   }
 
   @Override
-  public boolean match(ChangeData object) throws OrmException {
+  public boolean match(ChangeData object) {
     Change change = object.change();
     if (change == null) {
       return false;
     }
-    return pattern.run(change.getDest().get());
+    return pattern.run(change.getDest().branch());
   }
 
   @Override

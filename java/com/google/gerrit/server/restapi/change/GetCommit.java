@@ -15,18 +15,17 @@
 package com.google.gerrit.server.restapi.change;
 
 import com.google.common.collect.ImmutableSet;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.common.CommitInfo;
 import com.google.gerrit.extensions.restapi.CacheControl;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.change.RevisionJson;
 import com.google.gerrit.server.change.RevisionResource;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.inject.Inject;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
-import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
@@ -55,8 +54,7 @@ public class GetCommit implements RestReadView<RevisionResource> {
     Project.NameKey p = rsrc.getChange().getProject();
     try (Repository repo = repoManager.openRepository(p);
         RevWalk rw = new RevWalk(repo)) {
-      String rev = rsrc.getPatchSet().getRevision().get();
-      RevCommit commit = rw.parseCommit(ObjectId.fromString(rev));
+      RevCommit commit = rw.parseCommit(rsrc.getPatchSet().commitId());
       rw.parseBody(commit);
       CommitInfo info =
           json.create(ImmutableSet.of())

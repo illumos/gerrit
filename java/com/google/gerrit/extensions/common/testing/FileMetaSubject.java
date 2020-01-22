@@ -18,23 +18,50 @@ import static com.google.common.truth.Truth.assertAbout;
 
 import com.google.common.truth.FailureMetadata;
 import com.google.common.truth.IntegerSubject;
+import com.google.common.truth.IterableSubject;
+import com.google.common.truth.StringSubject;
 import com.google.common.truth.Subject;
-import com.google.common.truth.Truth;
 import com.google.gerrit.extensions.common.DiffInfo.FileMeta;
 
-public class FileMetaSubject extends Subject<FileMetaSubject, FileMeta> {
+public class FileMetaSubject extends Subject {
 
   public static FileMetaSubject assertThat(FileMeta fileMeta) {
-    return assertAbout(FileMetaSubject::new).that(fileMeta);
+    return assertAbout(fileMetas()).that(fileMeta);
   }
+
+  public static Subject.Factory<FileMetaSubject, FileMeta> fileMetas() {
+    return FileMetaSubject::new;
+  }
+
+  private final FileMeta fileMeta;
 
   private FileMetaSubject(FailureMetadata failureMetadata, FileMeta fileMeta) {
     super(failureMetadata, fileMeta);
+    this.fileMeta = fileMeta;
   }
 
   public IntegerSubject totalLineCount() {
     isNotNull();
-    FileMeta fileMeta = actual();
-    return Truth.assertThat(fileMeta.lines).named("total line count");
+    return check("totalLineCount()").that(fileMeta.lines);
+  }
+
+  public StringSubject name() {
+    isNotNull();
+    return check("name").that(fileMeta.name);
+  }
+
+  public StringSubject commitId() {
+    isNotNull();
+    return check("commitId").that(fileMeta.commitId);
+  }
+
+  public StringSubject contentType() {
+    isNotNull();
+    return check("contentType").that(fileMeta.contentType);
+  }
+
+  public IterableSubject webLinks() {
+    isNotNull();
+    return check("webLinks").that(fileMeta.webLinks);
   }
 }

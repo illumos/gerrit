@@ -19,44 +19,15 @@
 
   const PARENT = 'PARENT';
 
-  const Defs = {};
-
-  /**
-   * @typedef {{
-   *    basePatchNum: (string|number),
-   *    patchNum: (number),
-   * }}
-   */
-  Defs.patchRange;
-
-  /**
-   * @typedef {{
-   *    changeNum: number,
-   *    path: string,
-   *    patchRange: !Defs.patchRange,
-   *    projectConfig: (Object|undefined),
-   * }}
-   */
-  Defs.commentMeta;
-
-  /**
-   * @typedef {{
-   *    meta: !Defs.commentMeta,
-   *    left: !Array,
-   *    right: !Array,
-   * }}
-   */
-  Defs.commentsBySide;
-
   /**
    * Construct a change comments object, which can be data-bound to child
    * elements of that which uses the gr-comment-api.
    *
+   * @constructor
    * @param {!Object} comments
    * @param {!Object} robotComments
    * @param {!Object} drafts
    * @param {number} changeNum
-   * @constructor
    */
   function ChangeComments(comments, robotComments, drafts, changeNum) {
     this._comments = comments;
@@ -92,7 +63,7 @@
    * Paths with comments are mapped to true, whereas paths without comments
    * are not mapped.
    *
-   * @param {Defs.patchRange=} opt_patchRange The patch-range object containing
+   * @param {Gerrit.PatchRange=} opt_patchRange The patch-range object containing
    *     patchNum and basePatchNum properties to represent the range.
    * @return {!Object}
    */
@@ -251,17 +222,26 @@
    * arrays of comments in on either side of the patch range for that path.
    *
    * @param {!string} path
-   * @param {!Defs.patchRange} patchRange The patch-range object containing patchNum
+   * @param {!Gerrit.PatchRange} patchRange The patch-range object containing patchNum
    *     and basePatchNum properties to represent the range.
    * @param {Object=} opt_projectConfig Optional project config object to
    *     include in the meta sub-object.
-   * @return {!Defs.commentsBySide}
+   * @return {!Gerrit.CommentsBySide}
    */
   ChangeComments.prototype.getCommentsBySideForPath = function(path,
       patchRange, opt_projectConfig) {
-    const comments = this.comments[path] || [];
-    const drafts = this.drafts[path] || [];
-    const robotComments = this.robotComments[path] || [];
+    let comments = [];
+    let drafts = [];
+    let robotComments = [];
+    if (this.comments && this.comments[path]) {
+      comments = this.comments[path];
+    }
+    if (this.drafts && this.drafts[path]) {
+      drafts = this.drafts[path];
+    }
+    if (this.robotComments && this.robotComments[path]) {
+      robotComments = this.robotComments[path];
+    }
 
     drafts.forEach(d => { d.__draft = true; });
 
@@ -382,9 +362,10 @@
   };
 
   ChangeComments.prototype._sortComments = function(comments) {
-    return comments.slice(0).sort((c1, c2) => {
-      return util.parseDate(c1.updated) - util.parseDate(c2.updated);
-    });
+    return comments.slice(0)
+        .sort(
+            (c1, c2) => util.parseDate(c1.updated) - util.parseDate(c2.updated)
+        );
   };
 
   /**
@@ -430,7 +411,7 @@
    * given patch range.
    *
    * @param {!Object} comment
-   * @param {!Defs.patchRange} range
+   * @param {!Gerrit.PatchRange} range
    * @return {boolean}
    */
   ChangeComments.prototype._isInBaseOfPatchRange = function(comment, range) {
@@ -462,7 +443,7 @@
    * given patch range.
    *
    * @param {!Object} comment
-   * @param {!Defs.patchRange} range
+   * @param {!Gerrit.PatchRange} range
    * @return {boolean}
    */
   ChangeComments.prototype._isInRevisionOfPatchRange = function(comment,
@@ -475,7 +456,7 @@
    * Whether the given comment should be included in the given patch range.
    *
    * @param {!Object} comment
-   * @param {!Defs.patchRange} range
+   * @param {!Gerrit.PatchRange} range
    * @return {boolean|undefined}
    */
   ChangeComments.prototype._isInPatchRange = function(comment, range) {
@@ -483,20 +464,29 @@
         this._isInRevisionOfPatchRange(comment, range);
   };
 
-  Polymer({
-    is: 'gr-comment-api',
+  /**
+   * @appliesMixin Gerrit.PatchSetMixin
+   * @extends Polymer.Element
+   */
+  class GrCommentApi extends Polymer.mixinBehaviors( [
+    Gerrit.PatchSetBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-comment-api'; }
 
-    properties: {
-      _changeComments: Object,
-    },
+    static get properties() {
+      return {
+        _changeComments: Object,
+      };
+    }
 
-    listeners: {
-      'reload-drafts': 'reloadDrafts',
-    },
-
-    behaviors: [
-      Gerrit.PatchSetBehavior,
-    ],
+    /** @override */
+    created() {
+      super.created();
+      this.addEventListener('reload-drafts',
+          changeNum => this.reloadDrafts(changeNum));
+    }
 
     /**
      * Load all comments (with drafts and robot comments) for the given change
@@ -517,7 +507,7 @@
             robotComments, drafts, changeNum);
         return this._changeComments;
       });
-    },
+    }
 
     /**
      * Re-initialize _changeComments with a new ChangeComments object, that
@@ -536,6 +526,8 @@
             this._changeComments.robotComments, drafts, changeNum);
         return this._changeComments;
       });
-    },
-  });
+    }
+  }
+
+  customElements.define(GrCommentApi.is, GrCommentApi);
 })();

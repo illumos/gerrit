@@ -21,10 +21,12 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.common.errors.NoSuchGroupException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.DuplicateKeyException;
+import com.google.gerrit.exceptions.NoSuchGroupException;
+import com.google.gerrit.git.RefUpdateUtil;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.AccountCache;
@@ -35,20 +37,18 @@ import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.config.GerritServerId;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.GitRepositoryManager;
-import com.google.gerrit.server.git.LockFailureException;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.group.GroupAuditService;
 import com.google.gerrit.server.group.InternalGroup;
 import com.google.gerrit.server.index.group.GroupIndexer;
+import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.logging.TraceContext.TraceTimer;
-import com.google.gerrit.server.update.RefUpdateUtil;
 import com.google.gerrit.server.update.RetryHelper;
 import com.google.gerrit.server.util.time.TimeUtil;
-import com.google.gwtorm.server.OrmDuplicateKeyException;
-import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.assistedinject.Assisted;
+import com.google.inject.assistedinject.AssistedInject;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.Objects;
@@ -78,13 +78,24 @@ public class GroupsUpdate {
      * modifications executed by it. For NoteDb, this identity is used as author and committer for
      * all related commits.
      *
-     * <p><strong>Note</strong>: Please use this method with care and rather consider to use the
-     * correct annotation on the provider of a {@code GroupsUpdate} instead.
+     * <p><strong>Note</strong>: Please use this method with care and consider using the {@link
+     * com.google.gerrit.server.UserInitiated} annotation on the provider of a {@code GroupsUpdate}
+     * instead.
      *
-     * @param currentUser the user to which modifications should be attributed, or {@code null} if
-     *     the Gerrit server identity should be used
+     * @param currentUser the user to which modifications should be attributed
      */
-    GroupsUpdate create(@Nullable IdentifiedUser currentUser);
+    GroupsUpdate create(IdentifiedUser currentUser);
+
+    /**
+     * Creates a {@code GroupsUpdate} which uses the server identity to mark database modifications
+     * executed by it. For NoteDb, this identity is used as author and committer for all related
+     * commits.
+     *
+     * <p><strong>Note</strong>: Please use this method with care and consider using the {@link
+     * com.google.gerrit.server.ServerInitiated} annotation on the provider of a {@code
+     * GroupsUpdate} instead.
+     */
+    GroupsUpdate createWithServerIdent();
   }
 
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
@@ -96,14 +107,48 @@ public class GroupsUpdate {
   private final Provider<GroupIndexer> indexer;
   private final GroupAuditService groupAuditService;
   private final RenameGroupOp.Factory renameGroupOpFactory;
-  @Nullable private final IdentifiedUser currentUser;
+  private final Optional<IdentifiedUser> currentUser;
   private final AuditLogFormatter auditLogFormatter;
   private final PersonIdent authorIdent;
   private final MetaDataUpdateFactory metaDataUpdateFactory;
   private final GitReferenceUpdated gitRefUpdated;
   private final RetryHelper retryHelper;
 
-  @Inject
+  @AssistedInject
+  GroupsUpdate(
+      GitRepositoryManager repoManager,
+      AllUsersName allUsersName,
+      GroupBackend groupBackend,
+      GroupCache groupCache,
+      GroupIncludeCache groupIncludeCache,
+      Provider<GroupIndexer> indexer,
+      GroupAuditService auditService,
+      AccountCache accountCache,
+      RenameGroupOp.Factory renameGroupOpFactory,
+      @GerritServerId String serverId,
+      @GerritPersonIdent PersonIdent serverIdent,
+      MetaDataUpdate.InternalFactory metaDataUpdateInternalFactory,
+      GitReferenceUpdated gitRefUpdated,
+      RetryHelper retryHelper) {
+    this(
+        repoManager,
+        allUsersName,
+        groupBackend,
+        groupCache,
+        groupIncludeCache,
+        indexer,
+        auditService,
+        accountCache,
+        renameGroupOpFactory,
+        serverId,
+        serverIdent,
+        metaDataUpdateInternalFactory,
+        gitRefUpdated,
+        retryHelper,
+        Optional.empty());
+  }
+
+  @AssistedInject
   GroupsUpdate(
       GitRepositoryManager repoManager,
       AllUsersName allUsersName,
@@ -119,7 +164,41 @@ public class GroupsUpdate {
       MetaDataUpdate.InternalFactory metaDataUpdateInternalFactory,
       GitReferenceUpdated gitRefUpdated,
       RetryHelper retryHelper,
-      @Assisted @Nullable IdentifiedUser currentUser) {
+      @Assisted IdentifiedUser currentUser) {
+    this(
+        repoManager,
+        allUsersName,
+        groupBackend,
+        groupCache,
+        groupIncludeCache,
+        indexer,
+        auditService,
+        accountCache,
+        renameGroupOpFactory,
+        serverId,
+        serverIdent,
+        metaDataUpdateInternalFactory,
+        gitRefUpdated,
+        retryHelper,
+        Optional.of(currentUser));
+  }
+
+  private GroupsUpdate(
+      GitRepositoryManager repoManager,
+      AllUsersName allUsersName,
+      GroupBackend groupBackend,
+      GroupCache groupCache,
+      GroupIncludeCache groupIncludeCache,
+      Provider<GroupIndexer> indexer,
+      GroupAuditService auditService,
+      AccountCache accountCache,
+      RenameGroupOp.Factory renameGroupOpFactory,
+      @GerritServerId String serverId,
+      @GerritPersonIdent PersonIdent serverIdent,
+      MetaDataUpdate.InternalFactory metaDataUpdateInternalFactory,
+      GitReferenceUpdated gitRefUpdated,
+      RetryHelper retryHelper,
+      Optional<IdentifiedUser> currentUser) {
     this.repoManager = repoManager;
     this.allUsersName = allUsersName;
     this.groupCache = groupCache;
@@ -140,7 +219,7 @@ public class GroupsUpdate {
 
   private static MetaDataUpdateFactory getMetaDataUpdateFactory(
       MetaDataUpdate.InternalFactory metaDataUpdateInternalFactory,
-      @Nullable IdentifiedUser currentUser,
+      Optional<IdentifiedUser> currentUser,
       PersonIdent serverIdent,
       AuditLogFormatter auditLogFormatter) {
     return (projectName, repository, batchRefUpdate) -> {
@@ -148,10 +227,10 @@ public class GroupsUpdate {
           metaDataUpdateInternalFactory.create(projectName, repository, batchRefUpdate);
       metaDataUpdate.getCommitBuilder().setCommitter(serverIdent);
       PersonIdent authorIdent;
-      if (currentUser != null) {
-        metaDataUpdate.setAuthor(currentUser);
+      if (currentUser.isPresent()) {
+        metaDataUpdate.setAuthor(currentUser.get());
         authorIdent =
-            auditLogFormatter.getParsableAuthorIdent(currentUser.getAccount(), serverIdent);
+            auditLogFormatter.getParsableAuthorIdent(currentUser.get().getAccount(), serverIdent);
       } else {
         authorIdent = serverIdent;
       }
@@ -161,8 +240,8 @@ public class GroupsUpdate {
   }
 
   private static PersonIdent getAuthorIdent(
-      PersonIdent serverIdent, @Nullable IdentifiedUser currentUser) {
-    return currentUser != null ? createPersonIdent(serverIdent, currentUser) : serverIdent;
+      PersonIdent serverIdent, Optional<IdentifiedUser> currentUser) {
+    return currentUser.map(user -> createPersonIdent(serverIdent, user)).orElse(serverIdent);
   }
 
   private static PersonIdent createPersonIdent(PersonIdent ident, IdentifiedUser user) {
@@ -177,16 +256,19 @@ public class GroupsUpdate {
    * @param groupUpdate an {@code InternalGroupUpdate} which specifies optional properties of the
    *     group. If this {@code InternalGroupUpdate} updates a property which was already specified
    *     by the {@code InternalGroupCreation}, the value of this {@code InternalGroupUpdate} wins.
-   * @throws OrmDuplicateKeyException if a group with the chosen name already exists
+   * @throws DuplicateKeyException if a group with the chosen name already exists
    * @throws IOException if indexing fails, or an error occurs while reading/writing from/to NoteDb
    * @return the created {@code InternalGroup}
    */
   public InternalGroup createGroup(
       InternalGroupCreation groupCreation, InternalGroupUpdate groupUpdate)
-      throws OrmDuplicateKeyException, IOException, ConfigInvalidException {
+      throws DuplicateKeyException, IOException, ConfigInvalidException {
     try (TraceTimer timer =
         TraceContext.newTimer(
-            "Creating group '%s'", groupUpdate.getName().orElseGet(groupCreation::getNameKey))) {
+            "Creating group",
+            Metadata.builder()
+                .groupName(groupUpdate.getName().orElseGet(groupCreation::getNameKey).get())
+                .build())) {
       InternalGroup createdGroup = createGroupInNoteDbWithRetry(groupCreation, groupUpdate);
       evictCachesOnGroupCreation(createdGroup);
       dispatchAuditEventsOnGroupCreation(createdGroup);
@@ -200,13 +282,15 @@ public class GroupsUpdate {
    * @param groupUuid the UUID of the group to update
    * @param groupUpdate an {@code InternalGroupUpdate} which indicates the desired updates on the
    *     group
-   * @throws OrmDuplicateKeyException if the new name of the group is used by another group
+   * @throws DuplicateKeyException if the new name of the group is used by another group
    * @throws IOException if indexing fails, or an error occurs while reading/writing from/to NoteDb
    * @throws NoSuchGroupException if the specified group doesn't exist
    */
   public void updateGroup(AccountGroup.UUID groupUuid, InternalGroupUpdate groupUpdate)
-      throws OrmDuplicateKeyException, IOException, NoSuchGroupException, ConfigInvalidException {
-    try (TraceTimer timer = TraceContext.newTimer("Updating group %s", groupUuid)) {
+      throws DuplicateKeyException, IOException, NoSuchGroupException, ConfigInvalidException {
+    try (TraceTimer timer =
+        TraceContext.newTimer(
+            "Updating group", Metadata.builder().groupUuid(groupUuid.get()).build())) {
       Optional<Timestamp> updatedOn = groupUpdate.getUpdatedOn();
       if (!updatedOn.isPresent()) {
         updatedOn = Optional.of(TimeUtil.nowTs());
@@ -222,17 +306,16 @@ public class GroupsUpdate {
 
   private InternalGroup createGroupInNoteDbWithRetry(
       InternalGroupCreation groupCreation, InternalGroupUpdate groupUpdate)
-      throws IOException, ConfigInvalidException, OrmDuplicateKeyException {
+      throws IOException, ConfigInvalidException, DuplicateKeyException {
     try {
-      return retryHelper.execute(
-          RetryHelper.ActionType.GROUP_UPDATE,
-          () -> createGroupInNoteDb(groupCreation, groupUpdate),
-          LockFailureException.class::isInstance);
+      return retryHelper
+          .groupUpdate("createGroup", () -> createGroupInNoteDb(groupCreation, groupUpdate))
+          .call();
     } catch (Exception e) {
       Throwables.throwIfUnchecked(e);
       Throwables.throwIfInstanceOf(e, IOException.class);
       Throwables.throwIfInstanceOf(e, ConfigInvalidException.class);
-      Throwables.throwIfInstanceOf(e, OrmDuplicateKeyException.class);
+      Throwables.throwIfInstanceOf(e, DuplicateKeyException.class);
       throw new IOException(e);
     }
   }
@@ -240,7 +323,7 @@ public class GroupsUpdate {
   @VisibleForTesting
   public InternalGroup createGroupInNoteDb(
       InternalGroupCreation groupCreation, InternalGroupUpdate groupUpdate)
-      throws IOException, ConfigInvalidException, OrmDuplicateKeyException {
+      throws IOException, ConfigInvalidException, DuplicateKeyException {
     try (Repository allUsersRepo = repoManager.openRepository(allUsersName)) {
       AccountGroup.NameKey groupName = groupUpdate.getName().orElseGet(groupCreation::getNameKey);
       GroupNameNotes groupNameNotes =
@@ -262,17 +345,16 @@ public class GroupsUpdate {
 
   private UpdateResult updateGroupInNoteDbWithRetry(
       AccountGroup.UUID groupUuid, InternalGroupUpdate groupUpdate)
-      throws IOException, ConfigInvalidException, OrmDuplicateKeyException, NoSuchGroupException {
+      throws IOException, ConfigInvalidException, DuplicateKeyException, NoSuchGroupException {
     try {
-      return retryHelper.execute(
-          RetryHelper.ActionType.GROUP_UPDATE,
-          () -> updateGroupInNoteDb(groupUuid, groupUpdate),
-          LockFailureException.class::isInstance);
+      return retryHelper
+          .groupUpdate("updateGroup", () -> updateGroupInNoteDb(groupUuid, groupUpdate))
+          .call();
     } catch (Exception e) {
       Throwables.throwIfUnchecked(e);
       Throwables.throwIfInstanceOf(e, IOException.class);
       Throwables.throwIfInstanceOf(e, ConfigInvalidException.class);
-      Throwables.throwIfInstanceOf(e, OrmDuplicateKeyException.class);
+      Throwables.throwIfInstanceOf(e, DuplicateKeyException.class);
       Throwables.throwIfInstanceOf(e, NoSuchGroupException.class);
       throw new IOException(e);
     }
@@ -281,7 +363,7 @@ public class GroupsUpdate {
   @VisibleForTesting
   public UpdateResult updateGroupInNoteDb(
       AccountGroup.UUID groupUuid, InternalGroupUpdate groupUpdate)
-      throws IOException, ConfigInvalidException, OrmDuplicateKeyException, NoSuchGroupException {
+      throws IOException, ConfigInvalidException, DuplicateKeyException, NoSuchGroupException {
     try (Repository allUsersRepo = repoManager.openRepository(allUsersName)) {
       GroupConfig groupConfig = GroupConfig.loadForGroup(allUsersName, allUsersRepo, groupUuid);
       groupConfig.setGroupUpdate(groupUpdate, auditLogFormatter);
@@ -353,10 +435,10 @@ public class GroupsUpdate {
 
     RefUpdateUtil.executeChecked(batchRefUpdate, allUsersRepo);
     gitRefUpdated.fire(
-        allUsersName, batchRefUpdate, currentUser != null ? currentUser.state() : null);
+        allUsersName, batchRefUpdate, currentUser.map(user -> user.state()).orElse(null));
   }
 
-  private void evictCachesOnGroupCreation(InternalGroup createdGroup) throws IOException {
+  private void evictCachesOnGroupCreation(InternalGroup createdGroup) {
     logger.atFine().log("evict caches on creation of group %s", createdGroup.getGroupUUID());
     // By UUID is used for the index and hence should be evicted before refreshing the index.
     groupCache.evict(createdGroup.getGroupUUID());
@@ -369,7 +451,7 @@ public class GroupsUpdate {
     createdGroup.getSubgroups().forEach(groupIncludeCache::evictParentGroupsOf);
   }
 
-  private void evictCachesOnGroupUpdate(UpdateResult result) throws IOException {
+  private void evictCachesOnGroupUpdate(UpdateResult result) {
     logger.atFine().log("evict caches on update of group %s", result.getGroupUuid());
     // By UUID is used for the index and hence should be evicted before refreshing the index.
     groupCache.evict(result.getGroupUuid());
@@ -403,20 +485,20 @@ public class GroupsUpdate {
   }
 
   private void dispatchAuditEventsOnGroupCreation(InternalGroup createdGroup) {
-    if (currentUser == null) {
+    if (!currentUser.isPresent()) {
       return;
     }
 
     if (!createdGroup.getMembers().isEmpty()) {
       groupAuditService.dispatchAddMembers(
-          currentUser.getAccountId(),
+          currentUser.get().getAccountId(),
           createdGroup.getGroupUUID(),
           createdGroup.getMembers(),
           createdGroup.getCreatedOn());
     }
     if (!createdGroup.getSubgroups().isEmpty()) {
       groupAuditService.dispatchAddSubgroups(
-          currentUser.getAccountId(),
+          currentUser.get().getAccountId(),
           createdGroup.getGroupUUID(),
           createdGroup.getSubgroups(),
           createdGroup.getCreatedOn());
@@ -424,25 +506,34 @@ public class GroupsUpdate {
   }
 
   private void dispatchAuditEventsOnGroupUpdate(UpdateResult result, Timestamp updatedOn) {
-    if (currentUser == null) {
+    if (!currentUser.isPresent()) {
       return;
     }
 
     if (!result.getAddedMembers().isEmpty()) {
       groupAuditService.dispatchAddMembers(
-          currentUser.getAccountId(), result.getGroupUuid(), result.getAddedMembers(), updatedOn);
+          currentUser.get().getAccountId(),
+          result.getGroupUuid(),
+          result.getAddedMembers(),
+          updatedOn);
     }
     if (!result.getDeletedMembers().isEmpty()) {
       groupAuditService.dispatchDeleteMembers(
-          currentUser.getAccountId(), result.getGroupUuid(), result.getDeletedMembers(), updatedOn);
+          currentUser.get().getAccountId(),
+          result.getGroupUuid(),
+          result.getDeletedMembers(),
+          updatedOn);
     }
     if (!result.getAddedSubgroups().isEmpty()) {
       groupAuditService.dispatchAddSubgroups(
-          currentUser.getAccountId(), result.getGroupUuid(), result.getAddedSubgroups(), updatedOn);
+          currentUser.get().getAccountId(),
+          result.getGroupUuid(),
+          result.getAddedSubgroups(),
+          updatedOn);
     }
     if (!result.getDeletedSubgroups().isEmpty()) {
       groupAuditService.dispatchDeleteSubgroups(
-          currentUser.getAccountId(),
+          currentUser.get().getAccountId(),
           result.getGroupUuid(),
           result.getDeletedSubgroups(),
           updatedOn);

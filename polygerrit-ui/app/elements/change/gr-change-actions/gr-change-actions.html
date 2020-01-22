@@ -15,11 +15,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../behaviors/gr-patch-set-behavior/gr-patch-set-behavior.html">
 <link rel="import" href="../../../behaviors/rest-client-behavior/rest-client-behavior.html">
-<link rel="import" href="../../../bower_components/iron-input/iron-input.html">
 <link rel="import" href="../../admin/gr-create-change-dialog/gr-create-change-dialog.html">
 <link rel="import" href="../../core/gr-navigation/gr-navigation.html">
 <link rel="import" href="../../core/gr-reporting/gr-reporting.html">
@@ -36,6 +36,7 @@ limitations under the License.
 <link rel="import" href="../gr-confirm-move-dialog/gr-confirm-move-dialog.html">
 <link rel="import" href="../gr-confirm-rebase-dialog/gr-confirm-rebase-dialog.html">
 <link rel="import" href="../gr-confirm-revert-dialog/gr-confirm-revert-dialog.html">
+<link rel="import" href="../gr-confirm-revert-submission-dialog/gr-confirm-revert-submission-dialog.html">
 <link rel="import" href="../gr-confirm-submit-dialog/gr-confirm-submit-dialog.html">
 <link rel="import" href="../../../styles/shared-styles.html">
 
@@ -62,13 +63,13 @@ limitations under the License.
         color: var(--deemphasized-text-color);
       }
       #confirmSubmitDialog .changeSubject {
-        margin: 1em;
+        margin: var(--spacing-l);
         text-align: center;
       }
       iron-icon {
         color: inherit;
         height: 1.2rem;
-        margin-right: .2rem;
+        margin-right: var(--spacing-xs);
         width: 1.2rem;
       }
       gr-button {
@@ -92,7 +93,7 @@ limitations under the License.
         }
         gr-button {
           --gr-button: {
-            padding: .5em;
+            padding: var(--spacing-m);
             white-space: nowrap;
           }
         }
@@ -101,7 +102,7 @@ limitations under the License.
           margin: 0;
         }
         #actionLoadingMessage {
-          margin: .5em;
+          margin: var(--spacing-m);
           text-align: center;
         }
         #moreMessage {
@@ -124,11 +125,12 @@ limitations under the License.
                 link
                 title$="[[action.title]]"
                 has-tooltip="[[_computeHasTooltip(action.title)]]"
+                position-below="true"
                 data-action-key$="[[action.__key]]"
                 data-action-type$="[[action.__type]]"
                 data-label$="[[action.label]]"
                 disabled$="[[_calculateDisabled(action, _hasKnownChainState)]]"
-                on-tap="_handleActionTap">
+                on-click="_handleActionTap">
                 <iron-icon class$="[[_computeHasIcon(action)]]" icon$="gr-icons:[[action.icon]]"></iron-icon>
               [[action.label]]
             </gr-button>
@@ -144,11 +146,12 @@ limitations under the License.
                 link
                 title$="[[action.title]]"
                 has-tooltip="[[_computeHasTooltip(action.title)]]"
+                position-below="true"
                 data-action-key$="[[action.__key]]"
                 data-action-type$="[[action.__type]]"
                 data-label$="[[action.label]]"
                 disabled$="[[_calculateDisabled(action, _hasKnownChainState)]]"
-                on-tap="_handleActionTap">
+                on-click="_handleActionTap">
               <iron-icon class$="[[_computeHasIcon(action)]]" icon$="gr-icons:[[action.icon]]"></iron-icon>
               [[action.label]]
             </gr-button>
@@ -177,7 +180,7 @@ limitations under the License.
           on-cancel="_handleConfirmDialogCancel"
           branch="[[change.branch]]"
           has-parent="[[hasParent]]"
-          rebase-on-current="[[revisionActions.rebase.rebaseOnCurrent]]"
+          rebase-on-current="[[_revisionRebaseAction.rebaseOnCurrent]]"
           hidden></gr-confirm-rebase-dialog>
       <gr-confirm-cherrypick-dialog id="confirmCherrypick"
           class="confirmDialog"
@@ -190,12 +193,8 @@ limitations under the License.
           hidden></gr-confirm-cherrypick-dialog>
       <gr-confirm-cherrypick-conflict-dialog id="confirmCherrypickConflict"
           class="confirmDialog"
-          change-status="[[changeStatus]]"
-          commit-message="[[commitMessage]]"
-          commit-num="[[commitNum]]"
           on-confirm="_handleCherrypickConflictConfirm"
           on-cancel="_handleConfirmDialogCancel"
-          project="[[change.project]]"
           hidden></gr-confirm-cherrypick-conflict-dialog>
       <gr-confirm-move-dialog id="confirmMove"
           class="confirmDialog"
@@ -206,8 +205,17 @@ limitations under the License.
       <gr-confirm-revert-dialog id="confirmRevertDialog"
           class="confirmDialog"
           on-confirm="_handleRevertDialogConfirm"
+          commit-message="[[commitMessage]]"
+          change="[[change]]"
+          changes="[[_revertChanges]]"
           on-cancel="_handleConfirmDialogCancel"
           hidden></gr-confirm-revert-dialog>
+      <gr-confirm-revert-submission-dialog id="confirmRevertSubmissionDialog"
+          class="confirmDialog"
+          commit-message="[[commitMessage]]"
+          on-confirm="_handleRevertSubmissionDialogConfirm"
+          on-cancel="_handleConfirmDialogCancel"
+          hidden></gr-confirm-revert-submission-dialog>
       <gr-confirm-abandon-dialog id="confirmAbandonDialog"
           class="confirmDialog"
           on-confirm="_handleAbandonDialogConfirm"
@@ -217,7 +225,7 @@ limitations under the License.
           id="confirmSubmitDialog"
           class="confirmDialog"
           change="[[change]]"
-          action="[[revisionActions.submit]]"
+          action="[[_revisionSubmitAction]]"
           on-cancel="_handleConfirmDialogCancel"
           on-confirm="_handleSubmitConfirm" hidden></gr-confirm-submit-dialog>
       <gr-dialog id="createFollowUpDialog"

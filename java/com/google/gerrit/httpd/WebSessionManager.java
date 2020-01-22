@@ -30,7 +30,7 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 
 import com.google.common.cache.Cache;
 import com.google.common.flogger.FluentLogger;
-import com.google.gerrit.reviewdb.client.Account;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.server.account.externalids.ExternalId;
 import com.google.gerrit.server.config.ConfigUtil;
 import com.google.gerrit.server.config.GerritServerConfig;
@@ -286,7 +286,7 @@ public class WebSessionManager {
           case 0:
             break PARSE;
           case 1:
-            accountId = new Account.Id(readVarInt32(in));
+            accountId = Account.id(readVarInt32(in));
             continue;
           case 2:
             refreshCookieAt = readFixInt64(in);

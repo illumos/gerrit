@@ -15,8 +15,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../behaviors/gr-patch-set-behavior/gr-patch-set-behavior.html">
 <link rel="import" href="../../../behaviors/rest-client-behavior/rest-client-behavior.html">
 <link rel="import" href="../../../styles/shared-styles.html">
@@ -26,20 +27,17 @@ limitations under the License.
   <template>
     <style include="shared-styles">
       :host {
-        background-color: var(--dialog-background-color);
         display: block;
+        padding: var(--spacing-m) 0;
       }
       section {
         display: flex;
-        padding: .5em 1.5em;
-      }
-      section:not(:first-of-type) {
-        border-top: 1px solid var(--border-color);
+        padding: var(--spacing-m) var(--spacing-xl);
       }
       .flexContainer {
         display: flex;
         justify-content: space-between;
-        padding-top: .75em;
+        padding-top: var(--spacing-m);
       }
       .footer {
         justify-content: flex-end;
@@ -52,15 +50,15 @@ limitations under the License.
       }
       .patchFiles,
       .archivesContainer {
-        padding-bottom: .5em;
+        padding-bottom: var(--spacing-m);
       }
       .patchFiles {
-        margin-right: 2em;
+        margin-right: var(--spacing-xxl);
       }
       .patchFiles a,
       .archives a {
         display: inline-block;
-        margin-right: 1em;
+        margin-right: var(--spacing-l);
       }
       .patchFiles a:last-of-type,
       .archives a:last-of-type {
@@ -75,9 +73,9 @@ limitations under the License.
       }
     </style>
     <section>
-      <span class="title">
+      <h3 class="title">
         Patch set [[patchNum]] of [[_computePatchSetQuantity(change.revisions)]]
-      </span>
+      </h3>
     </section>
     <section class$="[[_computeShowDownloadCommands(_schemes)]]">
       <gr-download-commands
@@ -120,7 +118,7 @@ limitations under the License.
       <span class="closeButtonContainer">
         <gr-button id="closeButton"
             link
-            on-tap="_handleCloseTap">Close</gr-button>
+            on-click="_handleCloseTap">Close</gr-button>
       </span>
     </section>
   </template>

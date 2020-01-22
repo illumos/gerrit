@@ -17,23 +17,22 @@ package com.google.gerrit.common.data;
 import static com.google.common.truth.Truth.assertThat;
 
 import com.google.common.collect.ImmutableList;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.LabelId;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.PatchSet.Id;
-import com.google.gerrit.reviewdb.client.PatchSetApproval;
-import java.sql.Date;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.LabelId;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.PatchSetApproval;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import org.junit.Test;
 
 public class LabelFunctionTest {
   private static final String LABEL_NAME = "Verified";
-  private static final LabelId LABEL_ID = new LabelId(LABEL_NAME);
-  private static final Change.Id CHANGE_ID = new Change.Id(100);
-  private static final PatchSet.Id PS_ID = new PatchSet.Id(CHANGE_ID, 1);
+  private static final LabelId LABEL_ID = LabelId.create(LABEL_NAME);
+  private static final Change.Id CHANGE_ID = Change.id(100);
+  private static final PatchSet.Id PS_ID = PatchSet.id(CHANGE_ID, 1);
   private static final LabelType VERIFIED_LABEL = makeLabel();
   private static final PatchSetApproval APPROVAL_2 = makeApproval(2);
   private static final PatchSetApproval APPROVAL_1 = makeApproval(1);
@@ -82,7 +81,7 @@ public class LabelFunctionTest {
     SubmitRecord.Label myLabel = LabelFunction.MAX_NO_BLOCK.check(VERIFIED_LABEL, approvals);
 
     assertThat(myLabel.status).isEqualTo(SubmitRecord.Label.Status.OK);
-    assertThat(myLabel.appliedBy).isEqualTo(APPROVAL_2.getAccountId());
+    assertThat(myLabel.appliedBy).isEqualTo(APPROVAL_2.accountId());
   }
 
   private static LabelType makeLabel() {
@@ -97,13 +96,11 @@ public class LabelFunctionTest {
   }
 
   private static PatchSetApproval makeApproval(int value) {
-    Account.Id accountId = new Account.Id(10000 + value);
-    PatchSetApproval.Key key = makeKey(PS_ID, accountId, LABEL_ID);
-    return new PatchSetApproval(key, (short) value, Date.from(Instant.now()));
-  }
-
-  private static PatchSetApproval.Key makeKey(Id psId, Account.Id accountId, LabelId labelId) {
-    return new PatchSetApproval.Key(psId, accountId, labelId);
+    return PatchSetApproval.builder()
+        .key(PatchSetApproval.key(PS_ID, Account.id(10000 + value), LABEL_ID))
+        .value(value)
+        .granted(Date.from(Instant.now()))
+        .build();
   }
 
   private static void checkBlockWorks(LabelFunction function) {
@@ -112,7 +109,7 @@ public class LabelFunctionTest {
     SubmitRecord.Label myLabel = function.check(VERIFIED_LABEL, approvals);
 
     assertThat(myLabel.status).isEqualTo(SubmitRecord.Label.Status.REJECT);
-    assertThat(myLabel.appliedBy).isEqualTo(APPROVAL_M2.getAccountId());
+    assertThat(myLabel.appliedBy).isEqualTo(APPROVAL_M2.accountId());
   }
 
   private static void checkNothingHappens(LabelFunction function) {
@@ -143,6 +140,6 @@ public class LabelFunctionTest {
     SubmitRecord.Label myLabel = function.check(VERIFIED_LABEL, approvals);
 
     assertThat(myLabel.status).isEqualTo(SubmitRecord.Label.Status.OK);
-    assertThat(myLabel.appliedBy).isEqualTo(APPROVAL_2.getAccountId());
+    assertThat(myLabel.appliedBy).isEqualTo(APPROVAL_2.accountId());
   }
 }

@@ -17,64 +17,44 @@ package com.google.gerrit.acceptance;
 import static com.google.inject.Scopes.SINGLETON;
 
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.events.LifecycleListener;
 import com.google.gerrit.lifecycle.LifecycleModule;
 import com.google.gerrit.metrics.DisabledMetricMaker;
 import com.google.gerrit.metrics.MetricMaker;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.SitePath;
 import com.google.gerrit.server.config.SitePaths;
 import com.google.gerrit.server.config.TrackingFooters;
 import com.google.gerrit.server.config.TrackingFootersProvider;
 import com.google.gerrit.server.git.GitRepositoryManager;
-import com.google.gerrit.server.notedb.ChangeBundleReader;
-import com.google.gerrit.server.notedb.GwtormChangeBundleReader;
-import com.google.gerrit.server.notedb.NotesMigration;
-import com.google.gerrit.server.schema.DataSourceType;
-import com.google.gerrit.server.schema.NotesMigrationSchemaFactory;
-import com.google.gerrit.server.schema.ReviewDbFactory;
+import com.google.gerrit.server.schema.SchemaCreator;
 import com.google.gerrit.server.schema.SchemaModule;
-import com.google.gerrit.server.schema.SchemaVersion;
-import com.google.gerrit.testing.InMemoryDatabase;
-import com.google.gerrit.testing.InMemoryH2Type;
 import com.google.gerrit.testing.InMemoryRepositoryManager;
-import com.google.gwtorm.server.OrmException;
-import com.google.gwtorm.server.OrmRuntimeException;
-import com.google.gwtorm.server.SchemaFactory;
 import com.google.inject.Inject;
-import com.google.inject.Key;
 import com.google.inject.ProvisionException;
-import com.google.inject.TypeLiteral;
-import com.google.inject.util.Providers;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.Config;
 
 class InMemoryTestingDatabaseModule extends LifecycleModule {
   private final Config cfg;
   private final Path sitePath;
   @Nullable private final InMemoryRepositoryManager repoManager;
-  @Nullable private final InMemoryDatabase.Instance inMemoryDatabaseInstance;
 
   InMemoryTestingDatabaseModule(
-      Config cfg,
-      Path sitePath,
-      @Nullable InMemoryRepositoryManager repoManager,
-      @Nullable InMemoryDatabase.Instance inMemoryDatabaseInstance) {
+      Config cfg, Path sitePath, @Nullable InMemoryRepositoryManager repoManager) {
     this.cfg = cfg;
     this.sitePath = sitePath;
     this.repoManager = repoManager;
-    this.inMemoryDatabaseInstance = inMemoryDatabaseInstance;
     makeSiteDirs(sitePath);
   }
 
   @Override
   protected void configure() {
     bind(Config.class).annotatedWith(GerritServerConfig.class).toInstance(cfg);
-
-    // TODO(dborowitz): Use jimfs.
     bind(Path.class).annotatedWith(SitePath.class).toInstance(sitePath);
 
     if (repoManager != null) {
@@ -85,49 +65,36 @@ class InMemoryTestingDatabaseModule extends LifecycleModule {
     }
 
     bind(MetricMaker.class).to(DisabledMetricMaker.class);
-    bind(DataSourceType.class).to(InMemoryH2Type.class);
 
-    install(new NotesMigration.Module());
-    TypeLiteral<SchemaFactory<ReviewDb>> schemaFactory =
-        new TypeLiteral<SchemaFactory<ReviewDb>>() {};
-    bind(schemaFactory).to(NotesMigrationSchemaFactory.class);
-    bind(InMemoryDatabase.Instance.class).toProvider(Providers.of(inMemoryDatabaseInstance));
-    bind(Key.get(schemaFactory, ReviewDbFactory.class)).to(InMemoryDatabase.class);
-    bind(InMemoryDatabase.class).in(SINGLETON);
-    bind(ChangeBundleReader.class).to(GwtormChangeBundleReader.class);
-
-    listener().to(CreateDatabase.class);
+    listener().to(CreateSchema.class);
 
     bind(SitePaths.class);
     bind(TrackingFooters.class).toProvider(TrackingFootersProvider.class).in(SINGLETON);
 
     install(new SchemaModule());
-    bind(SchemaVersion.class).to(SchemaVersion.C);
 
     install(new SshdModule());
   }
 
-  static class CreateDatabase implements LifecycleListener {
-    private final InMemoryDatabase mem;
+  static class CreateSchema implements LifecycleListener {
+    private final SchemaCreator schemaCreator;
 
     @Inject
-    CreateDatabase(InMemoryDatabase mem) {
-      this.mem = mem;
+    CreateSchema(SchemaCreator schemaCreator) {
+      this.schemaCreator = schemaCreator;
     }
 
     @Override
     public void start() {
       try {
-        mem.create();
-      } catch (OrmException e) {
-        throw new OrmRuntimeException(e);
+        schemaCreator.ensureCreated();
+      } catch (IOException | ConfigInvalidException e) {
+        throw new StorageException(e);
       }
     }
 
     @Override
-    public void stop() {
-      mem.getDbInstance().drop();
-    }
+    public void stop() {}
   }
 
   private static void makeSiteDirs(Path p) {

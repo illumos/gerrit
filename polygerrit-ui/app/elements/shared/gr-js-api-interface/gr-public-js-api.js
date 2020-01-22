@@ -17,71 +17,17 @@
 (function(window) {
   'use strict';
 
-  /**
-   * Hash of loaded and installed plugins, name to Plugin object.
-   */
-  const _plugins = {};
-
-  /**
-   * Array of plugin URLs to be loaded, name to url.
-   */
-  let _pluginsPending = {};
-
-  let _pluginsInstalled = [];
-
-  let _pluginsPendingCount = -1;
-
-  const PRELOADED_PROTOCOL = 'preloaded:';
-
-  const UNKNOWN_PLUGIN = 'unknown';
-
   const PANEL_ENDPOINTS_MAPPING = {
     CHANGE_SCREEN_BELOW_COMMIT_INFO_BLOCK: 'change-view-integration',
     CHANGE_SCREEN_BELOW_CHANGE_INFO_BLOCK: 'change-metadata-item',
   };
 
-  const PLUGIN_LOADING_TIMEOUT_MS = 10000;
-
-  let _restAPI;
-
-  const getRestAPI = () => {
-    if (!_restAPI) {
-      _restAPI = document.createElement('gr-rest-api-interface');
-    }
-    return _restAPI;
-  };
-
-  let _reporting;
-  const getReporting = () => {
-    if (!_reporting) {
-      _reporting = document.createElement('gr-reporting');
-    }
-    return _reporting;
-  };
-
-  // TODO (viktard): deprecate in favor of GrPluginRestApi.
-  function send(method, url, opt_callback, opt_payload) {
-    return getRestAPI().send(method, url, opt_payload).then(response => {
-      if (response.status < 200 || response.status >= 300) {
-        return response.text().then(text => {
-          if (text) {
-            return Promise.reject(text);
-          } else {
-            return Promise.reject(response.status);
-          }
-        });
-      } else {
-        return getRestAPI().getResponseObject(response);
-      }
-    }).then(response => {
-      if (opt_callback) {
-        opt_callback(response);
-      }
-      return response;
-    });
-  }
-
-  const API_VERSION = '0.1';
+  // Import utils methods
+  const {
+    PRELOADED_PROTOCOL,
+    getPluginNameFromUrl,
+    send,
+  } = window._apiUtils;
 
   /**
    * Plugin-provided custom components can affect content in extension
@@ -99,61 +45,17 @@
     STYLE: 'style',
   };
 
-  // GWT JSNI uses $wnd to refer to window.
-  // http://www.gwtproject.org/doc/latest/DevGuideCodingBasicsJSNI.html
-  window.$wnd = window;
-
-  function flushPreinstalls() {
-    if (window.Gerrit.flushPreinstalls) {
-      window.Gerrit.flushPreinstalls();
-    }
-  }
-
-  function installPreloadedPlugins() {
-    if (!Gerrit._preloadedPlugins) { return; }
-    for (const name in Gerrit._preloadedPlugins) {
-      if (!Gerrit._preloadedPlugins.hasOwnProperty(name)) { continue; }
-      const callback = Gerrit._preloadedPlugins[name];
-      Gerrit.install(callback, API_VERSION, PRELOADED_PROTOCOL + name);
-    }
-  }
-
-  function getPluginNameFromUrl(url) {
-    if (!(url instanceof URL)) {
-      try {
-        url = new URL(url);
-      } catch (e) {
-        console.warn(e);
-        return null;
-      }
-    }
-    if (url.protocol === PRELOADED_PROTOCOL) {
-      return url.pathname;
-    }
-    const base = Gerrit.BaseUrlBehavior.getBaseUrl();
-    const pathname = url.pathname.replace(base, '');
-    // Site theme is server from predefined path.
-    if (pathname === '/static/gerrit-theme.html') {
-      return 'gerrit-theme';
-    } else if (!pathname.startsWith('/plugins')) {
-      console.warn('Plugin not being loaded from /plugins base path:',
-          url.href, '— Unable to determine name.');
-      return;
-    }
-    // Pathname should normally look like this:
-    // /plugins/PLUGINNAME/static/SCRIPTNAME.html
-    // Or, for app/samples:
-    // /plugins/PLUGINNAME.html
-    return pathname.split('/')[2].split('.')[0];
-  }
-
+  /**
+   * @constructor
+   * @param {string=} opt_url
+   */
   function Plugin(opt_url) {
     this._domHooks = new GrDomHooksManager(this);
 
     if (!opt_url) {
       console.warn('Plugin not being loaded from /plugins base path.',
           'Unable to determine name.');
-      return;
+      return this;
     }
     this.deprecated = {
       _loadedGwt: deprecatedAPI._loadedGwt.bind(this),
@@ -167,13 +69,6 @@
 
     this._url = new URL(opt_url);
     this._name = getPluginNameFromUrl(this._url);
-    if (this._url.protocol === PRELOADED_PROTOCOL) {
-      // Original plugin URL is used in plugin assets URLs calculation.
-      const assetsBaseUrl = window.ASSETS_PATH ||
-          (window.location.origin + Gerrit.BaseUrlBehavior.getBaseUrl());
-      this._url = new URL(assetsBaseUrl + '/plugins/' + this._name +
-          '/static/' + this._name + '.js');
-    }
   }
 
   Plugin._sharedAPIElement = document.createElement('gr-js-api-interface');
@@ -189,14 +84,36 @@
         this, endpointName, EndpointType.STYLE, moduleName);
   };
 
+  /**
+   * Registers an endpoint for the plugin.
+   */
   Plugin.prototype.registerCustomComponent = function(
       endpointName, opt_moduleName, opt_options) {
+    return this._registerCustomComponent(endpointName, opt_moduleName,
+        opt_options);
+  };
+
+  /**
+   * Registers a dynamic endpoint for the plugin.
+   *
+   * Dynamic plugins are registered by specific prefix, such as
+   * 'change-list-header'.
+   */
+  Plugin.prototype.registerDynamicCustomComponent = function(
+      endpointName, opt_moduleName, opt_options) {
+    const fullEndpointName = `${endpointName}-${this.getPluginName()}`;
+    return this._registerCustomComponent(fullEndpointName, opt_moduleName,
+        opt_options, endpointName);
+  };
+
+  Plugin.prototype._registerCustomComponent = function(
+      endpointName, opt_moduleName, opt_options, dynamicEndpoint) {
     const type = opt_options && opt_options.replace ?
       EndpointType.REPLACE : EndpointType.DECORATE;
     const hook = this._domHooks.getDomHook(endpointName, opt_moduleName);
     const moduleName = opt_moduleName || hook.getModuleName();
     Gerrit._endpoints.registerModule(
-        this, endpointName, type, moduleName, hook);
+        this, endpointName, type, moduleName, hook, dynamicEndpoint);
     return hook.getPublicAPI();
   };
 
@@ -217,9 +134,20 @@
   };
 
   Plugin.prototype.url = function(opt_path) {
-    const base = Gerrit.BaseUrlBehavior.getBaseUrl();
-    return this._url.origin + base + '/plugins/' +
-        this._name + (opt_path || '/');
+    const relPath = '/plugins/' + this._name + (opt_path || '/');
+    const sameOriginPath = window.location.origin +
+      `${Gerrit.BaseUrlBehavior.getBaseUrl()}${relPath}`;
+    if (window.location.origin === this._url.origin) {
+      // Plugin loaded from the same origin as gr-app, getBaseUrl in effect.
+      return sameOriginPath;
+    } else if (this._url.protocol === PRELOADED_PROTOCOL) {
+      // Plugin is preloaded, load plugin with ASSETS_PATH or location.origin
+      return window.ASSETS_PATH ? `${window.ASSETS_PATH}${relPath}` :
+        sameOriginPath;
+    } else {
+      // Plugin loaded from assets bundle, expect assets placed along with it.
+      return this._url.href.split('/plugins/' + this._name)[0] + relPath;
+    }
   };
 
   Plugin.prototype.screenUrl = function(opt_screenName) {
@@ -292,13 +220,17 @@
     return new GrSettingsApi(this);
   };
 
+  Plugin.prototype.styles = function() {
+    return new GrStylesApi();
+  };
+
   /**
    * To make REST requests for plugin-provided endpoints, use
    *
    * @example
    * const pluginRestApi = plugin.restApi(plugin.url());
    *
-   * @param {string} Base url for subsequent .get(), .post() etc requests.
+   * @param {string=} opt_prefix url for subsequent .get(), .post() etc requests.
    */
   Plugin.prototype.restApi = function(opt_prefix) {
     return new GrPluginRestApi(opt_prefix);
@@ -338,8 +270,12 @@
       return;
     }
     return this.registerCustomComponent(
-        Gerrit._getPluginScreenName(this.getPluginName(), screenName),
+        this._getScreenName(screenName),
         opt_moduleName);
+  };
+
+  Plugin.prototype._getScreenName = function(screenName) {
+    return `${this.getPluginName()}-screen-${screenName}`;
   };
 
   const deprecatedAPI = {
@@ -392,7 +328,7 @@
             'Please use strings for patterns.');
         return;
       }
-      this.hook(Gerrit._getPluginScreenName(this.getPluginName(), pattern))
+      this.hook(this._getScreenName(pattern))
           .onAttached(el => {
             el.style.display = 'none';
             callback({
@@ -449,261 +385,5 @@
     },
   };
 
-  flushPreinstalls();
-
-  const Gerrit = window.Gerrit || {};
-
-  let _resolveAllPluginsLoaded = null;
-  let _allPluginsPromise = null;
-
-  Gerrit._endpoints = new GrPluginEndpoints();
-
-  // Provide reset plugins function to clear installed plugins between tests.
-  const app = document.querySelector('#app');
-  if (!app) {
-    // No gr-app found (running tests)
-    Gerrit._installPreloadedPlugins = installPreloadedPlugins;
-    Gerrit._flushPreinstalls = flushPreinstalls;
-    Gerrit._resetPlugins = () => {
-      _allPluginsPromise = null;
-      _pluginsInstalled = [];
-      _pluginsPending = {};
-      _pluginsPendingCount = -1;
-      _reporting = null;
-      _resolveAllPluginsLoaded = null;
-      _restAPI = null;
-      Gerrit._endpoints = new GrPluginEndpoints();
-      for (const k of Object.keys(_plugins)) {
-        delete _plugins[k];
-      }
-    };
-  }
-
-  Gerrit.getPluginName = function() {
-    console.warn('Gerrit.getPluginName is not supported in PolyGerrit.',
-        'Please use plugin.getPluginName() instead.');
-  };
-
-  Gerrit.css = function(rulesStr) {
-    if (!Gerrit._customStyleSheet) {
-      const styleEl = document.createElement('style');
-      document.head.appendChild(styleEl);
-      Gerrit._customStyleSheet = styleEl.sheet;
-    }
-
-    const name = '__pg_js_api_class_' +
-        Gerrit._customStyleSheet.cssRules.length;
-    Gerrit._customStyleSheet.insertRule('.' + name + '{' + rulesStr + '}', 0);
-    return name;
-  };
-
-  Gerrit.install = function(callback, opt_version, opt_src) {
-    // HTML import polyfill adds __importElement pointing to the import tag.
-    const script = document.currentScript &&
-        (document.currentScript.__importElement || document.currentScript);
-    const src = opt_src || (script && (script.src || script.baseURI));
-    const name = getPluginNameFromUrl(src);
-
-    if (opt_version && opt_version !== API_VERSION) {
-      Gerrit._pluginInstallError(`Plugin ${name} install error: only version ` +
-          API_VERSION + ' is supported in PolyGerrit. ' + opt_version +
-          ' was given.');
-      return;
-    }
-
-    const existingPlugin = _plugins[name];
-    const plugin = existingPlugin || new Plugin(src);
-    try {
-      callback(plugin);
-      if (name) {
-        _plugins[name] = plugin;
-      }
-      if (!existingPlugin) {
-        Gerrit._pluginInstalled(src);
-      }
-    } catch (e) {
-      Gerrit._pluginInstallError(`${e.name}: ${e.message}`);
-    }
-  };
-
-  Gerrit.getLoggedIn = function() {
-    console.warn('Gerrit.getLoggedIn() is deprecated! ' +
-        'Use plugin.restApi().getLoggedIn()');
-    return document.createElement('gr-rest-api-interface').getLoggedIn();
-  };
-
-  Gerrit.get = function(url, callback) {
-    console.warn('.get() is deprecated! Use plugin.restApi().get()');
-    send('GET', url, callback);
-  };
-
-  Gerrit.post = function(url, payload, callback) {
-    console.warn('.post() is deprecated! Use plugin.restApi().post()');
-    send('POST', url, callback, payload);
-  };
-
-  Gerrit.put = function(url, payload, callback) {
-    console.warn('.put() is deprecated! Use plugin.restApi().put()');
-    send('PUT', url, callback, payload);
-  };
-
-  Gerrit.delete = function(url, opt_callback) {
-    console.warn('.delete() is deprecated! Use plugin.restApi().delete()');
-    return getRestAPI().send('DELETE', url).then(response => {
-      if (response.status !== 204) {
-        return response.text().then(text => {
-          if (text) {
-            return Promise.reject(text);
-          } else {
-            return Promise.reject(response.status);
-          }
-        });
-      }
-      if (opt_callback) {
-        opt_callback(response);
-      }
-      return response;
-    });
-  };
-
-  /**
-   * Install "stepping stones" API for GWT-compiled plugins by default.
-   *
-   * @deprecated best effort support, will be removed with GWT UI.
-   */
-  Gerrit.installGwt = function(url) {
-    const name = getPluginNameFromUrl(url);
-    let plugin;
-    try {
-      plugin = _plugins[name] || new Plugin(url);
-      plugin.deprecated.install();
-      Gerrit._pluginInstalled(url);
-    } catch (e) {
-      Gerrit._pluginInstallError(`${e.name}: ${e.message}`);
-    }
-    return plugin;
-  };
-
-  Gerrit.awaitPluginsLoaded = function() {
-    if (!_allPluginsPromise) {
-      if (Gerrit._arePluginsLoaded()) {
-        _allPluginsPromise = Promise.resolve();
-      } else {
-        let timeoutId;
-        _allPluginsPromise =
-          Promise.race([
-            new Promise(resolve => _resolveAllPluginsLoaded = resolve),
-            new Promise(resolve => timeoutId = setTimeout(
-                Gerrit._pluginLoadingTimeout, PLUGIN_LOADING_TIMEOUT_MS)),
-          ]).then(() => clearTimeout(timeoutId));
-      }
-    }
-    return _allPluginsPromise;
-  };
-
-  Gerrit._pluginLoadingTimeout = function() {
-    console.error(`Failed to load plugins: ${Object.keys(_pluginsPending)}`);
-    Gerrit._setPluginsPending([]);
-  };
-
-  Gerrit._setPluginsPending = function(plugins) {
-    _pluginsPending = plugins.reduce((o, url) => {
-      // TODO(viktard): Remove guard (@see Issue 8962)
-      o[getPluginNameFromUrl(url) || UNKNOWN_PLUGIN] = url;
-      return o;
-    }, {});
-    Gerrit._setPluginsCount(Object.keys(_pluginsPending).length);
-  };
-
-  Gerrit._setPluginsCount = function(count) {
-    _pluginsPendingCount = count;
-    if (Gerrit._arePluginsLoaded()) {
-      getReporting().pluginsLoaded(_pluginsInstalled);
-      if (_resolveAllPluginsLoaded) {
-        _resolveAllPluginsLoaded();
-      }
-    }
-  };
-
-  Gerrit._pluginInstallError = function(message) {
-    document.dispatchEvent(new CustomEvent('show-alert', {
-      detail: {
-        message: `Plugin install error: ${message}`,
-      },
-    }));
-    console.info(`Plugin install error: ${message}`);
-    Gerrit._setPluginsCount(_pluginsPendingCount - 1);
-  };
-
-  Gerrit._pluginInstalled = function(url) {
-    const name = getPluginNameFromUrl(url) || UNKNOWN_PLUGIN;
-    if (!_pluginsPending[name]) {
-      console.warn(`Unexpected plugin ${name} installed from ${url}.`);
-    } else {
-      delete _pluginsPending[name];
-      _pluginsInstalled.push(name);
-      Gerrit._setPluginsCount(_pluginsPendingCount - 1);
-      console.log(`Plugin ${name} installed.`);
-    }
-  };
-
-  Gerrit._arePluginsLoaded = function() {
-    return _pluginsPendingCount === 0;
-  };
-
-  Gerrit._getPluginScreenName = function(pluginName, screenName) {
-    return `${pluginName}-screen-${screenName}`;
-  };
-
-  Gerrit._isPluginPreloaded = function(url) {
-    const name = getPluginNameFromUrl(url);
-    if (name && Gerrit._preloadedPlugins) {
-      return name in Gerrit._preloadedPlugins;
-    } else {
-      return false;
-    }
-  };
-
-  // TODO(taoalpha): List all internal supported event names.
-  // Also convert this to inherited class once we move Gerrit to class.
-  Gerrit._eventEmitter = new EventEmitter();
-  ['addListener',
-    'dispatch',
-    'emit',
-    'off',
-    'on',
-    'once',
-    'removeAllListeners',
-    'removeListener',
-  ].forEach(method => {
-    /**
-     * Enabling EventEmitter interface on Gerrit.
-     *
-     * This will enable to signal across different parts of js code without relying on DOM,
-     * including core to core, plugin to plugin and also core to plugin.
-     *
-     * @example
-     *
-     * // Emit this event from pluginA
-     * Gerrit.install(pluginA => {
-     *   fetch("some-api").then(() => {
-     *     Gerrit.on("your-special-event", {plugin: pluginA});
-     *   });
-     * });
-     *
-     * // Listen on your-special-event from pluignB
-     * Gerrit.install(pluginB => {
-     *   Gerrit.on("your-special-event", ({plugin}) => {
-     *     // do something, plugin is pluginA
-     *   });
-     * });
-     */
-    Gerrit[method] = Gerrit._eventEmitter[method].bind(Gerrit._eventEmitter);
-  });
-
-  window.Gerrit = Gerrit;
-
-  // Preloaded plugins should be installed after Gerrit.install() is set,
-  // since plugin preloader substitutes Gerrit.install() temporarily.
-  installPreloadedPlugins();
+  window.Plugin = Plugin;
 })(window);

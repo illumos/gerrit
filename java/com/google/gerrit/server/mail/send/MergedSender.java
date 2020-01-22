@@ -19,28 +19,28 @@ import com.google.common.collect.Table;
 import com.google.gerrit.common.data.LabelType;
 import com.google.gerrit.common.data.LabelTypes;
 import com.google.gerrit.common.data.LabelValue;
-import com.google.gerrit.common.errors.EmailException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSetApproval;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSetApproval;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.EmailException;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.server.account.ProjectWatches.NotifyType;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 
 /** Send notice about a change successfully merged. */
 public class MergedSender extends ReplyToChangeSender {
   public interface Factory {
-    MergedSender create(Project.NameKey project, Change.Id id);
+    MergedSender create(Project.NameKey project, Change.Id changeId);
   }
 
   private final LabelTypes labelTypes;
 
   @Inject
-  public MergedSender(EmailArguments ea, @Assisted Project.NameKey project, @Assisted Change.Id id)
-      throws OrmException {
-    super(ea, "merged", newChangeData(ea, project, id));
+  public MergedSender(
+      EmailArguments args, @Assisted Project.NameKey project, @Assisted Change.Id changeId) {
+    super(args, "merged", newChangeData(args, project, changeId));
     labelTypes = changeData.getLabelTypes();
   }
 
@@ -69,21 +69,20 @@ public class MergedSender extends ReplyToChangeSender {
       Table<Account.Id, String, PatchSetApproval> pos = HashBasedTable.create();
       Table<Account.Id, String, PatchSetApproval> neg = HashBasedTable.create();
       for (PatchSetApproval ca :
-          args.approvalsUtil.byPatchSet(
-              args.db.get(), changeData.notes(), patchSet.getId(), null, null)) {
-        LabelType lt = labelTypes.byLabel(ca.getLabelId());
+          args.approvalsUtil.byPatchSet(changeData.notes(), patchSet.id(), null, null)) {
+        LabelType lt = labelTypes.byLabel(ca.labelId());
         if (lt == null) {
           continue;
         }
-        if (ca.getValue() > 0) {
-          pos.put(ca.getAccountId(), lt.getName(), ca);
-        } else if (ca.getValue() < 0) {
-          neg.put(ca.getAccountId(), lt.getName(), ca);
+        if (ca.value() > 0) {
+          pos.put(ca.accountId(), lt.getName(), ca);
+        } else if (ca.value() < 0) {
+          neg.put(ca.accountId(), lt.getName(), ca);
         }
       }
 
       return format("Approvals", pos) + format("Objections", neg);
-    } catch (OrmException err) {
+    } catch (StorageException err) {
       // Don't list the approvals
     }
     return "";
@@ -118,7 +117,7 @@ public class MergedSender extends ReplyToChangeSender {
         } else {
           txt.append(lt.getName());
           txt.append('=');
-          txt.append(LabelValue.formatValue(ca.getValue()));
+          txt.append(LabelValue.formatValue(ca.value()));
         }
       }
       txt.append('\n');

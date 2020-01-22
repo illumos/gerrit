@@ -15,24 +15,25 @@
 package com.google.gerrit.server.extensions.events;
 
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.common.AccountInfo;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.RevisionInfo;
 import com.google.gerrit.extensions.events.PrivateStateChangedListener;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSet;
 import com.google.gerrit.server.GpgException;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.patch.PatchListNotAvailableException;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import java.sql.Timestamp;
 
+/** Helper class to fire an event when the private flag of a change has been toggled. */
 @Singleton
 public class PrivateStateChanged {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
@@ -58,7 +59,7 @@ public class PrivateStateChanged {
               util.accountInfo(account),
               when);
       listeners.runEach(l -> l.onPrivateStateChanged(event));
-    } catch (OrmException
+    } catch (StorageException
         | PatchListNotAvailableException
         | GpgException
         | IOException
@@ -67,6 +68,7 @@ public class PrivateStateChanged {
     }
   }
 
+  /** Event to be fired when the private flag of a change has been toggled. */
   private static class Event extends AbstractRevisionEvent
       implements PrivateStateChangedListener.Event {
 

@@ -17,6 +17,7 @@ package com.google.gerrit.index;
 import static com.google.common.base.Preconditions.checkArgument;
 
 import com.google.auto.value.AutoValue;
+import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import org.eclipse.jgit.lib.Config;
 
@@ -39,6 +40,7 @@ public abstract class IndexConfig {
     setIfPresent(cfg, "maxLimit", b::maxLimit);
     setIfPresent(cfg, "maxPages", b::maxPages);
     setIfPresent(cfg, "maxTerms", b::maxTerms);
+    setTypeOrDefault(cfg, b::type);
     return b;
   }
 
@@ -49,11 +51,17 @@ public abstract class IndexConfig {
     }
   }
 
+  private static void setTypeOrDefault(Config cfg, Consumer<String> setter) {
+    String type = cfg != null ? cfg.getString("index", null, "type") : null;
+    setter.accept(new IndexType(type).toString());
+  }
+
   public static Builder builder() {
     return new AutoValue_IndexConfig.Builder()
         .maxLimit(Integer.MAX_VALUE)
         .maxPages(Integer.MAX_VALUE)
         .maxTerms(DEFAULT_MAX_TERMS)
+        .type(IndexType.getDefault())
         .separateChangeSubIndexes(false);
   }
 
@@ -70,6 +78,10 @@ public abstract class IndexConfig {
     public abstract Builder maxTerms(int maxTerms);
 
     public abstract int maxTerms();
+
+    public abstract Builder type(String type);
+
+    public abstract String type();
 
     public abstract Builder separateChangeSubIndexes(boolean separate);
 
@@ -104,6 +116,9 @@ public abstract class IndexConfig {
    *     for performance reasons.
    */
   public abstract int maxTerms();
+
+  /** @return index type. */
+  public abstract String type();
 
   /**
    * @return whether different subsets of changes may be stored in different physical sub-indexes.

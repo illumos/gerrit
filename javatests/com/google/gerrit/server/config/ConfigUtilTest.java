@@ -15,13 +15,13 @@
 package com.google.gerrit.server.config;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.gerrit.truth.ConfigSubject.assertThat;
 import static java.util.concurrent.TimeUnit.DAYS;
 import static java.util.concurrent.TimeUnit.HOURS;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.MINUTES;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
-import com.google.gerrit.extensions.client.Theme;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -47,8 +47,6 @@ public class ConfigUtilTest {
     public String s;
     public String sd;
     public String nd;
-    public Theme t;
-    public Theme td;
     public List<String> list;
     public Map<String, String> map;
 
@@ -66,8 +64,6 @@ public class ConfigUtilTest {
       i.s = "foo";
       i.sd = "bar";
       // i.nd = null; // Don't need to explicitly set it; it's null by default
-      i.t = Theme.DEFAULT;
-      i.td = Theme.DEFAULT;
       return i;
     }
   }
@@ -85,22 +81,21 @@ public class ConfigUtilTest {
     in.bb = true;
     in.bd = false;
     in.s = "baz";
-    in.t = Theme.MIDNIGHT;
 
     Config cfg = new Config();
     ConfigUtil.storeSection(cfg, SECT, SUB, in, d);
 
-    assertThat(cfg.getString(SECT, SUB, "CONSTANT")).isNull();
-    assertThat(cfg.getString(SECT, SUB, "missing")).isNull();
-    assertThat(cfg.getBoolean(SECT, SUB, "b", false)).isEqualTo(in.b);
-    assertThat(cfg.getBoolean(SECT, SUB, "bb", false)).isEqualTo(in.bb);
-    assertThat(cfg.getInt(SECT, SUB, "i", 0)).isEqualTo(0);
-    assertThat(cfg.getInt(SECT, SUB, "ii", 0)).isEqualTo(in.ii);
-    assertThat(cfg.getLong(SECT, SUB, "l", 0L)).isEqualTo(0L);
-    assertThat(cfg.getLong(SECT, SUB, "ll", 0L)).isEqualTo(in.ll);
-    assertThat(cfg.getString(SECT, SUB, "s")).isEqualTo(in.s);
-    assertThat(cfg.getString(SECT, SUB, "sd")).isNull();
-    assertThat(cfg.getString(SECT, SUB, "nd")).isNull();
+    assertThat(cfg).stringValue(SECT, SUB, "CONSTANT").isNull();
+    assertThat(cfg).stringValue(SECT, SUB, "missing").isNull();
+    assertThat(cfg).booleanValue(SECT, SUB, "b", false).isEqualTo(in.b);
+    assertThat(cfg).booleanValue(SECT, SUB, "bb", false).isEqualTo(in.bb);
+    assertThat(cfg).intValue(SECT, SUB, "i", 0).isEqualTo(0);
+    assertThat(cfg).intValue(SECT, SUB, "ii", 0).isEqualTo(in.ii);
+    assertThat(cfg).longValue(SECT, SUB, "l", 0L).isEqualTo(0L);
+    assertThat(cfg).longValue(SECT, SUB, "ll", 0L).isEqualTo(in.ll);
+    assertThat(cfg).stringValue(SECT, SUB, "s").isEqualTo(in.s);
+    assertThat(cfg).stringValue(SECT, SUB, "sd").isNull();
+    assertThat(cfg).stringValue(SECT, SUB, "nd").isNull();
 
     SectionInfo out = new SectionInfo();
     ConfigUtil.loadSection(cfg, SECT, SUB, out, d, null);
@@ -116,8 +111,6 @@ public class ConfigUtilTest {
     assertThat(out.s).isEqualTo(in.s);
     assertThat(out.sd).isEqualTo(d.sd);
     assertThat(out.nd).isNull();
-    assertThat(out.t).isEqualTo(in.t);
-    assertThat(out.td).isEqualTo(d.td);
   }
 
   @Test

@@ -17,29 +17,37 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-avatar',
+  /**
+   * @appliesMixin Gerrit.BaseUrlMixin
+   * @extends Polymer.Element
+   */
+  class GrAvatar extends Polymer.mixinBehaviors( [
+    Gerrit.BaseUrlBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-avatar'; }
 
-    properties: {
-      account: {
-        type: Object,
-        observer: '_accountChanged',
-      },
-      imageSize: {
-        type: Number,
-        value: 16,
-      },
-      _hasAvatars: {
-        type: Boolean,
-        value: false,
-      },
-    },
+    static get properties() {
+      return {
+        account: {
+          type: Object,
+          observer: '_accountChanged',
+        },
+        imageSize: {
+          type: Number,
+          value: 16,
+        },
+        _hasAvatars: {
+          type: Boolean,
+          value: false,
+        },
+      };
+    }
 
-    behaviors: [
-      Gerrit.BaseUrlBehavior,
-    ],
-
+    /** @override */
     attached() {
+      super.attached();
       Promise.all([
         this._getConfig(),
         Gerrit.awaitPluginsLoaded(),
@@ -48,15 +56,15 @@
 
         this._updateAvatarURL();
       });
-    },
+    }
 
     _getConfig() {
       return this.$.restAPI.getConfig();
-    },
+    }
 
     _accountChanged(account) {
       this._updateAvatarURL();
-    },
+    }
 
     _updateAvatarURL() {
       if (!this._hasAvatars || !this.account) {
@@ -69,12 +77,12 @@
       if (url) {
         this.style.backgroundImage = 'url("' + url + '")';
       }
-    },
+    }
 
     _getAccounts(account) {
       return account._account_id || account.email || account.username ||
           account.name;
-    },
+    }
 
     _buildAvatarURL(account) {
       if (!account) { return ''; }
@@ -87,6 +95,8 @@
       return this.getBaseUrl() + '/accounts/' +
         encodeURIComponent(this._getAccounts(account)) +
         '/avatar?s=' + this.imageSize;
-    },
-  });
+    }
+  }
+
+  customElements.define(GrAvatar.is, GrAvatar);
 })();

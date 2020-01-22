@@ -15,8 +15,6 @@
 package com.google.gerrit.server.restapi.change;
 
 import com.google.common.base.MoreObjects;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Lists;
 import com.google.gerrit.common.data.SubmitRecord;
 import com.google.gerrit.extensions.common.AccountInfo;
 import com.google.gerrit.extensions.common.TestSubmitRuleInfo;
@@ -24,32 +22,26 @@ import com.google.gerrit.extensions.common.TestSubmitRuleInput;
 import com.google.gerrit.extensions.common.TestSubmitRuleInput.Filters;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestModifyView;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.account.AccountLoader;
 import com.google.gerrit.server.change.RevisionResource;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectState;
-import com.google.gerrit.server.project.SubmitRuleOptions;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gerrit.server.rules.DefaultSubmitRule;
+import com.google.gerrit.server.rules.PrologOptions;
 import com.google.gerrit.server.rules.PrologRule;
 import com.google.gerrit.server.rules.RulesCache;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import java.util.LinkedHashMap;
-import java.util.List;
 import org.kohsuke.args4j.Option;
 
 public class TestSubmitRule implements RestModifyView<RevisionResource, TestSubmitRuleInput> {
-  private final Provider<ReviewDb> db;
   private final ChangeData.Factory changeDataFactory;
   private final RulesCache rules;
   private final AccountLoader.Factory accountInfoFactory;
   private final ProjectCache projectCache;
-  private final DefaultSubmitRule defaultSubmitRule;
   private final PrologRule prologRule;
 
   @Option(name = "--filters", usage = "impact of filters in parent projects")
@@ -57,62 +49,45 @@ public class TestSubmitRule implements RestModifyView<RevisionResource, TestSubm
 
   @Inject
   TestSubmitRule(
-      Provider<ReviewDb> db,
       ChangeData.Factory changeDataFactory,
       RulesCache rules,
       AccountLoader.Factory infoFactory,
       ProjectCache projectCache,
-      DefaultSubmitRule defaultSubmitRule,
       PrologRule prologRule) {
-    this.db = db;
     this.changeDataFactory = changeDataFactory;
     this.rules = rules;
     this.accountInfoFactory = infoFactory;
     this.projectCache = projectCache;
-    this.defaultSubmitRule = defaultSubmitRule;
     this.prologRule = prologRule;
   }
 
   @Override
-  public List<TestSubmitRuleInfo> apply(RevisionResource rsrc, TestSubmitRuleInput input)
-      throws AuthException, OrmException, PermissionBackendException, BadRequestException {
+  public Response<TestSubmitRuleInfo> apply(RevisionResource rsrc, TestSubmitRuleInput input)
+      throws AuthException, PermissionBackendException, BadRequestException {
     if (input == null) {
       input = new TestSubmitRuleInput();
     }
-    if (input.rule != null && !rules.isProjectRulesEnabled()) {
+    if (input.rule == null) {
+      throw new BadRequestException("rule is required");
+    }
+    if (!rules.isProjectRulesEnabled()) {
       throw new AuthException("project rules are disabled");
     }
     input.filters = MoreObjects.firstNonNull(input.filters, filters);
-
-    SubmitRuleOptions opts =
-        SubmitRuleOptions.builder()
-            .skipFilters(input.filters == Filters.SKIP)
-            .rule(input.rule)
-            .logErrors(false)
-            .build();
 
     ProjectState projectState = projectCache.get(rsrc.getProject());
     if (projectState == null) {
       throw new BadRequestException("project not found");
     }
-    ChangeData cd = changeDataFactory.create(db.get(), rsrc.getNotes());
-    List<SubmitRecord> records;
-    if (projectState.hasPrologRules() || input.rule != null) {
-      records = ImmutableList.copyOf(prologRule.evaluate(cd, opts));
-    } else {
-      // No rules were provided as input and we have no rules.pl. This means we are supposed to run
-      // the default rules. Nowadays, the default rules are implemented in Java, not Prolog.
-      // Therefore, we call the DefaultRuleEvaluator instead.
-      records = ImmutableList.copyOf(defaultSubmitRule.evaluate(cd, opts));
-    }
+    ChangeData cd = changeDataFactory.create(rsrc.getNotes());
+    SubmitRecord record =
+        prologRule.evaluate(
+            cd, PrologOptions.dryRunOptions(input.rule, input.filters == Filters.SKIP));
 
-    List<TestSubmitRuleInfo> out = Lists.newArrayListWithCapacity(records.size());
     AccountLoader accounts = accountInfoFactory.create(true);
-    for (SubmitRecord r : records) {
-      out.add(newSubmitRuleInfo(r, accounts));
-    }
+    TestSubmitRuleInfo out = newSubmitRuleInfo(record, accounts);
     accounts.fill();
-    return out;
+    return Response.ok(out);
   }
 
   private static TestSubmitRuleInfo newSubmitRuleInfo(SubmitRecord r, AccountLoader accounts) {

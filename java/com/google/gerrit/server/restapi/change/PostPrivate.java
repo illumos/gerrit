@@ -17,59 +17,49 @@ package com.google.gerrit.server.restapi.change;
 import static com.google.gerrit.extensions.conditions.BooleanCondition.and;
 import static com.google.gerrit.extensions.conditions.BooleanCondition.or;
 
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.extensions.common.InputWithMessage;
 import com.google.gerrit.extensions.conditions.BooleanCondition;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
+import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.extensions.webui.UiAction;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.server.ReviewDb;
-import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.change.SetPrivateOp;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.update.BatchUpdate;
-import com.google.gerrit.server.update.RetryHelper;
-import com.google.gerrit.server.update.RetryingRestModifyView;
 import com.google.gerrit.server.update.UpdateException;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import org.eclipse.jgit.lib.Config;
 
 @Singleton
 public class PostPrivate
-    extends RetryingRestModifyView<ChangeResource, SetPrivateOp.Input, Response<String>>
-    implements UiAction<ChangeResource> {
-  private final ChangeMessagesUtil cmUtil;
-  private final Provider<ReviewDb> dbProvider;
+    implements RestModifyView<ChangeResource, InputWithMessage>, UiAction<ChangeResource> {
   private final PermissionBackend permissionBackend;
+  private final BatchUpdate.Factory updateFactory;
   private final SetPrivateOp.Factory setPrivateOpFactory;
   private final boolean disablePrivateChanges;
 
   @Inject
   PostPrivate(
-      Provider<ReviewDb> dbProvider,
-      RetryHelper retryHelper,
-      ChangeMessagesUtil cmUtil,
       PermissionBackend permissionBackend,
+      BatchUpdate.Factory updateFactory,
       SetPrivateOp.Factory setPrivateOpFactory,
       @GerritServerConfig Config config) {
-    super(retryHelper);
-    this.dbProvider = dbProvider;
-    this.cmUtil = cmUtil;
     this.permissionBackend = permissionBackend;
+    this.updateFactory = updateFactory;
     this.setPrivateOpFactory = setPrivateOpFactory;
     this.disablePrivateChanges = config.getBoolean("change", null, "disablePrivateChanges", false);
   }
 
   @Override
-  public Response<String> applyImpl(
-      BatchUpdate.Factory updateFactory, ChangeResource rsrc, SetPrivateOp.Input input)
+  public Response<String> apply(ChangeResource rsrc, InputWithMessage input)
       throws RestApiException, UpdateException {
     if (disablePrivateChanges) {
       throw new MethodNotAllowedException("private changes are disabled");
@@ -80,17 +70,16 @@ public class PostPrivate
     }
 
     if (rsrc.getChange().isPrivate()) {
-      return Response.ok("");
+      return Response.ok();
     }
 
-    SetPrivateOp op = setPrivateOpFactory.create(cmUtil, true, input);
+    SetPrivateOp op = setPrivateOpFactory.create(true, input);
     try (BatchUpdate u =
-        updateFactory.create(
-            dbProvider.get(), rsrc.getProject(), rsrc.getUser(), TimeUtil.nowTs())) {
+        updateFactory.create(rsrc.getProject(), rsrc.getUser(), TimeUtil.nowTs())) {
       u.addOp(rsrc.getId(), op).execute();
     }
 
-    return Response.created("");
+    return Response.created();
   }
 
   @Override
@@ -99,13 +88,16 @@ public class PostPrivate
     return new UiAction.Description()
         .setLabel("Mark private")
         .setTitle("Mark change as private")
-        .setVisible(and(!disablePrivateChanges && !change.isPrivate(), canSetPrivate(rsrc)));
+        .setVisible(
+            and(
+                !disablePrivateChanges && !change.isPrivate() && change.isNew(),
+                canSetPrivate(rsrc)));
   }
 
   private BooleanCondition canSetPrivate(ChangeResource rsrc) {
     PermissionBackend.WithUser user = permissionBackend.user(rsrc.getUser());
     return or(
-        rsrc.isUserOwner() && rsrc.getChange().getStatus() != Change.Status.MERGED,
+        rsrc.isUserOwner() && !rsrc.getChange().isMerged(),
         user.testCond(GlobalPermission.ADMINISTRATE_SERVER));
   }
 }

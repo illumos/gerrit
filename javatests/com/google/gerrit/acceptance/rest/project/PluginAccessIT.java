@@ -26,15 +26,21 @@ import com.google.gerrit.extensions.api.access.PermissionRuleInfo;
 import com.google.gerrit.extensions.api.access.ProjectAccessInfo;
 import com.google.gerrit.extensions.api.access.ProjectAccessInput;
 import com.google.gerrit.extensions.config.CapabilityDefinition;
+import com.google.gerrit.extensions.config.PluginProjectPermissionDefinition;
 import com.google.gerrit.server.group.SystemGroupBackend;
+import com.google.gerrit.server.permissions.PluginPermissionsUtil;
 import com.google.inject.AbstractModule;
+import com.google.inject.Inject;
 import com.google.inject.Module;
+import java.util.Set;
 import org.junit.Test;
 
-public class PluginAccessIT extends AbstractDaemonTest {
+public final class PluginAccessIT extends AbstractDaemonTest {
+  private static final String TEST_PLUGIN_NAME = "gerrit";
+  private static final String TEST_PLUGIN_CAPABILITY = "aPluginCapability";
+  private static final String TEST_PLUGIN_PROJECT_PERMISSION = "aPluginProjectPermission";
 
-  private static final String CORE_PLUGIN_PREFIX = "gerrit-";
-  private static final String PLUGIN_CAPABILITY = "printHello";
+  @Inject PluginPermissionsUtil pluginPermissionsUtil;
 
   @Override
   public Module createModule() {
@@ -42,12 +48,21 @@ public class PluginAccessIT extends AbstractDaemonTest {
       @Override
       protected void configure() {
         bind(CapabilityDefinition.class)
-            .annotatedWith(Exports.named(PLUGIN_CAPABILITY))
+            .annotatedWith(Exports.named(TEST_PLUGIN_CAPABILITY))
             .toInstance(
                 new CapabilityDefinition() {
                   @Override
                   public String getDescription() {
-                    return "Print Hello";
+                    return "A Plugin Capability";
+                  }
+                });
+        bind(PluginProjectPermissionDefinition.class)
+            .annotatedWith(Exports.named(TEST_PLUGIN_PROJECT_PERMISSION))
+            .toInstance(
+                new PluginProjectPermissionDefinition() {
+                  @Override
+                  public String getDescription() {
+                    return "A Plugin Project Permission";
                   }
                 });
       }
@@ -55,24 +70,47 @@ public class PluginAccessIT extends AbstractDaemonTest {
   }
 
   @Test
-  public void addPluginCapability() throws Exception {
-    ProjectAccessInput accessInput = new ProjectAccessInput();
-    AccessSectionInfo accessSectionInfo = new AccessSectionInfo();
-    PermissionInfo email = new PermissionInfo(null, null);
-    PermissionRuleInfo pri = new PermissionRuleInfo(PermissionRuleInfo.Action.ALLOW, false);
+  public void setAccessAddPluginCapabilitySucceed() throws Exception {
+    String pluginCapability = TEST_PLUGIN_NAME + "-" + TEST_PLUGIN_CAPABILITY;
+    ProjectAccessInput accessInput =
+        createAccessInput(AccessSection.GLOBAL_CAPABILITIES, pluginCapability);
 
-    email.rules = ImmutableMap.of(SystemGroupBackend.REGISTERED_USERS.get(), pri);
-    accessSectionInfo.permissions = ImmutableMap.of(CORE_PLUGIN_PREFIX + PLUGIN_CAPABILITY, email);
-    accessInput.add = ImmutableMap.of(AccessSection.GLOBAL_CAPABILITIES, accessSectionInfo);
-
-    ProjectAccessInfo updatedAccessSectionInfo =
+    ProjectAccessInfo projectAccessInfo =
         gApi.projects().name(allProjects.get()).access(accessInput);
-    assertThat(
-            updatedAccessSectionInfo
-                .local
-                .get(AccessSection.GLOBAL_CAPABILITIES)
-                .permissions
-                .keySet())
-        .containsAllIn(accessSectionInfo.permissions.keySet());
+
+    Set<String> capabilities =
+        projectAccessInfo.local.get(AccessSection.GLOBAL_CAPABILITIES).permissions.keySet();
+    assertThat(capabilities).contains(pluginCapability);
+    // Verifies the plugin defined capability could be listed.
+    assertThat(pluginPermissionsUtil.collectPluginCapabilities()).containsKey(pluginCapability);
+  }
+
+  @Test
+  public void setAccessAddPluginProjectPermissionSucceed() throws Exception {
+    String pluginProjectPermission =
+        "plugin-" + TEST_PLUGIN_NAME + "-" + TEST_PLUGIN_PROJECT_PERMISSION;
+    String accessSection = "refs/heads/plugin-permission";
+    ProjectAccessInput accessInput = createAccessInput(accessSection, pluginProjectPermission);
+
+    ProjectAccessInfo projectAccessInfo =
+        gApi.projects().name(allProjects.get()).access(accessInput);
+
+    Set<String> permissions = projectAccessInfo.local.get(accessSection).permissions.keySet();
+    assertThat(permissions).contains(pluginProjectPermission);
+    // Verifies the plugin defined capability could be listed.
+    assertThat(pluginPermissionsUtil.collectPluginProjectPermissions())
+        .containsKey(pluginProjectPermission);
+  }
+
+  private static ProjectAccessInput createAccessInput(String accessSection, String permissionName) {
+    ProjectAccessInput accessInput = new ProjectAccessInput();
+    PermissionRuleInfo ruleInfo = new PermissionRuleInfo(PermissionRuleInfo.Action.ALLOW, false);
+    PermissionInfo email = new PermissionInfo(null, null);
+    email.rules = ImmutableMap.of(SystemGroupBackend.REGISTERED_USERS.get(), ruleInfo);
+    AccessSectionInfo accessSectionInfo = new AccessSectionInfo();
+    accessSectionInfo.permissions = ImmutableMap.of(permissionName, email);
+    accessInput.add = ImmutableMap.of(accessSection, accessSectionInfo);
+
+    return accessInput;
   }
 }

@@ -1,3 +1,4 @@
+:linkattrs:
 = Gerrit Code Review - Accounts
 
 == Overview
@@ -143,7 +144,7 @@ Stores the link:#project-watches[project watches] of the account.
 
 In addition it contains an
 link:https://en.wikibooks.org/wiki/OpenSSH/Client_Configuration_Files#.7E.2F.ssh.2Fauthorized_keys[
-authorized_keys] file with the link:#ssh-keys[SSH keys] of the account.
+authorized_keys,role=external,window=_blank] file with the link:#ssh-keys[SSH keys] of the account.
 
 [[account-properties]]
 === Account Properties
@@ -185,8 +186,6 @@ link:intro-user.html#preferences[general],
 link:user-review-ui.html#diff-preferences[diff] and edit preferences:
 
 ----
-[general]
-  showSiteHeader = false
 [diff]
   hideTopMenu = true
 [edit]
@@ -258,7 +257,7 @@ matches the change and the event.
 SSH keys are stored in the user branch in an `authorized_keys` file,
 which is the
 link:https://en.wikibooks.org/wiki/OpenSSH/Client_Configuration_Files#.7E.2F.ssh.2Fauthorized_keys[
-standard OpenSSH file format] for storing SSH keys:
+standard OpenSSH file format,role=external,window=_blank] for storing SSH keys:
 
 ----
 ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAAgQCgug5VyMXQGnem2H1KVC4/HcRcD4zzBqSuJBRWVonSSoz3RoAZ7bWXCVVGwchtXwUURD689wFYdiPecOrWOUgeeyRq754YWRhU+W28vf8IZixgjCmiBhaL2gt3wff6pP+NXJpTSA4aeWE5DfNK5tZlxlSxqkKOS8JRSUeNQov5Tw== john.doe@example.com
@@ -412,10 +411,10 @@ stored in a local H2 database, but there is an extension point that
 allows to plug in alternate implementations for storing the reviewed
 flags. To replace the storage for reviewed flags a plugin needs to
 implement the link:dev-plugins.html#account-patch-review-store[
-AccountPatchReviewStore] interface. E.g. to support a multi-master
-setup where reviewed flags should be replicated between the master
-nodes one could implement a store for the reviewed flags that is
-based on MySQL with replication.
+AccountPatchReviewStore] interface. E.g. to support a cluster setup with
+multiple primary servers handling write operations where reviewed flags should
+be replicated between the primary nodes one could implement a store for the
+reviewed flags that is based on MySQL with replication.
 
 [[account-sequence]]
 == Account Sequence
@@ -443,7 +442,7 @@ repository must be replicated:
 * `refs/meta/external-ids` (external IDs)
 * `refs/starred-changes/*` (star labels)
 * `refs/sequences/accounts` (account sequence numbers, not needed for Gerrit
-  slaves)
+  replicas)
 
 GERRIT
 ------

@@ -15,17 +15,20 @@
 package com.google.gerrit.acceptance.git;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static java.util.stream.Collectors.toList;
 
 import com.google.common.collect.Iterables;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
-import com.google.gerrit.common.Nullable;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.common.data.Permission;
 import com.google.gerrit.common.data.SubscribeSection;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.client.SubmitType;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.project.ProjectConfig;
+import com.google.inject.Inject;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.StreamSupport;
@@ -53,8 +56,16 @@ import org.eclipse.jgit.transport.PushResult;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.RemoteRefUpdate;
 import org.eclipse.jgit.transport.RemoteRefUpdate.Status;
+import org.junit.Before;
 
 public abstract class AbstractSubmoduleSubscription extends AbstractDaemonTest {
+
+  @Inject private ProjectOperations projectOperations;
+
+  protected TestRepository<?> superRepo;
+  protected Project.NameKey superKey;
+  protected TestRepository<?> subRepo;
+  protected Project.NameKey subKey;
 
   protected SubmitType getSubmitType() {
     return cfg.getEnum("project", null, "submitType", SubmitType.MERGE_IF_NECESSARY);
@@ -95,33 +106,30 @@ public abstract class AbstractSubmoduleSubscription extends AbstractDaemonTest {
     return cfg;
   }
 
-  protected TestRepository<?> createProjectWithPush(
-      String name,
-      @Nullable Project.NameKey parent,
-      boolean createEmptyCommit,
-      SubmitType submitType)
-      throws Exception {
-    Project.NameKey project = createProject(name, parent, createEmptyCommit, submitType);
-    grant(project, "refs/heads/*", Permission.PUSH);
-    grant(project, "refs/for/refs/heads/*", Permission.SUBMIT);
-    return cloneProject(project);
+  protected void grantPush(Project.NameKey project) throws Exception {
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.PUSH).ref("refs/heads/*").group(adminGroupUuid()))
+        .add(allow(Permission.SUBMIT).ref("refs/for/refs/heads/*").group(adminGroupUuid()))
+        .update();
   }
 
-  protected TestRepository<?> createProjectWithPush(String name, @Nullable Project.NameKey parent)
-      throws Exception {
-    return createProjectWithPush(name, parent, true, getSubmitType());
-  }
-
-  protected TestRepository<?> createProjectWithPush(String name, boolean createEmptyCommit)
-      throws Exception {
-    return createProjectWithPush(name, null, createEmptyCommit, getSubmitType());
-  }
-
-  protected TestRepository<?> createProjectWithPush(String name) throws Exception {
-    return createProjectWithPush(name, null, true, getSubmitType());
+  protected Project.NameKey createProjectForPush(SubmitType submitType) throws Exception {
+    Project.NameKey project = projectOperations.newProject().submitType(submitType).create();
+    grantPush(project);
+    return project;
   }
 
   private static AtomicInteger contentCounter = new AtomicInteger(0);
+
+  @Before
+  public void setUp() throws Exception {
+    superKey = createProjectForPush(getSubmitType());
+    subKey = createProjectForPush(getSubmitType());
+    superRepo = cloneProject(superKey);
+    subRepo = cloneProject(subKey);
+  }
 
   protected ObjectId pushChangeTo(
       TestRepository<?> repo, String ref, String file, String content, String message, String topic)
@@ -131,7 +139,7 @@ public abstract class AbstractSubmoduleSubscription extends AbstractDaemonTest {
 
     String pushedRef = ref;
     if (!topic.isEmpty()) {
-      pushedRef += "/" + name(topic);
+      pushedRef += "%topic=" + name(topic);
     }
     String refspec = "HEAD:" + pushedRef;
 
@@ -181,19 +189,27 @@ public abstract class AbstractSubmoduleSubscription extends AbstractDaemonTest {
     return Iterables.getLast(res).getRemoteUpdate(remoteBranch).getNewObjectId();
   }
 
-  protected void allowSubmoduleSubscription(
-      String submodule, String subBranch, String superproject, String superBranch, boolean match)
+  protected void allowMatchingSubmoduleSubscription(
+      Project.NameKey submodule, String subBranch, Project.NameKey superproject, String superBranch)
       throws Exception {
-    Project.NameKey sub = new Project.NameKey(name(submodule));
-    Project.NameKey superName = new Project.NameKey(name(superproject));
-    try (MetaDataUpdate md = metaDataUpdateFactory.create(sub)) {
+    allowSubmoduleSubscription(submodule, subBranch, superproject, superBranch, true);
+  }
+
+  protected void allowSubmoduleSubscription(
+      Project.NameKey submodule,
+      String subBranch,
+      Project.NameKey superproject,
+      String superBranch,
+      boolean match)
+      throws Exception {
+    try (MetaDataUpdate md = metaDataUpdateFactory.create(submodule)) {
       md.setMessage("Added superproject subscription");
       SubscribeSection s;
-      ProjectConfig pc = ProjectConfig.read(md);
-      if (pc.getSubscribeSections().containsKey(superName)) {
-        s = pc.getSubscribeSections().get(superName);
+      ProjectConfig pc = projectConfigFactory.read(md);
+      if (pc.getSubscribeSections().containsKey(superproject)) {
+        s = pc.getSubscribeSections().get(superproject);
       } else {
-        s = new SubscribeSection(superName);
+        s = new SubscribeSection(superproject);
       }
       String refspec;
       if (superBranch == null) {
@@ -214,14 +230,11 @@ public abstract class AbstractSubmoduleSubscription extends AbstractDaemonTest {
     }
   }
 
-  protected void allowMatchingSubmoduleSubscription(
-      String submodule, String subBranch, String superproject, String superBranch)
-      throws Exception {
-    allowSubmoduleSubscription(submodule, subBranch, superproject, superBranch, true);
-  }
-
   protected void createSubmoduleSubscription(
-      TestRepository<?> repo, String branch, String subscribeToRepo, String subscribeToBranch)
+      TestRepository<?> repo,
+      String branch,
+      Project.NameKey subscribeToRepo,
+      String subscribeToBranch)
       throws Exception {
     Config config = new Config();
     prepareSubmoduleConfigEntry(config, subscribeToRepo, subscribeToBranch);
@@ -232,7 +245,7 @@ public abstract class AbstractSubmoduleSubscription extends AbstractDaemonTest {
       TestRepository<?> repo,
       String branch,
       String subscribeToRepoPrefix,
-      String subscribeToRepo,
+      Project.NameKey subscribeToRepo,
       String subscribeToBranch)
       throws Exception {
     Config config = new Config();
@@ -244,19 +257,18 @@ public abstract class AbstractSubmoduleSubscription extends AbstractDaemonTest {
   protected void prepareRelativeSubmoduleConfigEntry(
       Config config,
       String subscribeToRepoPrefix,
-      String subscribeToRepo,
+      Project.NameKey subscribeToRepo,
       String subscribeToBranch) {
-    subscribeToRepo = name(subscribeToRepo);
-    String url = subscribeToRepoPrefix + subscribeToRepo;
-    config.setString("submodule", subscribeToRepo, "path", subscribeToRepo);
-    config.setString("submodule", subscribeToRepo, "url", url);
+    String url = subscribeToRepoPrefix + subscribeToRepo.get();
+    config.setString("submodule", subscribeToRepo.get(), "path", subscribeToRepo.get());
+    config.setString("submodule", subscribeToRepo.get(), "url", url);
     if (subscribeToBranch != null) {
-      config.setString("submodule", subscribeToRepo, "branch", subscribeToBranch);
+      config.setString("submodule", subscribeToRepo.get(), "branch", subscribeToBranch);
     }
   }
 
   protected void prepareSubmoduleConfigEntry(
-      Config config, String subscribeToRepo, String subscribeToBranch) {
+      Config config, Project.NameKey subscribeToRepo, String subscribeToBranch) {
     // The submodule subscription module checks for gerrit.canonicalWebUrl to
     // detect if it's configured for automatic updates. It doesn't matter if
     // it serves from that URL.
@@ -264,17 +276,18 @@ public abstract class AbstractSubmoduleSubscription extends AbstractDaemonTest {
   }
 
   protected void prepareSubmoduleConfigEntry(
-      Config config, String subscribeToRepo, String subscribeToRepoPath, String subscribeToBranch) {
-    subscribeToRepo = name(subscribeToRepo);
-    subscribeToRepoPath = name(subscribeToRepoPath);
+      Config config,
+      Project.NameKey subscribeToRepo,
+      Project.NameKey subscribeToRepoPath,
+      String subscribeToBranch) {
     // The submodule subscription module checks for gerrit.canonicalWebUrl to
     // detect if it's configured for automatic updates. It doesn't matter if
     // it serves from that URL.
     String url = cfg.getString("gerrit", null, "canonicalWebUrl") + "/" + subscribeToRepo;
-    config.setString("submodule", subscribeToRepoPath, "path", subscribeToRepoPath);
-    config.setString("submodule", subscribeToRepoPath, "url", url);
+    config.setString("submodule", subscribeToRepoPath.get(), "path", subscribeToRepoPath.get());
+    config.setString("submodule", subscribeToRepoPath.get(), "url", url);
     if (subscribeToBranch != null) {
-      config.setString("submodule", subscribeToRepoPath, "branch", subscribeToBranch);
+      config.setString("submodule", subscribeToRepoPath.get(), "branch", subscribeToBranch);
     }
   }
 
@@ -298,12 +311,11 @@ public abstract class AbstractSubmoduleSubscription extends AbstractDaemonTest {
   protected void expectToHaveSubmoduleState(
       TestRepository<?> repo,
       String branch,
-      String submodule,
+      Project.NameKey submodule,
       TestRepository<?> subRepo,
       String subBranch)
       throws Exception {
 
-    submodule = name(submodule);
     ObjectId commitId =
         repo.git()
             .fetch()
@@ -326,16 +338,14 @@ public abstract class AbstractSubmoduleSubscription extends AbstractDaemonTest {
     rw.parseBody(c.getTree());
 
     RevTree tree = c.getTree();
-    RevObject actualId = repo.get(tree, submodule);
+    RevObject actualId = repo.get(tree, submodule.get());
 
     assertThat(actualId).isEqualTo(subHead);
   }
 
   protected void expectToHaveSubmoduleState(
-      TestRepository<?> repo, String branch, String submodule, ObjectId expectedId)
+      TestRepository<?> repo, String branch, Project.NameKey submodule, ObjectId expectedId)
       throws Exception {
-
-    submodule = name(submodule);
     ObjectId commitId =
         repo.git()
             .fetch()
@@ -349,7 +359,7 @@ public abstract class AbstractSubmoduleSubscription extends AbstractDaemonTest {
     rw.parseBody(c.getTree());
 
     RevTree tree = c.getTree();
-    RevObject actualId = repo.get(tree, submodule);
+    RevObject actualId = repo.get(tree, submodule.get());
 
     assertThat(actualId).isEqualTo(expectedId);
   }
@@ -408,10 +418,8 @@ public abstract class AbstractSubmoduleSubscription extends AbstractDaemonTest {
     assertThat(actualId).isEqualTo(expectedId);
   }
 
-  protected boolean hasSubmodule(TestRepository<?> repo, String branch, String submodule)
+  protected boolean hasSubmodule(TestRepository<?> repo, String branch, Project.NameKey submodule)
       throws Exception {
-
-    submodule = name(submodule);
     Ref branchTip =
         repo.git().fetch().setRemote("origin").call().getAdvertisedRef("refs/heads/" + branch);
     if (branchTip == null) {
@@ -426,7 +434,7 @@ public abstract class AbstractSubmoduleSubscription extends AbstractDaemonTest {
 
     RevTree tree = c.getTree();
     try {
-      repo.get(tree, submodule);
+      repo.get(tree, submodule.get());
       return true;
     } catch (AssertionError e) {
       return false;
@@ -446,7 +454,8 @@ public abstract class AbstractSubmoduleSubscription extends AbstractDaemonTest {
 
     RevWalk rw = repo.getRevWalk();
     RevCommit c = rw.parseCommit(commitId);
-    assertThat(c.getFullMessage()).isEqualTo(expectedMessage);
+    String msg = c.getFullMessage();
+    assertThat(msg).isEqualTo(expectedMessage);
   }
 
   protected PersonIdent getAuthor(TestRepository<?> repo, String branch) throws Exception {
@@ -463,14 +472,14 @@ public abstract class AbstractSubmoduleSubscription extends AbstractDaemonTest {
     return c.getAuthorIdent();
   }
 
-  protected void directUpdateSubmodule(String project, String refName, String path, AnyObjectId id)
+  protected void directUpdateSubmodule(
+      Project.NameKey project, String refName, Project.NameKey path, AnyObjectId id)
       throws Exception {
-    path = name(path);
-    try (Repository serverRepo = repoManager.openRepository(new Project.NameKey(name(project)));
+    try (Repository serverRepo = repoManager.openRepository(project);
         ObjectInserter ins = serverRepo.newObjectInserter();
         RevWalk rw = new RevWalk(serverRepo)) {
       Ref ref = serverRepo.exactRef(refName);
-      assertThat(ref).named(refName).isNotNull();
+      assertWithMessage(refName).that(ref).isNotNull();
       ObjectId oldCommitId = ref.getObjectId();
 
       DirCache dc = DirCache.newInCore();
@@ -480,7 +489,7 @@ public abstract class AbstractSubmoduleSubscription extends AbstractDaemonTest {
       b.finish();
       DirCacheEditor e = dc.editor();
       e.add(
-          new PathEdit(path) {
+          new PathEdit(path.get()) {
             @Override
             public void apply(DirCacheEntry ent) {
               ent.setFileMode(FileMode.GITLINK);

@@ -134,6 +134,11 @@ This endpoint decorator wraps the voting buttons in the reply dialog.
 === header-title
 This endpoint wraps the title-text in the application header.
 
+=== confirm-revert-change
+This endpoint is inside the confirm revert dialog. By default it displays a
+generic confirmation message regarding reverting the change. Plugins may add
+content to this message or replace it entirely.
+
 === confirm-submit-change
 This endpoint is inside the confirm submit dialog. By default it displays a
 generic confirmation message regarding submission of the change. Plugins may add
@@ -150,3 +155,52 @@ link:rest-api-changes.html#change-info[ChangeInfo]
 +
 The submit action, including the title and label, an instance of
 link:rest-api-changes.html#action-info[ActionInfo]
+
+== Dynamic Plugin endpoints
+
+The following endpoints are available to plugins.
+
+=== change-list-header
+The `change-list-header` extension point adds a header to the change list view.
+
+=== change-list-item-cell
+The `change-list-item-cell` extension point adds a cell to the change list item.
+
+In addition to default parameters, the following are available:
+
+* `change`
++
+current change of the row, an instance of
+link:rest-api-changes.html#change-info[ChangeInfo]
+
+=== change-view-tab-header
+The `change-view-tab-header` extension point adds a primary tab to the change
+view. This must be used in conjunction with `change-view-tab-content`.
+
+In addition to default parameters, the following are available:
+
+* `change`
++
+current change displayed, an instance of
+link:rest-api-changes.html#change-info[ChangeInfo]
+
+* `revision`
++
+current revision displayed, an instance of
+link:rest-api-changes.html#revision-info[RevisionInfo]
+
+=== change-view-tab-content
+The `change-view-tab-content` extension point adds primary tab content to
+the change view. This must be used in conjunction with `change-view-tab-header`.
+
+In addition to default parameters, the following are available:
+
+* `change`
++
+current change displayed, an instance of
+link:rest-api-changes.html#change-info[ChangeInfo]
+
+* `revision`
++
+current revision displayed, an instance of
+link:rest-api-changes.html#revision-info[RevisionInfo]

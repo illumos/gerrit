@@ -27,6 +27,7 @@ import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.ChildCollection;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.extensions.restapi.RestView;
 import com.google.gerrit.gpg.BouncyCastleUtil;
@@ -39,7 +40,6 @@ import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.account.AccountResource;
 import com.google.gerrit.server.account.externalids.ExternalId;
 import com.google.gerrit.server.account.externalids.ExternalIds;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -86,7 +86,7 @@ public class GpgKeys implements ChildCollection<AccountResource, GpgKey> {
 
   @Override
   public GpgKey parse(AccountResource parent, IdString id)
-      throws ResourceNotFoundException, PGPException, OrmException, IOException {
+      throws ResourceNotFoundException, PGPException, IOException {
     checkVisible(self, parent);
 
     ExternalId gpgKeyExtId = findGpgKey(id.get(), getGpgExtIds(parent));
@@ -141,8 +141,8 @@ public class GpgKeys implements ChildCollection<AccountResource, GpgKey> {
 
   public class ListGpgKeys implements RestReadView<AccountResource> {
     @Override
-    public Map<String, GpgKeyInfo> apply(AccountResource rsrc)
-        throws OrmException, PGPException, IOException, ResourceNotFoundException {
+    public Response<Map<String, GpgKeyInfo>> apply(AccountResource rsrc)
+        throws PGPException, IOException, ResourceNotFoundException {
       checkVisible(self, rsrc);
       Map<String, GpgKeyInfo> keys = new HashMap<>();
       try (PublicKeyStore store = storeProvider.get()) {
@@ -166,7 +166,7 @@ public class GpgKeys implements ChildCollection<AccountResource, GpgKey> {
           }
         }
       }
-      return keys;
+      return Response.ok(keys);
     }
   }
 
@@ -182,12 +182,13 @@ public class GpgKeys implements ChildCollection<AccountResource, GpgKey> {
     }
 
     @Override
-    public GpgKeyInfo apply(GpgKey rsrc) throws IOException {
+    public Response<GpgKeyInfo> apply(GpgKey rsrc) throws IOException {
       try (PublicKeyStore store = storeProvider.get()) {
-        return toJson(
-            rsrc.getKeyRing().getPublicKey(),
-            checkerFactory.create().setExpectedUser(rsrc.getUser()),
-            store);
+        return Response.ok(
+            toJson(
+                rsrc.getKeyRing().getPublicKey(),
+                checkerFactory.create().setExpectedUser(rsrc.getUser()),
+                store));
       }
     }
   }

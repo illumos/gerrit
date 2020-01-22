@@ -14,28 +14,20 @@
 
 package com.google.gerrit.server.patch;
 
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.PatchSetInfo;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RevId;
-import com.google.gerrit.reviewdb.client.UserIdentity;
-import com.google.gerrit.reviewdb.server.ReviewDb;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.PatchSetInfo;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.account.Emails;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.notedb.ChangeNotes;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.io.IOException;
-import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 import org.eclipse.jgit.errors.MissingObjectException;
-import org.eclipse.jgit.lib.ObjectId;
-import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
@@ -54,24 +46,23 @@ public class PatchSetInfoFactory {
     this.emails = emails;
   }
 
-  public PatchSetInfo get(RevWalk rw, RevCommit src, PatchSet.Id psi)
-      throws IOException, OrmException {
+  public PatchSetInfo get(RevWalk rw, RevCommit src, PatchSet.Id psi) throws IOException {
     rw.parseBody(src);
     PatchSetInfo info = new PatchSetInfo(psi);
     info.setSubject(src.getShortMessage());
     info.setMessage(src.getFullMessage());
-    info.setAuthor(toUserIdentity(src.getAuthorIdent()));
-    info.setCommitter(toUserIdentity(src.getCommitterIdent()));
-    info.setRevId(src.getName());
+    info.setAuthor(emails.toUserIdentity(src.getAuthorIdent()));
+    info.setCommitter(emails.toUserIdentity(src.getCommitterIdent()));
+    info.setCommitId(src);
     return info;
   }
 
-  public PatchSetInfo get(ReviewDb db, ChangeNotes notes, PatchSet.Id psId)
+  public PatchSetInfo get(ChangeNotes notes, PatchSet.Id psId)
       throws PatchSetInfoNotAvailableException {
     try {
-      PatchSet patchSet = psUtil.get(db, notes, psId);
+      PatchSet patchSet = psUtil.get(notes, psId);
       return get(notes.getProjectName(), patchSet);
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       throw new PatchSetInfoNotAvailableException(e);
     }
   }
@@ -80,32 +71,13 @@ public class PatchSetInfoFactory {
       throws PatchSetInfoNotAvailableException {
     try (Repository repo = repoManager.openRepository(project);
         RevWalk rw = new RevWalk(repo)) {
-      final RevCommit src = rw.parseCommit(ObjectId.fromString(patchSet.getRevision().get()));
-      PatchSetInfo info = get(rw, src, patchSet.getId());
+      RevCommit src = rw.parseCommit(patchSet.commitId());
+      PatchSetInfo info = get(rw, src, patchSet.id());
       info.setParents(toParentInfos(src.getParents(), rw));
       return info;
-    } catch (IOException | OrmException e) {
+    } catch (IOException | StorageException e) {
       throw new PatchSetInfoNotAvailableException(e);
     }
-  }
-
-  // TODO: The same method exists in EventFactory, find a common place for it
-  private UserIdentity toUserIdentity(PersonIdent who) throws IOException, OrmException {
-    final UserIdentity u = new UserIdentity();
-    u.setName(who.getName());
-    u.setEmail(who.getEmailAddress());
-    u.setDate(new Timestamp(who.getWhen().getTime()));
-    u.setTimeZone(who.getTimeZoneOffset());
-
-    // If only one account has access to this email address, select it
-    // as the identity of the user.
-    //
-    Set<Account.Id> a = emails.getAccountFor(u.getEmail());
-    if (a.size() == 1) {
-      u.setAccount(a.iterator().next());
-    }
-
-    return u;
   }
 
   private List<PatchSetInfo.ParentInfo> toParentInfos(RevCommit[] parents, RevWalk walk)
@@ -113,9 +85,8 @@ public class PatchSetInfoFactory {
     List<PatchSetInfo.ParentInfo> pInfos = new ArrayList<>(parents.length);
     for (RevCommit parent : parents) {
       walk.parseBody(parent);
-      RevId rev = new RevId(parent.getId().name());
       String msg = parent.getShortMessage();
-      pInfos.add(new PatchSetInfo.ParentInfo(rev, msg));
+      pInfos.add(new PatchSetInfo.ParentInfo(parent, msg));
     }
     return pInfos;
   }

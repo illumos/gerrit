@@ -14,23 +14,19 @@
 
 package com.google.gerrit.server.restapi.change;
 
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.ChildCollection;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.RestView;
-import com.google.gerrit.extensions.restapi.TopLevelResource;
 import com.google.gerrit.mail.Address;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.ApprovalsUtil;
+import com.google.gerrit.server.account.AccountResolver;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.change.ReviewerResource;
-import com.google.gerrit.server.restapi.account.AccountsCollection;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import java.util.Collection;
@@ -39,26 +35,23 @@ import org.eclipse.jgit.errors.ConfigInvalidException;
 @Singleton
 public class Reviewers implements ChildCollection<ChangeResource, ReviewerResource> {
   private final DynamicMap<RestView<ReviewerResource>> views;
-  private final Provider<ReviewDb> dbProvider;
   private final ApprovalsUtil approvalsUtil;
-  private final AccountsCollection accounts;
   private final ReviewerResource.Factory resourceFactory;
   private final ListReviewers list;
+  private final AccountResolver accountResolver;
 
   @Inject
   Reviewers(
-      Provider<ReviewDb> dbProvider,
       ApprovalsUtil approvalsUtil,
-      AccountsCollection accounts,
       ReviewerResource.Factory resourceFactory,
       DynamicMap<RestView<ReviewerResource>> views,
-      ListReviewers list) {
-    this.dbProvider = dbProvider;
+      ListReviewers list,
+      AccountResolver accountResolver) {
     this.approvalsUtil = approvalsUtil;
-    this.accounts = accounts;
     this.resourceFactory = resourceFactory;
     this.views = views;
     this.list = list;
+    this.accountResolver = accountResolver;
   }
 
   @Override
@@ -73,24 +66,19 @@ public class Reviewers implements ChildCollection<ChangeResource, ReviewerResour
 
   @Override
   public ReviewerResource parse(ChangeResource rsrc, IdString id)
-      throws OrmException, ResourceNotFoundException, AuthException, IOException,
-          ConfigInvalidException {
-    Address address = Address.tryParse(id.get());
-
-    Account.Id accountId = null;
+      throws ResourceNotFoundException, AuthException, IOException, ConfigInvalidException {
     try {
-      accountId = accounts.parse(TopLevelResource.INSTANCE, id).getUser().getAccountId();
-    } catch (ResourceNotFoundException e) {
-      if (address == null) {
-        throw e;
+
+      AccountResolver.Result result = accountResolver.resolveIgnoreVisibility(id.get());
+      if (fetchAccountIds(rsrc).contains(result.asUniqueUser().getAccountId())) {
+        return resourceFactory.create(rsrc, result.asUniqueUser().getAccountId());
+      }
+    } catch (AccountResolver.UnresolvableAccountException e) {
+      if (e.isSelf()) {
+        throw new AuthException(e.getMessage(), e);
       }
     }
-    // See if the id exists as a reviewer for this change
-    if (accountId != null && fetchAccountIds(rsrc).contains(accountId)) {
-      return resourceFactory.create(rsrc, accountId);
-    }
-
-    // See if the address exists as a reviewer on the change
+    Address address = Address.tryParse(id.get());
     if (address != null && rsrc.getNotes().getReviewersByEmail().all().contains(address)) {
       return new ReviewerResource(rsrc, address);
     }
@@ -98,7 +86,7 @@ public class Reviewers implements ChildCollection<ChangeResource, ReviewerResour
     throw new ResourceNotFoundException(id);
   }
 
-  private Collection<Account.Id> fetchAccountIds(ChangeResource rsrc) throws OrmException {
-    return approvalsUtil.getReviewers(dbProvider.get(), rsrc.getNotes()).all();
+  private Collection<Account.Id> fetchAccountIds(ChangeResource rsrc) {
+    return approvalsUtil.getReviewers(rsrc.getNotes()).all();
   }
 }

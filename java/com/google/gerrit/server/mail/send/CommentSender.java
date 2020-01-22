@@ -17,20 +17,21 @@ package com.google.gerrit.server.mail.send;
 import static java.util.stream.Collectors.toList;
 
 import com.google.common.base.Strings;
-import com.google.common.collect.Ordering;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.data.FilenameComparator;
-import com.google.gerrit.common.errors.EmailException;
-import com.google.gerrit.common.errors.NoSuchEntityException;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Comment;
+import com.google.gerrit.entities.KeyUtil;
+import com.google.gerrit.entities.Patch;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RobotComment;
+import com.google.gerrit.exceptions.EmailException;
+import com.google.gerrit.exceptions.NoSuchEntityException;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.mail.MailHeader;
 import com.google.gerrit.mail.MailProcessingUtil;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Comment;
-import com.google.gerrit.reviewdb.client.Patch;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RobotComment;
 import com.google.gerrit.server.CommentsUtil;
 import com.google.gerrit.server.account.ProjectWatches.NotifyType;
 import com.google.gerrit.server.config.GerritServerConfig;
@@ -40,8 +41,6 @@ import com.google.gerrit.server.patch.PatchList;
 import com.google.gerrit.server.patch.PatchListNotAvailableException;
 import com.google.gerrit.server.patch.PatchListObjectTooLargeException;
 import com.google.gerrit.server.util.LabelVote;
-import com.google.gwtorm.client.KeyUtil;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 import java.io.IOException;
@@ -55,7 +54,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import org.apache.james.mime4j.dom.field.FieldName;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.Repository;
@@ -65,7 +63,7 @@ public class CommentSender extends ReplyToChangeSender {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
   public interface Factory {
-    CommentSender create(Project.NameKey project, Change.Id id);
+    CommentSender create(Project.NameKey project, Change.Id changeId);
   }
 
   private class FileCommentGroup {
@@ -113,13 +111,12 @@ public class CommentSender extends ReplyToChangeSender {
 
   @Inject
   public CommentSender(
-      EmailArguments ea,
+      EmailArguments args,
       CommentsUtil commentsUtil,
       @GerritServerConfig Config cfg,
       @Assisted Project.NameKey project,
-      @Assisted Change.Id id)
-      throws OrmException {
-    super(ea, "comment", newChangeData(ea, project, id));
+      @Assisted Change.Id changeId) {
+    super(args, "comment", newChangeData(args, project, changeId));
     this.commentsUtil = commentsUtil;
     this.incomingEmailEnabled =
         cfg.getEnum("receiveemail", null, "protocol", Protocol.NONE).ordinal()
@@ -127,16 +124,8 @@ public class CommentSender extends ReplyToChangeSender {
     this.replyToAddress = cfg.getString("sendemail", null, "replyToAddress");
   }
 
-  public void setComments(List<Comment> comments) throws OrmException {
+  public void setComments(List<Comment> comments) {
     inlineComments = comments;
-
-    Set<String> paths = new HashSet<>();
-    for (Comment c : comments) {
-      if (!Patch.isMagic(c.key.filename)) {
-        paths.add(c.key.filename);
-      }
-    }
-    changeData.setCurrentFilePaths(Ordering.natural().sortedCopy(paths));
   }
 
   public void setPatchSetComment(String comment) {
@@ -151,10 +140,10 @@ public class CommentSender extends ReplyToChangeSender {
   protected void init() throws EmailException {
     super.init();
 
-    if (notify.compareTo(NotifyHandling.OWNER_REVIEWERS) >= 0) {
+    if (notify.handling().compareTo(NotifyHandling.OWNER_REVIEWERS) >= 0) {
       ccAllApprovals();
     }
-    if (notify.compareTo(NotifyHandling.ALL) >= 0) {
+    if (notify.handling().compareTo(NotifyHandling.ALL) >= 0) {
       bccStarredBy();
       includeWatchers(NotifyType.ALL_COMMENTS, !change.isWorkInProgress() && !change.isPrivate());
     }
@@ -313,8 +302,8 @@ public class CommentSender extends ReplyToChangeSender {
 
     Comment.Key key = new Comment.Key(child.parentUuid, child.key.filename, child.key.patchSetId);
     try {
-      return commentsUtil.getPublished(args.db.get(), changeData.notes(), key);
-    } catch (OrmException e) {
+      return commentsUtil.getPublished(changeData.notes(), key);
+    } catch (StorageException e) {
       logger.atWarning().log("Could not find the parent of this comment: %s", child);
       return Optional.empty();
     }

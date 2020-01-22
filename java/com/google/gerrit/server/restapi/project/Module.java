@@ -19,6 +19,7 @@ import static com.google.gerrit.server.project.ChildProjectResource.CHILD_PROJEC
 import static com.google.gerrit.server.project.CommitResource.COMMIT_KIND;
 import static com.google.gerrit.server.project.DashboardResource.DASHBOARD_KIND;
 import static com.google.gerrit.server.project.FileResource.FILE_KIND;
+import static com.google.gerrit.server.project.LabelResource.LABEL_KIND;
 import static com.google.gerrit.server.project.ProjectResource.PROJECT_KIND;
 import static com.google.gerrit.server.project.TagResource.TAG_KIND;
 
@@ -42,6 +43,7 @@ public class Module extends RestApiModule {
     DynamicMap.mapOf(binder(), FILE_KIND);
     DynamicMap.mapOf(binder(), COMMIT_KIND);
     DynamicMap.mapOf(binder(), TAG_KIND);
+    DynamicMap.mapOf(binder(), LABEL_KIND);
 
     DynamicSet.bind(binder(), GerritConfigListener.class).to(SetParent.class);
 
@@ -55,7 +57,6 @@ public class Module extends RestApiModule {
     get(PROJECT_KIND, "access").to(GetAccess.class);
     post(PROJECT_KIND, "access").to(SetAccess.class);
     put(PROJECT_KIND, "access:review").to(CreateAccessChange.class);
-    post(PROJECT_KIND, "check.access").to(CheckAccess.class);
     get(PROJECT_KIND, "check.access").to(CheckAccessReadView.class);
 
     post(PROJECT_KIND, "check").to(Check.class);
@@ -65,6 +66,13 @@ public class Module extends RestApiModule {
 
     child(PROJECT_KIND, "children").to(ChildProjectsCollection.class);
     get(CHILD_PROJECT_KIND).to(GetChildProject.class);
+
+    child(PROJECT_KIND, "labels").to(LabelsCollection.class);
+    create(LABEL_KIND).to(CreateLabel.class);
+    get(LABEL_KIND).to(GetLabel.class);
+    put(LABEL_KIND).to(SetLabel.class);
+    delete(LABEL_KIND).to(DeleteLabel.class);
+    postOnCollection(LABEL_KIND).to(PostLabels.class);
 
     get(PROJECT_KIND, "HEAD").to(GetHead.class);
     put(PROJECT_KIND, "HEAD").to(SetHead.class);

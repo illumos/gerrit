@@ -14,13 +14,11 @@
 
 package com.google.gerrit.pgm.init.api;
 
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.server.ReviewDb;
-import com.google.gerrit.server.Sequences;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.notedb.RepoSequence;
-import com.google.gwtorm.server.OrmException;
+import com.google.gerrit.server.notedb.Sequences;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 
@@ -35,16 +33,14 @@ public class SequencesOnInit {
     this.allUsersName = allUsersName;
   }
 
-  public int nextAccountId(ReviewDb db) throws OrmException {
-    @SuppressWarnings("deprecation")
-    RepoSequence.Seed accountSeed = db::nextAccountId;
+  public int nextAccountId() {
     RepoSequence accountSeq =
         new RepoSequence(
             repoManager,
             GitReferenceUpdated.DISABLED,
-            new Project.NameKey(allUsersName.get()),
+            Project.nameKey(allUsersName.get()),
             Sequences.NAME_ACCOUNTS,
-            accountSeed,
+            () -> Sequences.FIRST_ACCOUNT_ID,
             1);
     return accountSeq.next();
   }

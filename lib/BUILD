@@ -14,32 +14,18 @@ filegroup(
 )
 
 java_library(
-    name = "servlet-api-3_1",
+    name = "servlet-api",
     data = ["//lib:LICENSE-Apache2.0"],
     neverlink = 1,
     visibility = ["//visibility:public"],
-    exports = ["@servlet-api-3_1//jar"],
+    exports = ["@servlet-api//jar"],
 )
 
 java_library(
-    name = "servlet-api-3_1-without-neverlink",
+    name = "servlet-api-without-neverlink",
     data = ["//lib:LICENSE-Apache2.0"],
     visibility = ["//visibility:public"],
-    exports = ["@servlet-api-3_1//jar"],
-)
-
-java_library(
-    name = "gwtjsonrpc",
-    data = ["//lib:LICENSE-Apache2.0"],
-    visibility = ["//visibility:public"],
-    exports = ["@gwtjsonrpc//jar"],
-)
-
-java_library(
-    name = "gwtjsonrpc_src",
-    data = ["//lib:LICENSE-Apache2.0"],
-    visibility = ["//visibility:public"],
-    exports = ["@gwtjsonrpc//jar:src"],
+    exports = ["@servlet-api//jar"],
 )
 
 java_library(
@@ -50,17 +36,46 @@ java_library(
 )
 
 java_library(
-    name = "gwtorm-client",
-    data = ["//lib:LICENSE-Apache2.0"],
+    name = "jgit",
+    data = ["//lib:LICENSE-jgit"],
     visibility = ["//visibility:public"],
-    exports = ["@gwtorm-client//jar"],
+    exports = ["@jgit//org.eclipse.jgit:jgit"],
+    runtime_deps = [
+        ":javaewah",
+        "//lib/log:api",
+    ],
 )
 
 java_library(
-    name = "gwtorm-client_src",
+    name = "jgit-archive",
+    data = ["//lib:LICENSE-jgit"],
+    visibility = ["//visibility:public"],
+    exports = ["@jgit//org.eclipse.jgit.archive:jgit-archive"],
+    runtime_deps = [":jgit"],
+)
+
+java_library(
+    name = "jgit-junit",
+    testonly = True,
+    data = ["//lib:LICENSE-DO_NOT_DISTRIBUTE"],
+    visibility = ["//visibility:public"],
+    exports = ["@jgit//org.eclipse.jgit.junit:junit"],
+    runtime_deps = [":jgit"],
+)
+
+java_library(
+    name = "jgit-servlet",
+    data = ["//lib:LICENSE-jgit"],
+    visibility = ["//visibility:public"],
+    exports = ["@jgit//org.eclipse.jgit.http.server:jgit-servlet"],
+    runtime_deps = [":jgit"],
+)
+
+java_library(
+    name = "javaewah",
     data = ["//lib:LICENSE-Apache2.0"],
     visibility = ["//visibility:public"],
-    exports = ["@gwtorm-client//jar:src"],
+    exports = ["@javaewah//jar"],
 )
 
 java_library(
@@ -71,14 +86,10 @@ java_library(
 )
 
 java_library(
-    name = "gwtorm",
+    name = "guava-failureaccess",
+    data = ["//lib:LICENSE-Apache2.0"],
     visibility = ["//visibility:public"],
-    exports = [":gwtorm-client"],
-    runtime_deps = [
-        ":protobuf",
-        "//lib/antlr:java-runtime",
-        "//lib/ow2:ow2-asm",
-    ],
+    exports = ["@guava-failureaccess//jar"],
 )
 
 java_library(
@@ -93,6 +104,7 @@ java_library(
     data = ["//lib:LICENSE-Apache2.0"],
     visibility = ["//visibility:public"],
     exports = [
+        ":guava-failureaccess",
         ":j2objc",
         "@guava//jar",
     ],
@@ -473,20 +485,6 @@ java_library(
 )
 
 java_library(
-    name = "javassist",
-    data = ["//lib:LICENSE-DO_NOT_DISTRIBUTE"],
-    visibility = ["//visibility:public"],
-    exports = ["@javassist//jar"],
-)
-
-java_library(
-    name = "derby",
-    data = ["//lib:LICENSE-Apache2.0"],
-    visibility = ["//visibility:public"],
-    exports = ["@derby//jar"],
-)
-
-java_library(
     name = "soy",
     data = ["//lib:LICENSE-Apache2.0"],
     visibility = ["//visibility:public"],
@@ -524,10 +522,15 @@ java_library(
 )
 
 java_library(
-    name = "postgresql",
-    data = ["//lib:LICENSE-postgresql"],
-    visibility = ["//visibility:public"],
-    exports = ["@postgresql//jar"],
+    name = "javax-annotation",
+    data = ["//lib:LICENSE-DO_NOT_DISTRIBUTE"],
+    visibility = [
+        "//java/com/google/gerrit/acceptance:__pkg__",
+        "//java/com/google/gerrit/extensions:__pkg__",
+        "//java/com/google/gerrit/server:__pkg__",
+        "//plugins:__subpackages__",
+    ],
+    exports = ["@javax-annotation//jar"],
 )
 
 sh_test(

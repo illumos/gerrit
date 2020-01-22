@@ -18,11 +18,16 @@ import static com.google.common.base.Preconditions.checkArgument;
 
 import com.google.common.base.MoreObjects;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.server.git.LockFailureException;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.git.GitUpdateFailureException;
+import com.google.gerrit.git.LockFailureException;
+import com.google.gerrit.git.ObjectIds;
+import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.logging.TraceContext.TraceTimer;
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.IOException;
 import java.io.StringReader;
 import java.util.ArrayList;
@@ -109,7 +114,7 @@ public abstract class VersionedMetaData {
   /** @return revision of the metadata that was loaded. */
   @Nullable
   public ObjectId getRevision() {
-    return revision != null ? revision.copy() : null;
+    return ObjectIds.copyOrNull(revision);
   }
 
   /**
@@ -325,14 +330,7 @@ public abstract class VersionedMetaData {
         }
 
         if (update.insertChangeId()) {
-          ObjectId id =
-              ChangeIdUtil.computeChangeId(
-                  res,
-                  getRevision(),
-                  commit.getAuthor(),
-                  commit.getCommitter(),
-                  commit.getMessage());
-          commit.setMessage(ChangeIdUtil.insertId(commit.getMessage(), id));
+          commit.setMessage(ChangeIdUtil.insertId(commit.getMessage(), Change.generateChangeId()));
         }
 
         src = rw.parseCommit(inserter.insert(commit));
@@ -419,14 +417,7 @@ public abstract class VersionedMetaData {
             update.fireGitRefUpdatedEvent(ru);
             return revision;
           case LOCK_FAILURE:
-            throw new LockFailureException(
-                "Cannot update "
-                    + ru.getName()
-                    + " in "
-                    + db.getDirectory()
-                    + ": "
-                    + ru.getResult(),
-                ru);
+            throw new LockFailureException(errorMsg(ru, db.getDirectory()), ru);
           case FORCED:
           case IO_FAILURE:
           case NOT_ATTEMPTED:
@@ -437,16 +428,16 @@ public abstract class VersionedMetaData {
           case REJECTED_MISSING_OBJECT:
           case REJECTED_OTHER_REASON:
           default:
-            throw new IOException(
-                "Cannot update "
-                    + ru.getName()
-                    + " in "
-                    + db.getDirectory()
-                    + ": "
-                    + ru.getResult());
+            throw new GitUpdateFailureException(errorMsg(ru, db.getDirectory()), ru);
         }
       }
     };
+  }
+
+  private String errorMsg(RefUpdate ru, File location) {
+    return String.format(
+        "Cannot update %s in %s : %s (%s)",
+        ru.getName(), location, ru.getResult(), ru.getRefLogMessage());
   }
 
   protected DirCache readTree(RevTree tree)
@@ -461,7 +452,12 @@ public abstract class VersionedMetaData {
   }
 
   protected Config readConfig(String fileName) throws IOException, ConfigInvalidException {
-    Config rc = new Config();
+    return readConfig(fileName, null);
+  }
+
+  protected Config readConfig(String fileName, Config baseConfig)
+      throws IOException, ConfigInvalidException {
+    Config rc = new Config(baseConfig);
     String text = readUTF8(fileName);
     if (!text.isEmpty()) {
       try {
@@ -493,8 +489,13 @@ public abstract class VersionedMetaData {
 
     try (TraceTimer timer =
             TraceContext.newTimer(
-                "Read file '%s' from ref '%s' of project '%s' from revision '%s'",
-                fileName, getRefName(), projectName, revision.name());
+                "Read file",
+                Metadata.builder()
+                    .projectName(projectName.get())
+                    .noteDbRefName(getRefName())
+                    .revision(revision.name())
+                    .noteDbFilePath(fileName)
+                    .build());
         TreeWalk tw = TreeWalk.forPath(reader, fileName, revision.getTree())) {
       if (tw != null) {
         ObjectLoader obj = reader.open(tw.getObjectId(0), Constants.OBJ_BLOB);
@@ -569,7 +570,12 @@ public abstract class VersionedMetaData {
   protected void saveFile(String fileName, byte[] raw) throws IOException {
     try (TraceTimer timer =
         TraceContext.newTimer(
-            "Save file '%s' in ref '%s' of project '%s'", fileName, getRefName(), projectName)) {
+            "Save file",
+            Metadata.builder()
+                .projectName(projectName.get())
+                .noteDbRefName(getRefName())
+                .noteDbFilePath(fileName)
+                .build())) {
       DirCacheEditor editor = newTree.editor();
       if (raw != null && 0 < raw.length) {
         final ObjectId blobId = inserter.insert(Constants.OBJ_BLOB, raw);

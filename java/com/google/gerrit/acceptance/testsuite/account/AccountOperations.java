@@ -14,7 +14,7 @@
 
 package com.google.gerrit.acceptance.testsuite.account;
 
-import com.google.gerrit.reviewdb.client.Account;
+import com.google.gerrit.entities.Account;
 
 /**
  * An aggregation of operations on accounts for test purposes.
@@ -28,11 +28,11 @@ public interface AccountOperations {
 
   /**
    * Starts the fluent chain for a querying or modifying an account. Please see the methods of
-   * {@link MoreAccountOperations} for details on possible operations.
+   * {@link PerAccountOperations} for details on possible operations.
    *
    * @return an aggregation of operations on a specific account
    */
-  MoreAccountOperations account(Account.Id accountId);
+  PerAccountOperations account(Account.Id accountId);
 
   /**
    * Starts the fluent chain to create an account. The returned builder can be used to specify the
@@ -58,14 +58,14 @@ public interface AccountOperations {
   TestAccountCreation.Builder newAccount();
 
   /** An aggregation of methods on a specific account. */
-  interface MoreAccountOperations {
+  interface PerAccountOperations {
 
     /**
      * Checks whether the account exists.
      *
      * @return {@code true} if the account exists
      */
-    boolean exists() throws Exception;
+    boolean exists();
 
     /**
      * Retrieves the account.
@@ -76,7 +76,7 @@ public interface AccountOperations {
      *
      * @return the corresponding {@code TestAccount}
      */
-    TestAccount get() throws Exception;
+    TestAccount get();
 
     /**
      * Starts the fluent chain to update an account. The returned builder can be used to specify how

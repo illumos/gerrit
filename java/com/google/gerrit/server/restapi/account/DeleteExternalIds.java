@@ -33,7 +33,6 @@ import com.google.gerrit.server.account.externalids.ExternalIds;
 import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -45,6 +44,12 @@ import java.util.Optional;
 import java.util.function.Function;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 
+/**
+ * REST endpoint to delete external IDs from an account.
+ *
+ * <p>This REST endpoint handles {@code POST /accounts/<account-identifier>/external.ids:delete}
+ * requests.
+ */
 @Singleton
 public class DeleteExternalIds implements RestModifyView<AccountResource, List<String>> {
   private final PermissionBackend permissionBackend;
@@ -66,8 +71,7 @@ public class DeleteExternalIds implements RestModifyView<AccountResource, List<S
 
   @Override
   public Response<?> apply(AccountResource resource, List<String> extIds)
-      throws RestApiException, IOException, OrmException, ConfigInvalidException,
-          PermissionBackendException {
+      throws RestApiException, IOException, ConfigInvalidException, PermissionBackendException {
     if (!self.get().hasSameAccountId(resource.getUser())) {
       permissionBackend.currentUser().check(GlobalPermission.ACCESS_DATABASE);
     }

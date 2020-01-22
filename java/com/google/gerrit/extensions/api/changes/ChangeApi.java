@@ -14,9 +14,11 @@
 
 package com.google.gerrit.extensions.api.changes;
 
+import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.Sets;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.extensions.client.ListChangesOption;
+import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.extensions.common.AccountInfo;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.ChangeMessageInfo;
@@ -25,6 +27,7 @@ import com.google.gerrit.extensions.common.CommitMessageInput;
 import com.google.gerrit.extensions.common.EditInfo;
 import com.google.gerrit.extensions.common.MergePatchSetInput;
 import com.google.gerrit.extensions.common.PureRevertInfo;
+import com.google.gerrit.extensions.common.RevertSubmissionInfo;
 import com.google.gerrit.extensions.common.RobotCommentInfo;
 import com.google.gerrit.extensions.common.SuggestedReviewerInfo;
 import com.google.gerrit.extensions.restapi.NotImplementedException;
@@ -49,17 +52,21 @@ public interface ChangeApi {
    * @return API for accessing the revision.
    * @throws RestApiException if an error occurred.
    */
-  RevisionApi current() throws RestApiException;
+  default RevisionApi current() throws RestApiException {
+    return revision("current");
+  }
 
   /**
    * Look up a revision of a change by number.
    *
    * @see #current()
    */
-  RevisionApi revision(int id) throws RestApiException;
+  default RevisionApi revision(int id) throws RestApiException {
+    return revision(Integer.toString(id));
+  }
 
   /**
-   * Look up a revision of a change by commit SHA-1.
+   * Look up a revision of a change by commit SHA-1 or other supported revision string.
    *
    * @see #current()
    */
@@ -79,15 +86,23 @@ public interface ChangeApi {
    */
   ReviewerApi reviewer(String id) throws RestApiException;
 
-  void abandon() throws RestApiException;
+  default void abandon() throws RestApiException {
+    abandon(new AbandonInput());
+  }
 
   void abandon(AbandonInput in) throws RestApiException;
 
-  void restore() throws RestApiException;
+  default void restore() throws RestApiException {
+    restore(new RestoreInput());
+  }
 
   void restore(RestoreInput in) throws RestApiException;
 
-  void move(String destination) throws RestApiException;
+  default void move(String destination) throws RestApiException {
+    MoveInput in = new MoveInput();
+    in.destinationBranch = destination;
+    move(in);
+  }
 
   void move(MoveInput in) throws RestApiException;
 
@@ -136,7 +151,9 @@ public interface ChangeApi {
    *
    * @see Changes#id(int)
    */
-  ChangeApi revert() throws RestApiException;
+  default ChangeApi revert() throws RestApiException {
+    return revert(new RevertInput());
+  }
 
   /**
    * Create a new change that reverts this change.
@@ -145,13 +162,26 @@ public interface ChangeApi {
    */
   ChangeApi revert(RevertInput in) throws RestApiException;
 
+  default RevertSubmissionInfo revertSubmission() throws RestApiException {
+    return revertSubmission(new RevertInput());
+  }
+
+  RevertSubmissionInfo revertSubmission(RevertInput in) throws RestApiException;
+
   /** Create a merge patch set for the change. */
   ChangeInfo createMergePatchSet(MergePatchSetInput in) throws RestApiException;
 
-  List<ChangeInfo> submittedTogether() throws RestApiException;
+  default List<ChangeInfo> submittedTogether() throws RestApiException {
+    SubmittedTogetherInfo info =
+        submittedTogether(
+            EnumSet.noneOf(ListChangesOption.class), EnumSet.noneOf(SubmittedTogetherOption.class));
+    return info.changes;
+  }
 
-  SubmittedTogetherInfo submittedTogether(EnumSet<SubmittedTogetherOption> options)
-      throws RestApiException;
+  default SubmittedTogetherInfo submittedTogether(EnumSet<SubmittedTogetherOption> options)
+      throws RestApiException {
+    return submittedTogether(EnumSet.noneOf(ListChangesOption.class), options);
+  }
 
   SubmittedTogetherInfo submittedTogether(
       EnumSet<ListChangesOption> listOptions, EnumSet<SubmittedTogetherOption> submitOptions)
@@ -159,10 +189,14 @@ public interface ChangeApi {
 
   /** Publishes a draft change. */
   @Deprecated
-  void publish() throws RestApiException;
+  default void publish() {
+    throw new UnsupportedOperationException("draft workflow is discontinued");
+  }
 
   /** Rebase the current revision of a change using default options. */
-  void rebase() throws RestApiException;
+  default void rebase() throws RestApiException {
+    rebase(new RebaseInput());
+  }
 
   /** Rebase the current revision of a change. */
   void rebase(RebaseInput in) throws RestApiException;
@@ -176,20 +210,41 @@ public interface ChangeApi {
 
   IncludedInInfo includedIn() throws RestApiException;
 
-  AddReviewerResult addReviewer(AddReviewerInput in) throws RestApiException;
+  default AddReviewerResult addReviewer(String reviewer) throws RestApiException {
+    AddReviewerInput in = new AddReviewerInput();
+    in.reviewer = reviewer;
+    return addReviewer(in);
+  }
 
-  AddReviewerResult addReviewer(String in) throws RestApiException;
+  AddReviewerResult addReviewer(AddReviewerInput in) throws RestApiException;
 
   SuggestedReviewersRequest suggestReviewers() throws RestApiException;
 
-  SuggestedReviewersRequest suggestReviewers(String query) throws RestApiException;
+  default SuggestedReviewersRequest suggestReviewers(String query) throws RestApiException {
+    return suggestReviewers().withQuery(query);
+  }
+
+  default SuggestedReviewersRequest suggestCcs(String query) throws RestApiException {
+    return suggestReviewers().forCc().withQuery(query);
+  }
 
   /**
    * Retrieve reviewers ({@code ReviewerState.REVIEWER} and {@code ReviewerState.CC}) on the change.
    */
   List<ReviewerInfo> reviewers() throws RestApiException;
 
-  ChangeInfo get(EnumSet<ListChangesOption> options) throws RestApiException;
+  ChangeInfo get(
+      EnumSet<ListChangesOption> options, ImmutableListMultimap<String, String> pluginOptions)
+      throws RestApiException;
+
+  default ChangeInfo get(ImmutableListMultimap<String, String> pluginOptions)
+      throws RestApiException {
+    return get(EnumSet.noneOf(ListChangesOption.class), pluginOptions);
+  }
+
+  default ChangeInfo get(EnumSet<ListChangesOption> options) throws RestApiException {
+    return get(options, ImmutableListMultimap.of());
+  }
 
   default ChangeInfo get(Iterable<ListChangesOption> options) throws RestApiException {
     return get(Sets.newEnumSet(options, ListChangesOption.class));
@@ -205,12 +260,22 @@ public interface ChangeApi {
    * <ul>
    *   <li>{@code CHECK} is omitted, to skip consistency checks.
    *   <li>{@code SKIP_MERGEABLE} is omitted, so the {@code mergeable} bit <em>is</em> set.
+   *   <li>{@code SKIP_DIFFSTAT} is omitted to ensure diffstat calculations.
    * </ul>
    */
-  ChangeInfo get() throws RestApiException;
+  default ChangeInfo get() throws RestApiException {
+    return get(
+        EnumSet.complementOf(
+            EnumSet.of(
+                ListChangesOption.CHECK,
+                ListChangesOption.SKIP_MERGEABLE,
+                ListChangesOption.SKIP_DIFFSTAT)));
+  }
 
   /** {@link #get(ListChangesOption...)} with no options included. */
-  ChangeInfo info() throws RestApiException;
+  default ChangeInfo info() throws RestApiException {
+    return get(EnumSet.noneOf(ListChangesOption.class));
+  }
 
   /**
    * Retrieve change edit when exists.
@@ -219,7 +284,9 @@ public interface ChangeApi {
    *     ChangeEditApi#get()}.
    */
   @Deprecated
-  EditInfo getEdit() throws RestApiException;
+  default EditInfo getEdit() throws RestApiException {
+    return edit().get().orElse(null);
+  }
 
   /**
    * Provides access to an API regarding the change edit of this change.
@@ -230,7 +297,11 @@ public interface ChangeApi {
   ChangeEditApi edit() throws RestApiException;
 
   /** Create a new patch set with a new commit message. */
-  void setMessage(String message) throws RestApiException;
+  default void setMessage(String message) throws RestApiException {
+    CommitMessageInput in = new CommitMessageInput();
+    in.message = message;
+    setMessage(in);
+  }
 
   /** Create a new patch set with a new commit message. */
   void setMessage(CommitMessageInput in) throws RestApiException;
@@ -330,9 +401,8 @@ public interface ChangeApi {
   /**
    * Look up a change message of a change by its id.
    *
-   * @param id the id of the change message. Note that in NoteDb, this id is the {@code ObjectId} of
-   *     a commit on the change meta branch. In ReviewDb, it's a UUID generated randomly. That means
-   *     a change message id could be different between NoteDb and ReviewDb.
+   * @param id the id of the change message. In NoteDb, this id is the {@code ObjectId} of a commit
+   *     on the change meta branch.
    * @return API for accessing a change message.
    * @throws RestApiException if the id is invalid.
    */
@@ -341,6 +411,8 @@ public interface ChangeApi {
   abstract class SuggestedReviewersRequest {
     private String query;
     private int limit;
+    private boolean excludeGroups;
+    private ReviewerState reviewerState = ReviewerState.REVIEWER;
 
     public abstract List<SuggestedReviewerInfo> get() throws RestApiException;
 
@@ -354,12 +426,30 @@ public interface ChangeApi {
       return this;
     }
 
+    public SuggestedReviewersRequest excludeGroups(boolean excludeGroups) {
+      this.excludeGroups = excludeGroups;
+      return this;
+    }
+
+    public SuggestedReviewersRequest forCc() {
+      this.reviewerState = ReviewerState.CC;
+      return this;
+    }
+
     public String getQuery() {
       return query;
     }
 
     public int getLimit() {
       return limit;
+    }
+
+    public boolean getExcludeGroups() {
+      return excludeGroups;
+    }
+
+    public ReviewerState getReviewerState() {
+      return reviewerState;
     }
   }
 
@@ -374,16 +464,6 @@ public interface ChangeApi {
     }
 
     @Override
-    public RevisionApi current() throws RestApiException {
-      throw new NotImplementedException();
-    }
-
-    @Override
-    public RevisionApi revision(int id) throws RestApiException {
-      throw new NotImplementedException();
-    }
-
-    @Override
     public ReviewerApi reviewer(String id) throws RestApiException {
       throw new NotImplementedException();
     }
@@ -394,27 +474,12 @@ public interface ChangeApi {
     }
 
     @Override
-    public void abandon() throws RestApiException {
-      throw new NotImplementedException();
-    }
-
-    @Override
     public void abandon(AbandonInput in) throws RestApiException {
       throw new NotImplementedException();
     }
 
     @Override
-    public void restore() throws RestApiException {
-      throw new NotImplementedException();
-    }
-
-    @Override
     public void restore(RestoreInput in) throws RestApiException {
-      throw new NotImplementedException();
-    }
-
-    @Override
-    public void move(String destination) throws RestApiException {
       throw new NotImplementedException();
     }
 
@@ -439,23 +504,12 @@ public interface ChangeApi {
     }
 
     @Override
-    public ChangeApi revert() throws RestApiException {
-      throw new NotImplementedException();
-    }
-
-    @Override
     public ChangeApi revert(RevertInput in) throws RestApiException {
       throw new NotImplementedException();
     }
 
     @Override
-    public void publish() throws RestApiException {
-      throw new NotImplementedException();
-    }
-
-    @Deprecated
-    @Override
-    public void rebase() throws RestApiException {
+    public RevertSubmissionInfo revertSubmission(RevertInput in) throws RestApiException {
       throw new NotImplementedException();
     }
 
@@ -490,11 +544,6 @@ public interface ChangeApi {
     }
 
     @Override
-    public AddReviewerResult addReviewer(String in) throws RestApiException {
-      throw new NotImplementedException();
-    }
-
-    @Override
     public SuggestedReviewersRequest suggestReviewers() throws RestApiException {
       throw new NotImplementedException();
     }
@@ -510,32 +559,14 @@ public interface ChangeApi {
     }
 
     @Override
-    public ChangeInfo get(EnumSet<ListChangesOption> options) throws RestApiException {
-      throw new NotImplementedException();
-    }
-
-    @Override
-    public ChangeInfo get() throws RestApiException {
-      throw new NotImplementedException();
-    }
-
-    @Override
-    public ChangeInfo info() throws RestApiException {
-      throw new NotImplementedException();
-    }
-
-    @Override
-    public void setMessage(String message) throws RestApiException {
+    public ChangeInfo get(
+        EnumSet<ListChangesOption> options, ImmutableListMultimap<String, String> pluginOptions)
+        throws RestApiException {
       throw new NotImplementedException();
     }
 
     @Override
     public void setMessage(CommitMessageInput in) throws RestApiException {
-      throw new NotImplementedException();
-    }
-
-    @Override
-    public EditInfo getEdit() throws RestApiException {
       throw new NotImplementedException();
     }
 

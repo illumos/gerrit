@@ -17,24 +17,23 @@ package com.google.gerrit.server.rules;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.ImmutableList;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.data.LabelFunction;
 import com.google.gerrit.common.data.LabelType;
 import com.google.gerrit.common.data.SubmitRecord;
 import com.google.gerrit.common.data.SubmitRequirement;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.PatchSetApproval;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.annotations.Exports;
 import com.google.gerrit.extensions.config.FactoryModule;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.PatchSetApproval;
-import com.google.gerrit.server.project.SubmitRuleOptions;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Rule to require an approval from a user that did not upload the current patch set or block
@@ -60,29 +59,29 @@ public class IgnoreSelfApprovalRule implements SubmitRule {
   IgnoreSelfApprovalRule() {}
 
   @Override
-  public Collection<SubmitRecord> evaluate(ChangeData cd, SubmitRuleOptions options) {
+  public Optional<SubmitRecord> evaluate(ChangeData cd) {
     List<LabelType> labelTypes;
     List<PatchSetApproval> approvals;
     try {
       labelTypes = cd.getLabelTypes().getLabelTypes();
       approvals = cd.currentApprovals();
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       logger.atWarning().withCause(e).log(E_UNABLE_TO_FETCH_LABELS);
-      return singletonRuleError(E_UNABLE_TO_FETCH_LABELS);
+      return ruleError(E_UNABLE_TO_FETCH_LABELS);
     }
 
-    boolean shouldIgnoreSelfApproval = labelTypes.stream().anyMatch(l -> l.ignoreSelfApproval());
+    boolean shouldIgnoreSelfApproval = labelTypes.stream().anyMatch(LabelType::ignoreSelfApproval);
     if (!shouldIgnoreSelfApproval) {
       // Shortcut to avoid further processing if no label should ignore uploader approvals
-      return ImmutableList.of();
+      return Optional.empty();
     }
 
     Account.Id uploader;
     try {
-      uploader = cd.currentPatchSet().getUploader();
-    } catch (OrmException e) {
+      uploader = cd.currentPatchSet().uploader();
+    } catch (StorageException e) {
       logger.atWarning().withCause(e).log(E_UNABLE_TO_FETCH_UPLOADER);
-      return singletonRuleError(E_UNABLE_TO_FETCH_UPLOADER);
+      return ruleError(E_UNABLE_TO_FETCH_UPLOADER);
     }
 
     SubmitRecord submitRecord = new SubmitRecord();
@@ -124,10 +123,10 @@ public class IgnoreSelfApprovalRule implements SubmitRule {
     }
 
     if (submitRecord.labels.isEmpty()) {
-      return ImmutableList.of();
+      return Optional.empty();
     }
 
-    return ImmutableList.of(submitRecord);
+    return Optional.of(submitRecord);
   }
 
   private static boolean labelCheckPassed(SubmitRecord.Label label) {
@@ -144,18 +143,18 @@ public class IgnoreSelfApprovalRule implements SubmitRule {
     return false;
   }
 
-  private static Collection<SubmitRecord> singletonRuleError(String reason) {
+  private static Optional<SubmitRecord> ruleError(String reason) {
     SubmitRecord submitRecord = new SubmitRecord();
     submitRecord.errorMessage = reason;
     submitRecord.status = SubmitRecord.Status.RULE_ERROR;
-    return ImmutableList.of(submitRecord);
+    return Optional.of(submitRecord);
   }
 
   @VisibleForTesting
   static Collection<PatchSetApproval> filterOutPositiveApprovalsOfUser(
       Collection<PatchSetApproval> approvals, Account.Id user) {
     return approvals.stream()
-        .filter(input -> input.getValue() < 0 || !input.getAccountId().equals(user))
+        .filter(input -> input.value() < 0 || !input.accountId().equals(user))
         .collect(toImmutableList());
   }
 
@@ -163,7 +162,7 @@ public class IgnoreSelfApprovalRule implements SubmitRule {
   static Collection<PatchSetApproval> filterApprovalsByLabel(
       Collection<PatchSetApproval> approvals, LabelType t) {
     return approvals.stream()
-        .filter(input -> input.getLabelId().get().equals(t.getLabelId().get()))
+        .filter(input -> input.labelId().get().equals(t.getLabelId().get()))
         .collect(toImmutableList());
   }
 }

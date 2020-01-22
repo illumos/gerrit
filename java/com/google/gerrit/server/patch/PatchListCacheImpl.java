@@ -18,10 +18,10 @@ package com.google.gerrit.server.patch;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.cache.Cache;
 import com.google.common.util.concurrent.UncheckedExecutionException;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.client.DiffPreferencesInfo.Whitespace;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.cache.CacheBackend;
 import com.google.gerrit.server.cache.CacheModule;
 import com.google.gerrit.server.config.GerritServerConfig;
@@ -137,15 +137,11 @@ public class PatchListCacheImpl implements PatchListCache {
   private PatchList get(Change change, PatchSet patchSet, Integer parentNum)
       throws PatchListNotAvailableException {
     Project.NameKey project = change.getProject();
-    if (patchSet.getRevision() == null) {
-      throw new PatchListNotAvailableException("revision is null for " + patchSet.getId());
-    }
-    ObjectId b = ObjectId.fromString(patchSet.getRevision().get());
-    Whitespace ws = Whitespace.IGNORE_NONE;
+    ObjectId b = patchSet.commitId();
     if (parentNum != null) {
-      return get(PatchListKey.againstParentNum(parentNum, b, ws), project);
+      return get(PatchListKey.againstParentNum(parentNum, b, Whitespace.IGNORE_NONE), project);
     }
-    return get(PatchListKey.againstDefaultBase(b, ws), project);
+    return get(PatchListKey.againstDefaultBase(b, Whitespace.IGNORE_NONE), project);
   }
 
   @Override

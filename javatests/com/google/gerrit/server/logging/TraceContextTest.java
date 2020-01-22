@@ -15,6 +15,7 @@
 package com.google.gerrit.server.logging;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -234,6 +235,22 @@ public class TraceContextTest {
       assertThat(traceIdConsumer.tagName).isEqualTo(RequestId.Type.TRACE_ID.name());
       assertThat(traceIdConsumer.traceId).isEqualTo(traceId2);
     }
+  }
+
+  @Test
+  public void operationForTraceTimerCannotBeNull() throws Exception {
+    assertThrows(NullPointerException.class, () -> TraceContext.newTimer(null));
+    assertThrows(NullPointerException.class, () -> TraceContext.newTimer(null, Metadata.empty()));
+    assertThrows(
+        NullPointerException.class,
+        () ->
+            TraceContext.newTimer(
+                null, Metadata.builder().accountId(1000000).changeId(123).build()));
+  }
+
+  @Test
+  public void metadataForTraceTimerCannotBeNull() throws Exception {
+    assertThrows(NullPointerException.class, () -> TraceContext.newTimer("test", null));
   }
 
   private void assertTags(ImmutableMap<String, ImmutableSet<String>> expectedTagMap) {

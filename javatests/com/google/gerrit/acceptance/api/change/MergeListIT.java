@@ -15,7 +15,9 @@
 package com.google.gerrit.acceptance.api.change;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.gerrit.reviewdb.client.Patch.MERGE_LIST;
+import static com.google.gerrit.entities.Patch.MERGE_LIST;
+import static com.google.gerrit.git.ObjectIds.abbreviateName;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.eclipse.jgit.lib.Constants.HEAD;
 
@@ -55,8 +57,7 @@ public class MergeListIT extends AbstractDaemonTest {
     PushOneCommit.Result gp1 =
         pushFactory
             .create(
-                db,
-                admin.getIdent(),
+                admin.newIdent(),
                 testRepo,
                 "grand parent 1",
                 ImmutableMap.of("foo", "foo-1.1", "bar", "bar-1.1"))
@@ -66,8 +67,7 @@ public class MergeListIT extends AbstractDaemonTest {
     PushOneCommit.Result p1 =
         pushFactory
             .create(
-                db,
-                admin.getIdent(),
+                admin.newIdent(),
                 testRepo,
                 "parent 1",
                 ImmutableMap.of("foo", "foo-1.2", "bar", "bar-1.2"))
@@ -80,8 +80,7 @@ public class MergeListIT extends AbstractDaemonTest {
     PushOneCommit.Result gp2 =
         pushFactory
             .create(
-                db,
-                admin.getIdent(),
+                admin.newIdent(),
                 testRepo,
                 "grand parent 2",
                 ImmutableMap.of("foo", "foo-2.1", "bar", "bar-2.1"))
@@ -91,8 +90,7 @@ public class MergeListIT extends AbstractDaemonTest {
     PushOneCommit.Result p2 =
         pushFactory
             .create(
-                db,
-                admin.getIdent(),
+                admin.newIdent(),
                 testRepo,
                 "parent 2",
                 ImmutableMap.of("foo", "foo-2.2", "bar", "bar-2.2"))
@@ -101,11 +99,7 @@ public class MergeListIT extends AbstractDaemonTest {
 
     PushOneCommit m =
         pushFactory.create(
-            db,
-            admin.getIdent(),
-            testRepo,
-            "merge",
-            ImmutableMap.of("foo", "foo-1", "bar", "bar-2"));
+            admin.newIdent(), testRepo, "merge", ImmutableMap.of("foo", "foo-1", "bar", "bar-2"));
     m.setParents(ImmutableList.of(p1.getCommit(), p2.getCommit()));
     PushOneCommit.Result result = m.to("refs/for/master");
     result.assertOkStatus();
@@ -160,18 +154,26 @@ public class MergeListIT extends AbstractDaemonTest {
   public void editMergeList() throws Exception {
     gApi.changes().id(changeId).edit().create();
 
-    exception.expect(ResourceConflictException.class);
-    exception.expectMessage("Invalid path: " + MERGE_LIST);
-    gApi.changes().id(changeId).edit().modifyFile(MERGE_LIST, RawInputUtil.create("new content"));
+    ResourceConflictException thrown =
+        assertThrows(
+            ResourceConflictException.class,
+            () ->
+                gApi.changes()
+                    .id(changeId)
+                    .edit()
+                    .modifyFile(MERGE_LIST, RawInputUtil.create("new content")));
+    assertThat(thrown).hasMessageThat().contains("Invalid path: " + MERGE_LIST);
   }
 
   @Test
   public void deleteMergeList() throws Exception {
     gApi.changes().id(changeId).edit().create();
 
-    exception.expect(ResourceConflictException.class);
-    exception.expectMessage("no changes were made");
-    gApi.changes().id(changeId).edit().deleteFile(MERGE_LIST);
+    ResourceConflictException thrown =
+        assertThrows(
+            ResourceConflictException.class,
+            () -> gApi.changes().id(changeId).edit().deleteFile(MERGE_LIST));
+    assertThat(thrown).hasMessageThat().contains("no changes were made");
   }
 
   private String getMergeListContent(RevCommit... commits) {
@@ -179,7 +181,7 @@ public class MergeListIT extends AbstractDaemonTest {
     for (RevCommit c : commits) {
       mergeList
           .append("* ")
-          .append(c.abbreviate(8).name())
+          .append(abbreviateName(c, 8))
           .append(" ")
           .append(c.getShortMessage())
           .append("\n");

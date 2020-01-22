@@ -19,17 +19,17 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 
 import com.google.common.collect.ImmutableList;
 import com.google.gerrit.common.data.SubmitRecord;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Comment;
+import com.google.gerrit.entities.CommentRange;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.config.FactoryModule;
 import com.google.gerrit.metrics.DisabledMetricMaker;
 import com.google.gerrit.metrics.MetricMaker;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Comment;
-import com.google.gerrit.reviewdb.client.CommentRange;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.CurrentUser;
+import com.google.gerrit.server.FanOutExecutor;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.InternalUser;
@@ -43,7 +43,7 @@ import com.google.gerrit.server.config.AnonymousCowardName;
 import com.google.gerrit.server.config.AnonymousCowardNameProvider;
 import com.google.gerrit.server.config.CanonicalWebUrl;
 import com.google.gerrit.server.config.DefaultUrlFormatter;
-import com.google.gerrit.server.config.DisableReverseDnsLookup;
+import com.google.gerrit.server.config.EnableReverseDnsLookup;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.GerritServerId;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
@@ -52,24 +52,23 @@ import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.group.SystemGroupBackend;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.util.time.TimeUtil;
+import com.google.gerrit.testing.AssertableExecutorService;
 import com.google.gerrit.testing.ConfigSuite;
 import com.google.gerrit.testing.FakeAccountCache;
-import com.google.gerrit.testing.GerritBaseTests;
 import com.google.gerrit.testing.InMemoryRepositoryManager;
 import com.google.gerrit.testing.TestChanges;
 import com.google.gerrit.testing.TestTimeUtil;
-import com.google.gwtorm.server.OrmException;
-import com.google.gwtorm.server.SchemaFactory;
 import com.google.inject.Guice;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
-import com.google.inject.TypeLiteral;
 import com.google.inject.util.Providers;
 import java.sql.Timestamp;
 import java.util.TimeZone;
+import java.util.concurrent.ExecutorService;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.lib.Config;
+import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.junit.After;
@@ -79,7 +78,7 @@ import org.junit.runner.RunWith;
 
 @Ignore
 @RunWith(ConfigSuite.class)
-public abstract class AbstractChangeNotesTest extends GerritBaseTests {
+public abstract class AbstractChangeNotesTest {
   private static final TimeZone TZ = TimeZone.getTimeZone("America/Los_Angeles");
 
   @ConfigSuite.Parameter public Config testConfig;
@@ -95,6 +94,7 @@ public abstract class AbstractChangeNotesTest extends GerritBaseTests {
   protected Project.NameKey project;
   protected RevWalk rw;
   protected TestRepository<InMemoryRepository> tr;
+  protected AssertableExecutorService assertableFanOutExecutor;
 
   @Inject protected IdentifiedUser.GenericFactory userFactory;
 
@@ -114,20 +114,21 @@ public abstract class AbstractChangeNotesTest extends GerritBaseTests {
     setTimeForTesting();
 
     serverIdent = new PersonIdent("Gerrit Server", "noreply@gerrit.com", TimeUtil.nowTs(), TZ);
-    project = new Project.NameKey("test-project");
+    project = Project.nameKey("test-project");
     repoManager = new InMemoryRepositoryManager();
     repo = repoManager.createRepository(project);
     tr = new TestRepository<>(repo);
     rw = tr.getRevWalk();
     accountCache = new FakeAccountCache();
-    Account co = new Account(new Account.Id(1), TimeUtil.nowTs());
+    Account.Builder co = Account.builder(Account.id(1), TimeUtil.nowTs());
     co.setFullName("Change Owner");
     co.setPreferredEmail("change@owner.com");
-    accountCache.put(co);
-    Account ou = new Account(new Account.Id(2), TimeUtil.nowTs());
+    accountCache.put(co.build());
+    Account.Builder ou = Account.builder(Account.id(2), TimeUtil.nowTs());
     ou.setFullName("Other Account");
     ou.setPreferredEmail("other@account.com");
-    accountCache.put(ou);
+    accountCache.put(ou.build());
+    assertableFanOutExecutor = new AssertableExecutorService();
 
     injector =
         Guice.createInjector(
@@ -137,11 +138,11 @@ public abstract class AbstractChangeNotesTest extends GerritBaseTests {
                 install(new GitModule());
 
                 install(new DefaultUrlFormatter.Module());
-                install(NoteDbModule.forTest(testConfig));
+                install(NoteDbModule.forTest());
                 bind(AllUsersName.class).toProvider(AllUsersNameProvider.class);
                 bind(String.class).annotatedWith(GerritServerId.class).toInstance("gerrit");
                 bind(GitRepositoryManager.class).toInstance(repoManager);
-                bind(ProjectCache.class).toProvider(Providers.<ProjectCache>of(null));
+                bind(ProjectCache.class).toProvider(Providers.of(null));
                 bind(Config.class).annotatedWith(GerritServerConfig.class).toInstance(testConfig);
                 bind(String.class)
                     .annotatedWith(AnonymousCowardName.class)
@@ -150,8 +151,8 @@ public abstract class AbstractChangeNotesTest extends GerritBaseTests {
                     .annotatedWith(CanonicalWebUrl.class)
                     .toInstance("http://localhost:8080/");
                 bind(Boolean.class)
-                    .annotatedWith(DisableReverseDnsLookup.class)
-                    .toInstance(Boolean.FALSE);
+                    .annotatedWith(EnableReverseDnsLookup.class)
+                    .toInstance(Boolean.TRUE);
                 bind(Realm.class).to(FakeRealm.class);
                 bind(GroupBackend.class).to(SystemGroupBackend.class).in(SINGLETON);
                 bind(AccountCache.class).toInstance(accountCache);
@@ -160,30 +161,16 @@ public abstract class AbstractChangeNotesTest extends GerritBaseTests {
                     .toInstance(serverIdent);
                 bind(GitReferenceUpdated.class).toInstance(GitReferenceUpdated.DISABLED);
                 bind(MetricMaker.class).to(DisabledMetricMaker.class);
-                bind(ReviewDb.class).toProvider(Providers.<ReviewDb>of(null));
-                MutableNotesMigration migration = MutableNotesMigration.newDisabled();
-                migration.setFrom(NotesMigrationState.FINAL);
-                bind(MutableNotesMigration.class).toInstance(migration);
-                bind(NotesMigration.class).to(MutableNotesMigration.class);
-
-                // Tests don't support ReviewDb at all, but bindings are required via NoteDbModule.
-                bind(new TypeLiteral<SchemaFactory<ReviewDb>>() {})
-                    .toInstance(
-                        () -> {
-                          throw new UnsupportedOperationException();
-                        });
-                bind(ChangeBundleReader.class)
-                    .toInstance(
-                        (db, id) -> {
-                          throw new UnsupportedOperationException();
-                        });
+                bind(ExecutorService.class)
+                    .annotatedWith(FanOutExecutor.class)
+                    .toInstance(assertableFanOutExecutor);
               }
             });
 
     injector.injectMembers(this);
     repoManager.createRepository(allUsers);
-    changeOwner = userFactory.create(co.getId());
-    otherUser = userFactory.create(ou.getId());
+    changeOwner = userFactory.create(co.id());
+    otherUser = userFactory.create(ou.id());
     otherUserId = otherUser.getAccountId();
     internalUser = new InternalUser();
   }
@@ -201,9 +188,9 @@ public abstract class AbstractChangeNotesTest extends GerritBaseTests {
 
   protected Change newChange(boolean workInProgress) throws Exception {
     Change c = TestChanges.newChange(project, changeOwner.getAccountId());
-    ChangeUpdate u = newUpdate(c, changeOwner);
+    ChangeUpdate u = newUpdateForNewChange(c, changeOwner);
     u.setChangeId(c.getKey().get());
-    u.setBranch(c.getDest().get());
+    u.setBranch(c.getDest().branch());
     u.setWorkInProgress(workInProgress);
     u.commit();
     return c;
@@ -217,15 +204,24 @@ public abstract class AbstractChangeNotesTest extends GerritBaseTests {
     return newChange(false);
   }
 
+  protected ChangeUpdate newUpdateForNewChange(Change c, CurrentUser user) throws Exception {
+    return newUpdate(c, user, false);
+  }
+
   protected ChangeUpdate newUpdate(Change c, CurrentUser user) throws Exception {
-    ChangeUpdate update = TestChanges.newUpdate(injector, c, user);
+    return newUpdate(c, user, true);
+  }
+
+  protected ChangeUpdate newUpdate(Change c, CurrentUser user, boolean shouldExist)
+      throws Exception {
+    ChangeUpdate update = TestChanges.newUpdate(injector, c, user, shouldExist);
     update.setPatchSetId(c.currentPatchSetId());
     update.setAllowWriteToNewRef(true);
     return update;
   }
 
-  protected ChangeNotes newNotes(Change c) throws OrmException {
-    return new ChangeNotes(args, c).load();
+  protected ChangeNotes newNotes(Change c) {
+    return new ChangeNotes(args, c, true, null).load();
   }
 
   protected static SubmitRecord submitRecord(
@@ -259,7 +255,7 @@ public abstract class AbstractChangeNotesTest extends GerritBaseTests {
       Timestamp t,
       String message,
       short side,
-      String commitSHA1,
+      ObjectId commitId,
       boolean unresolved) {
     Comment c =
         new Comment(
@@ -272,7 +268,7 @@ public abstract class AbstractChangeNotesTest extends GerritBaseTests {
             unresolved);
     c.lineNbr = line;
     c.parentUuid = parentUUID;
-    c.revId = commitSHA1;
+    c.setCommitId(commitId);
     c.setRange(range);
     return c;
   }

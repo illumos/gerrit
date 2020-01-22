@@ -18,7 +18,7 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.flogger.LazyArgs.lazy;
-import static java.util.stream.Collectors.toSet;
+import static java.util.stream.Collectors.toList;
 
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
@@ -26,11 +26,11 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Ordering;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.index.Index;
 import com.google.gerrit.index.IndexCollection;
 import com.google.gerrit.index.IndexConfig;
 import com.google.gerrit.index.IndexRewriter;
-import com.google.gerrit.index.IndexedQuery;
 import com.google.gerrit.index.QueryOptions;
 import com.google.gerrit.index.SchemaDefinitions;
 import com.google.gerrit.metrics.Description;
@@ -38,9 +38,7 @@ import com.google.gerrit.metrics.Field;
 import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.metrics.Timer1;
 import com.google.gerrit.server.logging.CallerFinder;
-import com.google.gwtorm.server.OrmException;
-import com.google.gwtorm.server.OrmRuntimeException;
-import com.google.gwtorm.server.ResultSet;
+import com.google.gerrit.server.logging.Metadata;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -63,14 +61,15 @@ public abstract class QueryProcessor<T> {
     final Timer1<String> executionTime;
 
     Metrics(MetricMaker metricMaker) {
-      Field<String> index = Field.ofString("index", "index name");
       executionTime =
           metricMaker.newTimer(
               "query/query_latency",
               new Description("Successful query latency, accumulated over the life of the process")
                   .setCumulative()
                   .setUnit(Description.Units.MILLISECONDS),
-              index);
+              Field.ofString("index", Metadata.Builder::indexName)
+                  .description("index name")
+                  .build());
     }
   }
 
@@ -91,6 +90,7 @@ public abstract class QueryProcessor<T> {
 
   private boolean enforceVisibility = true;
   private int userProvidedLimit;
+  private boolean isNoLimit;
   private Set<String> requestedFields;
 
   protected QueryProcessor(
@@ -157,6 +157,11 @@ public abstract class QueryProcessor<T> {
     return this;
   }
 
+  public QueryProcessor<T> setNoLimit(boolean isNoLimit) {
+    this.isNoLimit = isNoLimit;
+    return this;
+  }
+
   public QueryProcessor<T> setRequestedFields(Set<String> fields) {
     requestedFields = fields;
     return this;
@@ -169,7 +174,7 @@ public abstract class QueryProcessor<T> {
    * @param query the query.
    * @return results of the query.
    */
-  public QueryResult<T> query(Predicate<T> query) throws OrmException, QueryParseException {
+  public QueryResult<T> query(Predicate<T> query) throws QueryParseException {
     return query(ImmutableList.of(query)).get(0);
   }
 
@@ -184,13 +189,10 @@ public abstract class QueryProcessor<T> {
    * @return results of the queries, one QueryResult per input query, in the same order as the
    *     input.
    */
-  public List<QueryResult<T>> query(List<Predicate<T>> queries)
-      throws OrmException, QueryParseException {
+  public List<QueryResult<T>> query(List<Predicate<T>> queries) throws QueryParseException {
     try {
       return query(null, queries);
-    } catch (OrmRuntimeException e) {
-      throw new OrmException(e.getMessage(), e);
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       if (e.getCause() != null) {
         Throwables.throwIfInstanceOf(e.getCause(), QueryParseException.class);
       }
@@ -199,8 +201,7 @@ public abstract class QueryProcessor<T> {
   }
 
   private List<QueryResult<T>> query(
-      @Nullable List<String> queryStrings, List<Predicate<T>> queries)
-      throws OrmException, QueryParseException {
+      @Nullable List<String> queryStrings, List<Predicate<T>> queries) throws QueryParseException {
     long startNanos = System.nanoTime();
     checkState(!used.getAndSet(true), "%s has already been used", getClass().getSimpleName());
     int cnt = queries.size();
@@ -217,7 +218,7 @@ public abstract class QueryProcessor<T> {
 
     logger.atFine().log(
         "Executing %d %s index queries for %s",
-        cnt, schemaDef.getName(), callerFinder.findCaller());
+        cnt, schemaDef.getName(), callerFinder.findCallerLazy());
     List<QueryResult<T>> out;
     try {
       // Parse and rewrite all queries.
@@ -268,10 +269,10 @@ public abstract class QueryProcessor<T> {
 
       out = new ArrayList<>(cnt);
       for (int i = 0; i < cnt; i++) {
-        List<T> matchesList = matches.get(i).toList();
+        ImmutableList<T> matchesList = matches.get(i).toList();
         logger.atFine().log(
             "Matches[%d]:\n%s",
-            i, lazy(() -> matchesList.stream().map(this::formatForLogging).collect(toSet())));
+            i, lazy(() -> matchesList.stream().map(this::formatForLogging).collect(toList())));
         out.add(
             QueryResult.create(
                 queryStrings != null ? queryStrings.get(i) : null,
@@ -283,7 +284,7 @@ public abstract class QueryProcessor<T> {
       // Only measure successful queries that actually touched the index.
       metrics.executionTime.record(
           schemaDef.getName(), System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
-    } catch (OrmException | OrmRuntimeException e) {
+    } catch (StorageException e) {
       Optional<QueryParseException> qpe = findQueryParseException(e);
       if (qpe.isPresent()) {
         throw new QueryParseException(qpe.get().getMessage(), e);
@@ -325,7 +326,7 @@ public abstract class QueryProcessor<T> {
       return requestedFields;
     }
     Index<?, T> index = indexes.getSearchIndex();
-    return index != null ? index.getSchema().getStoredFields().keySet() : ImmutableSet.<String>of();
+    return index != null ? index.getSchema().getStoredFields().keySet() : ImmutableSet.of();
   }
 
   /**
@@ -354,6 +355,9 @@ public abstract class QueryProcessor<T> {
   }
 
   private int getEffectiveLimit(Predicate<T> p) {
+    if (isNoLimit == true) {
+      return Integer.MAX_VALUE;
+    }
     List<Integer> possibleLimits = new ArrayList<>(4);
     possibleLimits.add(getBackendSupportedLimit());
     possibleLimits.add(getPermittedLimit());

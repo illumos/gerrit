@@ -36,8 +36,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import javax.servlet.DispatcherType;
@@ -49,7 +51,6 @@ import org.eclipse.jetty.server.ForwardedRequestCustomizer;
 import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.HttpConfiguration;
 import org.eclipse.jetty.server.HttpConnectionFactory;
-import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.SecureRequestCustomizer;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
@@ -197,7 +198,7 @@ public class JettyServer {
         c = newServerConnector(server, acceptors, config);
 
       } else if ("https".equals(u.getScheme())) {
-        SslContextFactory ssl = new SslContextFactory();
+        SslContextFactory.Server ssl = new SslContextFactory.Server();
         final Path keystore = getFile(cfg, "sslkeystore", "etc/keystore");
         String password = cfg.getString("httpd", null, "sslkeypassword");
         if (password == null) {
@@ -241,13 +242,9 @@ public class JettyServer {
         defaultPort = 8080;
         config.addCustomizer(new ForwardedRequestCustomizer());
         config.addCustomizer(
-            new HttpConfiguration.Customizer() {
-              @Override
-              public void customize(
-                  Connector connector, HttpConfiguration channelConfig, Request request) {
-                request.setScheme(HttpScheme.HTTPS.asString());
-                request.setSecure(true);
-              }
+            (connector, channelConfig, request) -> {
+              request.setScheme(HttpScheme.HTTPS.asString());
+              request.setSecure(true);
             });
         c = newServerConnector(server, acceptors, config);
 
@@ -350,7 +347,7 @@ public class JettyServer {
             maxThreads,
             minThreads,
             idleTimeout,
-            new BlockingArrayQueue<Runnable>(
+            new BlockingArrayQueue<>(
                 minThreads, // capacity,
                 minThreads, // growBy,
                 maxCapacity // maxCapacity
@@ -416,10 +413,20 @@ public class JettyServer {
         Class<? extends Filter> filterClass =
             (Class<? extends Filter>) Class.forName(filterClassName);
         Filter filter = env.webInjector.getInstance(filterClass);
-        app.addFilter(
-            new FilterHolder(filter),
-            "/*",
-            EnumSet.of(DispatcherType.REQUEST, DispatcherType.ASYNC));
+
+        Map<String, String> initParams = new HashMap<>();
+        Set<String> initParamKeys = cfg.getNames("filterClass", filterClassName, true);
+        initParamKeys.forEach(
+            paramKey -> {
+              String paramValue = cfg.getString("filterClass", filterClassName, paramKey);
+              initParams.put(paramKey, paramValue);
+            });
+
+        FilterHolder filterHolder = new FilterHolder(filter);
+        if (initParams.size() > 0) {
+          filterHolder.setInitParameters(initParams);
+        }
+        app.addFilter(filterHolder, "/*", EnumSet.of(DispatcherType.REQUEST, DispatcherType.ASYNC));
       } catch (Throwable e) {
         throw new IllegalArgumentException(
             "Unable to instantiate front-end HTTP Filter " + filterClassName, e);

@@ -15,7 +15,7 @@
 package com.google.gerrit.server.events;
 
 import com.google.common.base.Supplier;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.data.AccountAttribute;
 import com.google.gerrit.server.data.RefUpdateAttribute;
 
@@ -30,7 +30,7 @@ public class RefUpdatedEvent extends RefEvent {
 
   @Override
   public Project.NameKey getProjectNameKey() {
-    return new Project.NameKey(refUpdate.get().project);
+    return Project.nameKey(refUpdate.get().project);
   }
 
   @Override

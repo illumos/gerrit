@@ -14,8 +14,8 @@
 
 package com.google.gerrit.server.account;
 
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.api.config.ConsistencyCheckInfo.ConsistencyProblemInfo;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.io.IOException;
@@ -35,14 +35,14 @@ public class AccountsConsistencyChecker {
     List<ConsistencyProblemInfo> problems = new ArrayList<>();
 
     for (AccountState accountState : accounts.all()) {
-      Account account = accountState.getAccount();
-      if (account.getPreferredEmail() != null) {
-        if (!accountState.getExternalIds().stream()
-            .anyMatch(e -> account.getPreferredEmail().equals(e.email()))) {
+      Account account = accountState.account();
+      if (account.preferredEmail() != null) {
+        if (!accountState.externalIds().stream()
+            .anyMatch(e -> account.preferredEmail().equals(e.email()))) {
           addError(
               String.format(
                   "Account '%s' has no external ID for its preferred email '%s'",
-                  account.getId().get(), account.getPreferredEmail()),
+                  account.id().get(), account.preferredEmail()),
               problems);
         }
       }

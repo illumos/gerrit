@@ -15,8 +15,11 @@
 package com.google.gerrit.server.notedb;
 
 import com.google.common.base.CharMatcher;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.primitives.Ints;
-import com.google.gerrit.reviewdb.client.Account;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.extensions.restapi.RestModifyView;
 import java.sql.Timestamp;
 import java.util.Optional;
 import org.eclipse.jgit.lib.PersonIdent;
@@ -25,26 +28,34 @@ import org.eclipse.jgit.util.GitDateFormatter.Format;
 
 public class NoteDbUtil {
 
-  /**
-   * Returns an AccountId for the given email address. Returns empty if the address isn't on this
-   * server.
-   */
-  public static Optional<Account.Id> parseIdent(PersonIdent ident, String serverId) {
+  private static final CharMatcher INVALID_FOOTER_CHARS = CharMatcher.anyOf("\r\n\0");
+
+  private static final ImmutableList<String> PACKAGE_PREFIXES =
+      ImmutableList.of("com.google.gerrit.server.", "com.google.gerrit.");
+  private static final ImmutableSet<String> SERVLET_NAMES =
+      ImmutableSet.of("com.google.gerrit.httpd.restapi.RestApiServlet");
+
+  /** Returns an AccountId for the given email address. */
+  public static Optional<Account.Id> parseIdent(PersonIdent ident) {
     String email = ident.getEmailAddress();
     int at = email.indexOf('@');
     if (at >= 0) {
-      String host = email.substring(at + 1, email.length());
-      if (host.equals(serverId)) {
-        Integer id = Ints.tryParse(email.substring(0, at));
-        if (id != null) {
-          return Optional.of(new Account.Id(id));
-        }
+      Integer id = Ints.tryParse(email.substring(0, at));
+      if (id != null) {
+        return Optional.of(Account.id(id));
       }
     }
     return Optional.empty();
   }
 
-  private NoteDbUtil() {}
+  public static String extractHostPartFromPersonIdent(PersonIdent ident) {
+    String email = ident.getEmailAddress();
+    int at = email.indexOf('@');
+    if (at >= 0) {
+      return email.substring(at + 1);
+    }
+    throw new IllegalArgumentException("No host part found: " + email);
+  }
 
   public static String formatTime(PersonIdent ident, Timestamp t) {
     GitDateFormatter dateFormatter = new GitDateFormatter(Format.DEFAULT);
@@ -53,7 +64,32 @@ public class NoteDbUtil {
     return dateFormatter.formatDate(newIdent);
   }
 
-  private static final CharMatcher INVALID_FOOTER_CHARS = CharMatcher.anyOf("\r\n\0");
+  /**
+   * Returns the name of the REST API handler that is in the stack trace of the caller of this
+   * method.
+   */
+  static String guessRestApiHandler() {
+    StackTraceElement[] trace = Thread.currentThread().getStackTrace();
+    int i = findRestApiServlet(trace);
+    if (i < 0) {
+      i = findApiImpl(trace);
+    }
+    if (i < 0) {
+      return null;
+    }
+    try {
+      for (i--; i >= 0; i--) {
+        String cn = trace[i].getClassName();
+        Class<?> cls = Class.forName(cn);
+        if (RestModifyView.class.isAssignableFrom(cls)) {
+          return viewName(cn);
+        }
+      }
+      return null;
+    } catch (ClassNotFoundException e) {
+      return null;
+    }
+  }
 
   static String sanitizeFooter(String value) {
     // Remove characters that would confuse JGit's footer parser if they were
@@ -65,4 +101,35 @@ public class NoteDbUtil {
     // empty paragraph for the purposes of footer parsing.
     return INVALID_FOOTER_CHARS.trimAndCollapseFrom(value, ' ');
   }
+
+  private static int findRestApiServlet(StackTraceElement[] trace) {
+    for (int i = 0; i < trace.length; i++) {
+      if (SERVLET_NAMES.contains(trace[i].getClassName())) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  private static int findApiImpl(StackTraceElement[] trace) {
+    for (int i = 0; i < trace.length; i++) {
+      String clazz = trace[i].getClassName();
+      if (clazz.startsWith("com.google.gerrit.server.api.") && clazz.endsWith("ApiImpl")) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  private static String viewName(String cn) {
+    String impl = cn.replace('$', '.');
+    for (String p : PACKAGE_PREFIXES) {
+      if (impl.startsWith(p)) {
+        return impl.substring(p.length());
+      }
+    }
+    return impl;
+  }
+
+  private NoteDbUtil() {}
 }

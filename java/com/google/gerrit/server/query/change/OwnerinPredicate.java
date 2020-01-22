@@ -14,11 +14,10 @@
 
 package com.google.gerrit.server.query.change;
 
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.Change;
 import com.google.gerrit.index.query.PostFilterPredicate;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.Change;
 import com.google.gerrit.server.IdentifiedUser;
-import com.google.gwtorm.server.OrmException;
 
 public class OwnerinPredicate extends PostFilterPredicate<ChangeData> {
   protected final IdentifiedUser.GenericFactory userFactory;
@@ -31,7 +30,7 @@ public class OwnerinPredicate extends PostFilterPredicate<ChangeData> {
   }
 
   @Override
-  public boolean match(ChangeData object) throws OrmException {
+  public boolean match(ChangeData object) {
     final Change change = object.change();
     if (change == null) {
       return false;

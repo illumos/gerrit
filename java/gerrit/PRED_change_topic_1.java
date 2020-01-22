@@ -14,7 +14,7 @@
 
 package gerrit;
 
-import com.google.gerrit.reviewdb.client.Change;
+import com.google.gerrit.entities.Change;
 import com.google.gerrit.server.rules.StoredValues;
 import com.googlecode.prolog_cafe.exceptions.PrologException;
 import com.googlecode.prolog_cafe.lang.Operation;
@@ -23,6 +23,16 @@ import com.googlecode.prolog_cafe.lang.Prolog;
 import com.googlecode.prolog_cafe.lang.SymbolTerm;
 import com.googlecode.prolog_cafe.lang.Term;
 
+/**
+ * Prolog predicate for the topic of a change.
+ *
+ * <p>Checks that the term that is provided as input to this Prolog predicate is a string atom that
+ * matches the topic of the change.
+ *
+ * <pre>
+ *   'change_topic'(-Topic)
+ * </pre>
+ */
 public class PRED_change_topic_1 extends Predicate.P1 {
   public PRED_change_topic_1(Term a1, Operation n) {
     arg1 = a1;

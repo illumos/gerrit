@@ -15,6 +15,7 @@
 package com.google.gerrit.pgm.init;
 
 import com.google.common.collect.Iterables;
+import com.google.gerrit.index.IndexType;
 import com.google.gerrit.index.SchemaDefinitions;
 import com.google.gerrit.pgm.init.api.ConsoleUI;
 import com.google.gerrit.pgm.init.api.InitFlags;
@@ -22,7 +23,6 @@ import com.google.gerrit.pgm.init.api.InitStep;
 import com.google.gerrit.pgm.init.api.Section;
 import com.google.gerrit.server.config.SitePaths;
 import com.google.gerrit.server.index.IndexModule;
-import com.google.gerrit.server.index.IndexModule.IndexType;
 import com.google.gerrit.server.index.IndexUtils;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
@@ -53,27 +53,23 @@ class InitIndex implements InitStep {
 
   @Override
   public void run() throws IOException {
-    IndexType type = IndexType.LUCENE;
-    if (IndexType.values().length > 1) {
-      ui.header("Index");
-      type = index.select("Type", "type", type);
-    }
+    ui.header("Index");
+    IndexType type =
+        new IndexType(
+            index.select("Type", "type", IndexType.getDefault(), IndexType.getKnownTypes()));
 
-    if (type == IndexType.ELASTICSEARCH) {
+    if (type.isElasticsearch()) {
       Section elasticsearch = sections.get("elasticsearch", null);
       elasticsearch.string("Index Prefix", "prefix", "gerrit_");
       elasticsearch.string("Server", "server", "http://localhost:9200");
       index.string("Result window size", "maxLimit", "10000");
     }
 
-    if ((site.isNew || isEmptySite()) && type == IndexType.LUCENE) {
+    if ((site.isNew || isEmptySite()) && type.isLucene()) {
       for (SchemaDefinitions<?> def : IndexModule.ALL_SCHEMA_DEFS) {
         IndexUtils.setReady(site, def.getName(), def.getLatest().getVersion(), true);
       }
     } else {
-      if (IndexType.values().length <= 1) {
-        ui.header("Index");
-      }
       String message =
           String.format(
               "\nThe index must be %sbuilt before starting Gerrit:\n"

@@ -25,34 +25,30 @@ import static org.eclipse.jgit.lib.Constants.R_HEADS;
 
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.Streams;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.data.LabelType;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.ChangeMessage;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.PatchSetApproval;
+import com.google.gerrit.entities.PatchSetInfo;
+import com.google.gerrit.entities.SubmissionId;
 import com.google.gerrit.extensions.api.changes.AddReviewerInput;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.client.ChangeKind;
 import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.ChangeMessage;
-import com.google.gerrit.reviewdb.client.Comment;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.PatchSetApproval;
-import com.google.gerrit.reviewdb.client.PatchSetInfo;
-import com.google.gerrit.server.ApprovalCopier;
 import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.ChangeMessagesUtil;
-import com.google.gerrit.server.CommentsUtil;
 import com.google.gerrit.server.PatchSetUtil;
-import com.google.gerrit.server.PublishCommentUtil;
 import com.google.gerrit.server.account.AccountResolver;
 import com.google.gerrit.server.change.AddReviewersOp;
 import com.google.gerrit.server.change.ChangeKindCache;
-import com.google.gerrit.server.change.EmailReviewComments;
+import com.google.gerrit.server.change.NotifyResolver;
 import com.google.gerrit.server.change.ReviewerAdder;
 import com.google.gerrit.server.change.ReviewerAdder.InternalAddReviewerInput;
 import com.google.gerrit.server.change.ReviewerAdder.ReviewerAddition;
@@ -75,7 +71,6 @@ import com.google.gerrit.server.update.ChangeContext;
 import com.google.gerrit.server.update.Context;
 import com.google.gerrit.server.update.RepoContext;
 import com.google.gerrit.server.util.RequestScopePropagator;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 import com.google.inject.util.Providers;
@@ -101,7 +96,7 @@ public class ReplaceOp implements BatchUpdateOp {
   public interface Factory {
     ReplaceOp create(
         ProjectState projectState,
-        Branch.NameKey dest,
+        BranchNameKey dest,
         boolean checkMergedInto,
         @Nullable String mergeResultRevId,
         @Assisted("priorPatchSetId") PatchSet.Id priorPatchSetId,
@@ -111,20 +106,17 @@ public class ReplaceOp implements BatchUpdateOp {
         PatchSetInfo info,
         List<String> groups,
         @Nullable MagicBranchInput magicBranch,
-        @Nullable PushCertificate pushCertificate);
+        @Nullable PushCertificate pushCertificate,
+        Change change);
   }
 
   private static final String CHANGE_IS_CLOSED = "change is closed";
 
   private final AccountResolver accountResolver;
-  private final ApprovalCopier approvalCopier;
   private final ApprovalsUtil approvalsUtil;
   private final ChangeData.Factory changeDataFactory;
   private final ChangeKindCache changeKindCache;
   private final ChangeMessagesUtil cmUtil;
-  private final CommentsUtil commentsUtil;
-  private final PublishCommentUtil publishCommentUtil;
-  private final EmailReviewComments.Factory emailCommentsFactory;
   private final ExecutorService sendEmailExecutor;
   private final RevisionCreated revisionCreated;
   private final CommentAdded commentAdded;
@@ -135,7 +127,7 @@ public class ReplaceOp implements BatchUpdateOp {
   private final ReviewerAdder reviewerAdder;
 
   private final ProjectState projectState;
-  private final Branch.NameKey dest;
+  private final BranchNameKey dest;
   private final boolean checkMergedInto;
   private final String mergeResultRevId;
   private final PatchSet.Id priorPatchSetId;
@@ -145,6 +137,7 @@ public class ReplaceOp implements BatchUpdateOp {
   private final PatchSetInfo info;
   private final MagicBranchInput magicBranch;
   private final PushCertificate pushCertificate;
+  private final Change change;
   private List<String> groups;
 
   private final Map<String, Short> approvals = new HashMap<>();
@@ -154,7 +147,6 @@ public class ReplaceOp implements BatchUpdateOp {
   private PatchSet newPatchSet;
   private ChangeKind changeKind;
   private ChangeMessage msg;
-  private List<Comment> comments = ImmutableList.of();
   private String rejectMessage;
   private MergedByPushOp mergedByPushOp;
   private RequestScopePropagator requestScopePropagator;
@@ -164,14 +156,10 @@ public class ReplaceOp implements BatchUpdateOp {
   @Inject
   ReplaceOp(
       AccountResolver accountResolver,
-      ApprovalCopier approvalCopier,
       ApprovalsUtil approvalsUtil,
       ChangeData.Factory changeDataFactory,
       ChangeKindCache changeKindCache,
       ChangeMessagesUtil cmUtil,
-      CommentsUtil commentsUtil,
-      PublishCommentUtil publishCommentUtil,
-      EmailReviewComments.Factory emailCommentsFactory,
       RevisionCreated revisionCreated,
       CommentAdded commentAdded,
       MergedByPushOp.Factory mergedByPushOpFactory,
@@ -180,8 +168,9 @@ public class ReplaceOp implements BatchUpdateOp {
       ProjectCache projectCache,
       @SendEmailExecutor ExecutorService sendEmailExecutor,
       ReviewerAdder reviewerAdder,
+      Change change,
       @Assisted ProjectState projectState,
-      @Assisted Branch.NameKey dest,
+      @Assisted BranchNameKey dest,
       @Assisted boolean checkMergedInto,
       @Assisted @Nullable String mergeResultRevId,
       @Assisted("priorPatchSetId") PatchSet.Id priorPatchSetId,
@@ -193,14 +182,10 @@ public class ReplaceOp implements BatchUpdateOp {
       @Assisted @Nullable MagicBranchInput magicBranch,
       @Assisted @Nullable PushCertificate pushCertificate) {
     this.accountResolver = accountResolver;
-    this.approvalCopier = approvalCopier;
     this.approvalsUtil = approvalsUtil;
     this.changeDataFactory = changeDataFactory;
     this.changeKindCache = changeKindCache;
     this.cmUtil = cmUtil;
-    this.commentsUtil = commentsUtil;
-    this.publishCommentUtil = publishCommentUtil;
-    this.emailCommentsFactory = emailCommentsFactory;
     this.revisionCreated = revisionCreated;
     this.commentAdded = commentAdded;
     this.mergedByPushOpFactory = mergedByPushOpFactory;
@@ -222,6 +207,7 @@ public class ReplaceOp implements BatchUpdateOp {
     this.groups = groups;
     this.magicBranch = magicBranch;
     this.pushCertificate = pushCertificate;
+    this.change = change;
   }
 
   @Override
@@ -237,11 +223,15 @@ public class ReplaceOp implements BatchUpdateOp {
             commitId);
 
     if (checkMergedInto) {
-      String mergedInto = findMergedInto(ctx, dest.get(), commit);
+      String mergedInto = findMergedInto(ctx, dest.branch(), commit);
       if (mergedInto != null) {
         mergedByPushOp =
             mergedByPushOpFactory.create(
-                requestScopePropagator, patchSetId, mergedInto, mergeResultRevId);
+                requestScopePropagator,
+                patchSetId,
+                new SubmissionId(change),
+                mergedInto,
+                mergeResultRevId);
       }
     }
 
@@ -251,20 +241,19 @@ public class ReplaceOp implements BatchUpdateOp {
 
   @Override
   public boolean updateChange(ChangeContext ctx)
-      throws RestApiException, OrmException, IOException, PermissionBackendException,
-          ConfigInvalidException {
+      throws RestApiException, IOException, PermissionBackendException, ConfigInvalidException {
     notes = ctx.getNotes();
     Change change = notes.getChange();
-    if (change == null || change.getStatus().isClosed()) {
+    if (change == null || change.isClosed()) {
       rejectMessage = CHANGE_IS_CLOSED;
       return false;
     }
     if (groups.isEmpty()) {
-      PatchSet prevPs = psUtil.current(ctx.getDb(), notes);
-      groups = prevPs != null ? prevPs.getGroups() : ImmutableList.<String>of();
+      PatchSet prevPs = psUtil.current(notes);
+      groups = prevPs != null ? prevPs.groups() : ImmutableList.of();
     }
 
-    ChangeData cd = changeDataFactory.create(ctx.getDb(), ctx.getNotes());
+    ChangeData cd = changeDataFactory.create(ctx.getNotes());
     oldRecipients = getRecipientsFromReviewers(cd.reviewers());
 
     ChangeUpdate update = ctx.getUpdate(patchSetId);
@@ -299,18 +288,10 @@ public class ReplaceOp implements BatchUpdateOp {
         change.setWorkInProgress(true);
         update.setWorkInProgress(true);
       }
-      if (shouldPublishComments()) {
-        boolean workInProgress = change.isWorkInProgress();
-        if (magicBranch != null && magicBranch.workInProgress) {
-          workInProgress = true;
-        }
-        comments = publishComments(ctx, workInProgress);
-      }
     }
 
     newPatchSet =
         psUtil.insert(
-            ctx.getDb(),
             ctx.getRevWalk(),
             update,
             patchSetId,
@@ -321,25 +302,11 @@ public class ReplaceOp implements BatchUpdateOp {
 
     update.setPsDescription(psDescription);
     MailRecipients fromFooters = getRecipientsFromFooters(accountResolver, commit.getFooterLines());
-    Iterable<PatchSetApproval> newApprovals =
-        approvalsUtil.addApprovalsForNewPatchSet(
-            ctx.getDb(),
-            update,
-            projectState.getLabelTypes(),
-            newPatchSet,
-            ctx.getUser(),
-            approvals);
-    approvalCopier.copyInReviewDb(
-        ctx.getDb(),
-        ctx.getNotes(),
-        newPatchSet,
-        ctx.getRevWalk(),
-        ctx.getRepoView().getConfig(),
-        newApprovals);
+    approvalsUtil.addApprovalsForNewPatchSet(
+        update, projectState.getLabelTypes(), newPatchSet, ctx.getUser(), approvals);
 
     reviewerAdditions =
         reviewerAdder.prepare(
-            ctx.getDb(),
             ctx.getNotes(),
             ctx.getUser(),
             getReviewerInputs(magicBranch, fromFooters, ctx.getChange(), info),
@@ -358,7 +325,7 @@ public class ReplaceOp implements BatchUpdateOp {
     }
 
     msg = createChangeMessage(ctx, reviewMessage);
-    cmUtil.addChangeMessage(ctx.getDb(), update, msg);
+    cmUtil.addChangeMessage(update, msg);
 
     if (mergedByPushOp == null) {
       resetChange(ctx);
@@ -380,10 +347,16 @@ public class ReplaceOp implements BatchUpdateOp {
         Streams.concat(
             Streams.stream(
                 newAddReviewerInputFromCommitIdentity(
-                    change, psInfo.getAuthor().getAccount(), NotifyHandling.NONE)),
+                    change,
+                    psInfo.getCommitId(),
+                    psInfo.getAuthor().getAccount(),
+                    NotifyHandling.NONE)),
             Streams.stream(
                 newAddReviewerInputFromCommitIdentity(
-                    change, psInfo.getCommitter().getAccount(), NotifyHandling.NONE)));
+                    change,
+                    psInfo.getCommitId(),
+                    psInfo.getCommitter().getAccount(),
+                    NotifyHandling.NONE)));
     if (magicBranch != null) {
       inputs =
           Streams.concat(
@@ -411,7 +384,7 @@ public class ReplaceOp implements BatchUpdateOp {
   }
 
   private ChangeMessage createChangeMessage(ChangeContext ctx, String reviewMessage)
-      throws OrmException, IOException {
+      throws IOException {
     String approvalMessage =
         ApprovalsUtil.renderMessageWithApprovals(
             patchSetId.get(), approvals, scanLabels(ctx, approvals));
@@ -421,11 +394,6 @@ public class ReplaceOp implements BatchUpdateOp {
       message.append(kindMessage);
     } else {
       message.append('.');
-    }
-    if (comments.size() == 1) {
-      message.append("\n\n(1 comment)");
-    } else if (comments.size() > 1) {
-      message.append(String.format("\n\n(%d comments)", comments.size()));
     }
     if (!Strings.isNullOrEmpty(reviewMessage)) {
       message.append("\n\n").append(reviewMessage);
@@ -465,13 +433,12 @@ public class ReplaceOp implements BatchUpdateOp {
   }
 
   private Map<String, PatchSetApproval> scanLabels(ChangeContext ctx, Map<String, Short> approvals)
-      throws OrmException, IOException {
+      throws IOException {
     Map<String, PatchSetApproval> current = new HashMap<>();
     // We optimize here and only retrieve current when approvals provided
     if (!approvals.isEmpty()) {
       for (PatchSetApproval a :
           approvalsUtil.byPatchSetUser(
-              ctx.getDb(),
               ctx.getNotes(),
               priorPatchSetId,
               ctx.getAccountId(),
@@ -481,7 +448,7 @@ public class ReplaceOp implements BatchUpdateOp {
           continue;
         }
 
-        LabelType lt = projectState.getLabelTypes().byLabel(a.getLabelId());
+        LabelType lt = projectState.getLabelTypes().byLabel(a.labelId());
         if (lt != null) {
           current.put(lt.getName(), a);
         }
@@ -503,20 +470,7 @@ public class ReplaceOp implements BatchUpdateOp {
     change.setCurrentPatchSet(info);
 
     List<String> idList = commit.getFooterLines(CHANGE_ID);
-    if (idList.isEmpty()) {
-      change.setKey(new Change.Key("I" + commitId.name()));
-    } else {
-      change.setKey(new Change.Key(idList.get(idList.size() - 1).trim()));
-    }
-  }
-
-  private List<Comment> publishComments(ChangeContext ctx, boolean workInProgress)
-      throws OrmException {
-    List<Comment> comments =
-        commentsUtil.draftByChangeAuthor(ctx.getDb(), ctx.getNotes(), ctx.getUser().getAccountId());
-    publishCommentUtil.publish(
-        ctx, patchSetId, comments, ChangeMessagesUtil.uploadedPatchSetTag(workInProgress));
-    return comments;
+    change.setKey(Change.key(idList.get(idList.size() - 1).trim()));
   }
 
   @Override
@@ -532,27 +486,10 @@ public class ReplaceOp implements BatchUpdateOp {
         e.run();
       }
     }
-
-    NotifyHandling notify = magicBranch != null ? magicBranch.getNotify(notes) : NotifyHandling.ALL;
-
-    if (shouldPublishComments()) {
-      emailCommentsFactory
-          .create(
-              notify,
-              magicBranch != null ? magicBranch.getAccountsToNotify() : ImmutableListMultimap.of(),
-              notes,
-              newPatchSet,
-              ctx.getUser().asIdentifiedUser(),
-              msg,
-              comments,
-              msg.getMessage(),
-              ImmutableList.of()) // TODO(dborowitz): Include labels.
-          .sendAsync();
-    }
-
+    NotifyResolver.Result notify = ctx.getNotify(notes.getChangeId());
     revisionCreated.fire(notes.getChange(), newPatchSet, ctx.getAccount(), ctx.getWhen(), notify);
     try {
-      fireCommentAddedEvent(ctx);
+      fireApprovalsEvent(ctx);
     } catch (Exception e) {
       logger.atWarning().withCause(e).log("comment-added event invocation failed");
     }
@@ -573,18 +510,15 @@ public class ReplaceOp implements BatchUpdateOp {
       try {
         ReplacePatchSetSender cm =
             replacePatchSetFactory.create(projectState.getNameKey(), notes.getChangeId());
-        cm.setFrom(ctx.getAccount().getAccount().getId());
+        cm.setFrom(ctx.getAccount().account().id());
         cm.setPatchSet(newPatchSet, info);
         cm.setChangeMessage(msg.getMessage(), ctx.getWhen());
-        if (magicBranch != null) {
-          cm.setNotify(magicBranch.getNotify(notes));
-          cm.setAccountsToNotify(magicBranch.getAccountsToNotify());
-        }
+        cm.setNotify(ctx.getNotify(notes.getChangeId()));
         cm.addReviewers(
             Streams.concat(
                     oldRecipients.getReviewers().stream(),
                     reviewerAdditions.flattenResults(AddReviewersOp.Result::addedReviewers).stream()
-                        .map(PatchSetApproval::getAccountId))
+                        .map(PatchSetApproval::accountId))
                 .collect(toImmutableSet()));
         cm.addExtraCC(
             Streams.concat(
@@ -595,7 +529,7 @@ public class ReplaceOp implements BatchUpdateOp {
         cm.send();
       } catch (Exception e) {
         logger.atSevere().withCause(e).log(
-            "Cannot send email for new patch set %s", newPatchSet.getId());
+            "Cannot send email for new patch set %s", newPatchSet.id());
       }
     }
 
@@ -605,11 +539,10 @@ public class ReplaceOp implements BatchUpdateOp {
     }
   }
 
-  private void fireCommentAddedEvent(Context ctx) throws IOException {
+  private void fireApprovalsEvent(Context ctx) throws IOException {
     if (approvals.isEmpty()) {
       return;
     }
-
     /* For labels that are not set in this operation, show the "current" value
      * of 0, and no oldValue as the value was not modified by this operation.
      * For labels that are set in this operation, the value was modified, so
@@ -629,7 +562,6 @@ public class ReplaceOp implements BatchUpdateOp {
         oldApprovals.put(entry.getKey(), (short) 0);
       }
     }
-
     commentAdded.fire(
         notes.getChange(),
         newPatchSet,
@@ -679,9 +611,5 @@ public class ReplaceOp implements BatchUpdateOp {
       logger.atWarning().withCause(e).log("Can't check for already submitted change");
       return null;
     }
-  }
-
-  private boolean shouldPublishComments() {
-    return magicBranch != null && magicBranch.shouldPublishComments();
   }
 }

@@ -17,7 +17,9 @@ package com.google.gerrit.server.project;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.gerrit.common.data.Permission.isPermission;
-import static com.google.gerrit.reviewdb.client.Project.DEFAULT_SUBMIT_TYPE;
+import static com.google.gerrit.entities.Project.DEFAULT_SUBMIT_TYPE;
+import static com.google.gerrit.server.permissions.PluginPermissionsUtil.isValidPluginPermission;
+import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toList;
 
 import com.google.common.base.CharMatcher;
@@ -25,9 +27,11 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
 import com.google.common.primitives.Shorts;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.common.UsedAt;
 import com.google.gerrit.common.data.AccessSection;
 import com.google.gerrit.common.data.ContributorAgreement;
 import com.google.gerrit.common.data.GlobalCapability;
@@ -39,27 +43,29 @@ import com.google.gerrit.common.data.LabelValue;
 import com.google.gerrit.common.data.Permission;
 import com.google.gerrit.common.data.PermissionRule;
 import com.google.gerrit.common.data.PermissionRule.Action;
-import com.google.gerrit.common.data.RefConfigSection;
 import com.google.gerrit.common.data.SubscribeSection;
-import com.google.gerrit.common.errors.InvalidNameException;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.BooleanProjectConfig;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.exceptions.InvalidNameException;
 import com.google.gerrit.extensions.client.InheritableBoolean;
 import com.google.gerrit.extensions.client.ProjectState;
 import com.google.gerrit.mail.Address;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.BooleanProjectConfig;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
-import com.google.gerrit.server.UsedAt;
 import com.google.gerrit.server.account.GroupBackend;
 import com.google.gerrit.server.account.ProjectWatches.NotifyType;
+import com.google.gerrit.server.config.AllProjectsName;
 import com.google.gerrit.server.config.ConfigUtil;
 import com.google.gerrit.server.config.PluginConfig;
+import com.google.gerrit.server.config.SitePaths;
 import com.google.gerrit.server.git.BranchOrderSection;
 import com.google.gerrit.server.git.NotifyConfig;
 import com.google.gerrit.server.git.ValidationError;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.git.meta.VersionedMetaData;
+import com.google.inject.Inject;
+import com.google.inject.Singleton;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -72,7 +78,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -83,8 +88,11 @@ import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.storage.file.FileBasedConfig;
 import org.eclipse.jgit.transport.RefSpec;
+import org.eclipse.jgit.util.FS;
 
 public class ProjectConfig extends VersionedMetaData implements ValidationError.Sink {
   public static final String COMMENTLINK = "commentlink";
@@ -94,6 +102,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
   public static final String KEY_COPY_MIN_SCORE = "copyMinScore";
   public static final String KEY_ALLOW_POST_SUBMIT = "allowPostSubmit";
   public static final String KEY_IGNORE_SELF_APPROVAL = "ignoreSelfApproval";
+  public static final String KEY_COPY_ANY_SCORE = "copyAnyScore";
   public static final String KEY_COPY_MAX_SCORE = "copyMaxScore";
   public static final String KEY_COPY_ALL_SCORES_ON_MERGE_FIRST_PARENT_UPDATE =
       "copyAllScoresOnMergeFirstParentUpdate";
@@ -104,10 +113,10 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
   public static final String KEY_CAN_OVERRIDE = "canOverride";
   public static final String KEY_BRANCH = "branch";
 
-  private static final String KEY_MATCH = "match";
+  public static final String KEY_MATCH = "match";
   private static final String KEY_HTML = "html";
-  private static final String KEY_LINK = "link";
-  private static final String KEY_ENABLED = "enabled";
+  public static final String KEY_LINK = "link";
+  public static final String KEY_ENABLED = "enabled";
 
   public static final String PROJECT_CONFIG = "project.config";
 
@@ -128,6 +137,8 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
   private static final String KEY_ACCEPTED = "accepted";
   private static final String KEY_AUTO_VERIFY = "autoVerify";
   private static final String KEY_AGREEMENT_URL = "agreementUrl";
+  private static final String KEY_MATCH_PROJECTS = "matchProjects";
+  private static final String KEY_EXCLUDE_PROJECTS = "excludeProjects";
 
   private static final String NOTIFY = "notify";
   private static final String KEY_EMAIL = "email";
@@ -166,6 +177,59 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
 
   private static final Pattern EXCLUSIVE_PERMISSIONS_SPLIT_PATTERN = Pattern.compile("[, \t]{1,}");
 
+  // Don't use an assisted factory, since instances created by an assisted factory retain references
+  // to their enclosing injector. Instances of ProjectConfig are cached for a long time in the
+  // ProjectCache, so this would retain lots more memory.
+  @Singleton
+  public static class Factory {
+    @Nullable
+    public static StoredConfig getBaseConfig(
+        SitePaths sitePaths, AllProjectsName allProjects, Project.NameKey projectName) {
+      return projectName.equals(allProjects)
+          // Delay loading till onLoad method.
+          ? new FileBasedConfig(
+              sitePaths.etc_dir.resolve(allProjects.get()).resolve(PROJECT_CONFIG).toFile(),
+              FS.DETECTED)
+          : null;
+    }
+
+    private final SitePaths sitePaths;
+    private final AllProjectsName allProjects;
+
+    @Inject
+    Factory(SitePaths sitePaths, AllProjectsName allProjects) {
+      this.sitePaths = sitePaths;
+      this.allProjects = allProjects;
+    }
+
+    public ProjectConfig create(Project.NameKey projectName) {
+      return new ProjectConfig(projectName, getBaseConfig(sitePaths, allProjects, projectName));
+    }
+
+    public ProjectConfig read(MetaDataUpdate update) throws IOException, ConfigInvalidException {
+      ProjectConfig r = create(update.getProjectName());
+      r.load(update);
+      return r;
+    }
+
+    public ProjectConfig read(MetaDataUpdate update, ObjectId id)
+        throws IOException, ConfigInvalidException {
+      ProjectConfig r = create(update.getProjectName());
+      r.load(update, id);
+      return r;
+    }
+
+    @UsedAt(UsedAt.Project.COLLABNET)
+    public ProjectConfig read(Repository repo, Project.NameKey name)
+        throws IOException, ConfigInvalidException {
+      ProjectConfig r = create(name);
+      r.load(repo);
+      return r;
+    }
+  }
+
+  private final StoredConfig baseConfig;
+
   private Project project;
   private AccountsSection accountsSection;
   private GroupList groupList;
@@ -176,7 +240,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
   private Map<String, LabelType> labelSections;
   private ConfiguredMimeTypes mimeTypes;
   private Map<Project.NameKey, SubscribeSection> subscribeSections;
-  private List<CommentLinkInfoImpl> commentLinkSections;
+  private Map<String, CommentLinkInfoImpl> commentLinkSections;
   private List<ValidationError> validationErrors;
   private ObjectId rulesId;
   private long maxObjectSizeLimit;
@@ -186,28 +250,6 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
   private boolean hasLegacyPermissions;
   private Map<String, List<String>> extensionPanelSections;
   private Map<String, GroupReference> groupsByName;
-
-  public static ProjectConfig read(MetaDataUpdate update)
-      throws IOException, ConfigInvalidException {
-    ProjectConfig r = new ProjectConfig(update.getProjectName());
-    r.load(update);
-    return r;
-  }
-
-  public static ProjectConfig read(MetaDataUpdate update, ObjectId id)
-      throws IOException, ConfigInvalidException {
-    ProjectConfig r = new ProjectConfig(update.getProjectName());
-    r.load(update, id);
-    return r;
-  }
-
-  @UsedAt(UsedAt.Project.COLLABNET)
-  public static ProjectConfig read(Repository repo, Project.NameKey name)
-      throws IOException, ConfigInvalidException {
-    ProjectConfig r = new ProjectConfig(name);
-    r.load(repo);
-    return r;
-  }
 
   public static CommentLinkInfoImpl buildCommentLink(Config cfg, String name, boolean allowRaw)
       throws IllegalArgumentException {
@@ -247,11 +289,17 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
   }
 
   public void addCommentLinkSection(CommentLinkInfoImpl commentLink) {
-    commentLinkSections.add(commentLink);
+    commentLinkSections.put(commentLink.name, commentLink);
   }
 
-  public ProjectConfig(Project.NameKey projectName) {
+  public void removeCommentLinkSection(String name) {
+    requireNonNull(name);
+    requireNonNull(commentLinkSections.remove(name));
+  }
+
+  private ProjectConfig(Project.NameKey projectName, @Nullable StoredConfig baseConfig) {
     this.projectName = projectName;
+    this.baseConfig = baseConfig;
   }
 
   public void load(Repository repo) throws IOException, ConfigInvalidException {
@@ -297,6 +345,10 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     return as;
   }
 
+  public ImmutableSet<String> getAccessSectionNames() {
+    return ImmutableSet.copyOf(accessSections.keySet());
+  }
+
   public Collection<AccessSection> getAccessSections() {
     return sort(accessSections.values());
   }
@@ -309,7 +361,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     return subscribeSections;
   }
 
-  public Collection<SubscribeSection> getSubscribeSections(Branch.NameKey branch) {
+  public Collection<SubscribeSection> getSubscribeSections(BranchNameKey branch) {
     Collection<SubscribeSection> ret = new ArrayList<>();
     for (SubscribeSection s : subscribeSections.values()) {
       if (s.appliesTo(branch)) {
@@ -328,7 +380,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
       String name = section.getName();
       if (sectionsWithUnknownPermissions.contains(name)) {
         AccessSection a = accessSections.get(name);
-        a.setPermissions(new ArrayList<Permission>());
+        a.setPermissions(new ArrayList<>());
       } else {
         accessSections.remove(name);
       }
@@ -424,7 +476,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
   }
 
   public Collection<CommentLinkInfoImpl> getCommentLinkSections() {
-    return commentLinkSections;
+    return commentLinkSections.values();
   }
 
   public ConfiguredMimeTypes getMimeTypes() {
@@ -513,11 +565,14 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
 
   @Override
   protected void onLoad() throws IOException, ConfigInvalidException {
+    if (baseConfig != null) {
+      baseConfig.load();
+    }
     readGroupList();
     groupsByName = mapGroupReferences();
 
     rulesId = getObjectId("rules.pl");
-    Config rc = readConfig(PROJECT_CONFIG);
+    Config rc = readConfig(PROJECT_CONFIG, baseConfig);
     project = new Project(projectName);
 
     Project p = project;
@@ -602,6 +657,9 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
       ca.setAgreementUrl(rc.getString(CONTRIBUTOR_AGREEMENT, name, KEY_AGREEMENT_URL));
       ca.setAccepted(
           loadPermissionRules(rc, CONTRIBUTOR_AGREEMENT, name, KEY_ACCEPTED, groupsByName, false));
+      ca.setExcludeProjectsRegexes(
+          loadPatterns(rc, CONTRIBUTOR_AGREEMENT, name, KEY_EXCLUDE_PROJECTS));
+      ca.setMatchProjectsRegexes(loadPatterns(rc, CONTRIBUTOR_AGREEMENT, name, KEY_MATCH_PROJECTS));
 
       List<PermissionRule> rules =
           loadPermissionRules(
@@ -671,7 +729,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
         if (groupName != null) {
           GroupReference ref = groupsByName.get(groupName);
           if (ref == null) {
-            ref = new GroupReference(null, groupName);
+            ref = new GroupReference(groupName);
             groupsByName.put(ref.getName(), ref);
           }
           if (ref.getUUID() != null) {
@@ -703,13 +761,13 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     accessSections = new HashMap<>();
     sectionsWithUnknownPermissions = new HashSet<>();
     for (String refName : rc.getSubsections(ACCESS)) {
-      if (RefConfigSection.isValid(refName) && isValidRegex(refName)) {
+      if (AccessSection.isValidRefSectionName(refName) && isValidRegex(refName)) {
         AccessSection as = getAccessSection(refName, true);
 
         for (String varName : rc.getStringList(ACCESS, refName, KEY_GROUP_PERMISSIONS)) {
           for (String n : Splitter.on(EXCLUSIVE_PERMISSIONS_SPLIT_PATTERN).split(varName)) {
             n = convertLegacyPermission(n);
-            if (isPermission(n)) {
+            if (isCoreOrPluginPermission(n)) {
               as.getPermission(n, true).setExclusiveGroup(true);
             }
           }
@@ -717,7 +775,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
 
         for (String varName : rc.getNames(ACCESS, refName)) {
           String convertedName = convertLegacyPermission(varName);
-          if (isPermission(convertedName)) {
+          if (isCoreOrPluginPermission(convertedName)) {
             Permission perm = as.getPermission(convertedName, true);
             loadPermissionRules(
                 rc,
@@ -746,6 +804,12 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     }
   }
 
+  private boolean isCoreOrPluginPermission(String permission) {
+    // Since plugins are loaded dynamically, here we can't load all plugin permissions and verify
+    // their existence.
+    return isPermission(permission) || isValidPluginPermission(permission);
+  }
+
   private boolean isValidRegex(String refPattern) {
     try {
       RefPattern.validateRegExp(refPattern);
@@ -760,6 +824,22 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     if (rc.getSections().contains(BRANCH_ORDER)) {
       branchOrderSection = new BranchOrderSection(rc.getStringList(BRANCH_ORDER, null, BRANCH));
     }
+  }
+
+  private ImmutableList<String> loadPatterns(
+      Config rc, String section, String subsection, String varName) {
+    ImmutableList.Builder<String> patterns = ImmutableList.builder();
+    for (String patternString : rc.getStringList(section, subsection, varName)) {
+      try {
+        // While one could just use getStringList directly, compiling first will cause the server
+        // to fail fast if any of the patterns are invalid.
+        patterns.add(Pattern.compile(patternString).pattern());
+      } catch (PatternSyntaxException e) {
+        error(new ValidationError(PROJECT_CONFIG, "Invalid regular expression: " + e.getMessage()));
+        continue;
+      }
+    }
+    return patterns.build();
   }
 
   private ImmutableList<PermissionRule> loadPermissionRules(
@@ -843,9 +923,18 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
       lowerNames.put(lower, name);
 
       List<LabelValue> values = new ArrayList<>();
+      Set<Short> allValues = new HashSet<>();
       for (String value : rc.getStringList(LABEL, name, KEY_VALUE)) {
         try {
-          values.add(parseLabelValue(value));
+          LabelValue labelValue = parseLabelValue(value);
+          if (allValues.add(labelValue.getValue())) {
+            values.add(labelValue);
+          } else {
+            error(
+                new ValidationError(
+                    PROJECT_CONFIG,
+                    String.format("Duplicate %s \"%s\" for label \"%s\"", KEY_VALUE, value, name)));
+          }
         } catch (IllegalArgumentException notValue) {
           error(
               new ValidationError(
@@ -895,6 +984,8 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
           rc.getBoolean(LABEL, name, KEY_ALLOW_POST_SUBMIT, LabelType.DEF_ALLOW_POST_SUBMIT));
       label.setIgnoreSelfApproval(
           rc.getBoolean(LABEL, name, KEY_IGNORE_SELF_APPROVAL, LabelType.DEF_IGNORE_SELF_APPROVAL));
+      label.setCopyAnyScore(
+          rc.getBoolean(LABEL, name, KEY_COPY_ANY_SCORE, LabelType.DEF_COPY_ANY_SCORE));
       label.setCopyMinScore(
           rc.getBoolean(LABEL, name, KEY_COPY_MIN_SCORE, LabelType.DEF_COPY_MIN_SCORE));
       label.setCopyMaxScore(
@@ -947,10 +1038,10 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
 
   private void loadCommentLinkSections(Config rc) {
     Set<String> subsections = rc.getSubsections(COMMENTLINK);
-    commentLinkSections = new ArrayList<>(subsections.size());
+    commentLinkSections = new LinkedHashMap<>(subsections.size());
     for (String name : subsections) {
       try {
-        commentLinkSections.add(buildCommentLink(rc, name, false));
+        commentLinkSections.put(name, buildCommentLink(rc, name, false));
       } catch (PatternSyntaxException e) {
         error(
             new ValidationError(
@@ -974,7 +1065,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     subscribeSections = new HashMap<>();
     try {
       for (String projectName : subsections) {
-        Project.NameKey p = new Project.NameKey(projectName);
+        Project.NameKey p = Project.nameKey(projectName);
         SubscribeSection ss = new SubscribeSection(p);
         for (String s :
             rc.getStringList(SUBSCRIBE_SECTION, projectName, SUBSCRIBE_MULTI_MATCH_REFS)) {
@@ -1126,6 +1217,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
   }
 
   private void saveAccountsSection(Config rc, Set<AccountGroup.UUID> keepGroups) {
+    unsetSection(rc, ACCOUNTS);
     if (accountsSection != null) {
       rc.setStringList(
           ACCOUNTS,
@@ -1136,8 +1228,9 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
   }
 
   private void saveCommentLinkSections(Config rc) {
+    unsetSection(rc, COMMENTLINK);
     if (commentLinkSections != null) {
-      for (CommentLinkInfoImpl cm : commentLinkSections) {
+      for (CommentLinkInfoImpl cm : commentLinkSections.values()) {
         rc.setString(COMMENTLINK, cm.name, KEY_MATCH, cm.match);
         if (!Strings.isNullOrEmpty(cm.html)) {
           rc.setString(COMMENTLINK, cm.name, KEY_HTML, cm.html);
@@ -1153,6 +1246,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
   }
 
   private void saveContributorAgreements(Config rc, Set<AccountGroup.UUID> keepGroups) {
+    unsetSection(rc, CONTRIBUTOR_AGREEMENT);
     for (ContributorAgreement ca : sort(contributorAgreements.values())) {
       set(rc, CONTRIBUTOR_AGREEMENT, ca.getName(), KEY_DESCRIPTION, ca.getDescription());
       set(rc, CONTRIBUTOR_AGREEMENT, ca.getName(), KEY_AGREEMENT_URL, ca.getAgreementUrl());
@@ -1172,13 +1266,24 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
           ca.getName(),
           KEY_ACCEPTED,
           ruleToStringList(ca.getAccepted(), keepGroups));
+      rc.setStringList(
+          CONTRIBUTOR_AGREEMENT,
+          ca.getName(),
+          KEY_EXCLUDE_PROJECTS,
+          patternToStringList(ca.getExcludeProjectsRegexes()));
+      rc.setStringList(
+          CONTRIBUTOR_AGREEMENT,
+          ca.getName(),
+          KEY_MATCH_PROJECTS,
+          patternToStringList(ca.getMatchProjectsRegexes()));
     }
   }
 
   private void saveNotifySections(Config rc, Set<AccountGroup.UUID> keepGroups) {
+    unsetSection(rc, NOTIFY);
     for (NotifyConfig nc : sort(notifySections.values())) {
       nc.getGroups().stream()
-          .map(gr -> gr.getUUID())
+          .map(GroupReference::getUUID)
           .filter(Objects::nonNull)
           .forEach(keepGroups::add);
       List<String> email =
@@ -1213,6 +1318,10 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     }
   }
 
+  private List<String> patternToStringList(List<String> list) {
+    return list;
+  }
+
   private List<String> ruleToStringList(
       List<PermissionRule> list, Set<AccountGroup.UUID> keepGroups) {
     List<String> rules = new ArrayList<>();
@@ -1226,6 +1335,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
   }
 
   private void saveAccessSections(Config rc, Set<AccountGroup.UUID> keepGroups) {
+    unsetSection(rc, CAPABILITY);
     AccessSection capability = accessSections.get(AccessSection.GLOBAL_CAPABILITIES);
     if (capability != null) {
       Set<String> have = new HashSet<>();
@@ -1290,7 +1400,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
       }
 
       for (String varName : rc.getNames(ACCESS, refName)) {
-        if (isPermission(convertLegacyPermission(varName))
+        if (isCoreOrPluginPermission(convertLegacyPermission(varName))
             && !have.contains(varName.toLowerCase())) {
           rc.unset(ACCESS, refName, varName);
         }
@@ -1298,7 +1408,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     }
 
     for (String name : rc.getSubsections(ACCESS)) {
-      if (RefConfigSection.isValid(name) && !accessSections.containsKey(name)) {
+      if (AccessSection.isValidRefSectionName(name) && !accessSections.containsKey(name)) {
         rc.unsetSection(ACCESS, name);
       }
     }
@@ -1308,9 +1418,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     List<String> existing = new ArrayList<>(rc.getSubsections(LABEL));
     if (!new ArrayList<>(labelSections.keySet()).equals(existing)) {
       // Order of sections changed, remove and rewrite them all.
-      for (String name : existing) {
-        rc.unsetSection(LABEL, name);
-      }
+      unsetSection(rc, LABEL);
     }
 
     Set<String> toUnset = new HashSet<>(existing);
@@ -1335,6 +1443,13 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
           KEY_IGNORE_SELF_APPROVAL,
           label.ignoreSelfApproval(),
           LabelType.DEF_IGNORE_SELF_APPROVAL);
+      setBooleanConfigKey(
+          rc,
+          LABEL,
+          name,
+          KEY_COPY_ANY_SCORE,
+          label.isCopyAnyScore(),
+          LabelType.DEF_COPY_ANY_SCORE);
       setBooleanConfigKey(
           rc,
           LABEL,
@@ -1388,6 +1503,8 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
       List<String> refPatterns = label.getRefPatterns();
       if (refPatterns != null && !refPatterns.isEmpty()) {
         rc.setStringList(LABEL, name, KEY_BRANCH, refPatterns);
+      } else {
+        rc.unset(LABEL, name, KEY_BRANCH);
       }
     }
 
@@ -1406,12 +1523,8 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
   }
 
   private void savePluginSections(Config rc, Set<AccountGroup.UUID> keepGroups) {
-    List<String> existing = new ArrayList<>(rc.getSubsections(PLUGIN));
-    for (String name : existing) {
-      rc.unsetSection(PLUGIN, name);
-    }
-
-    for (Entry<String, Config> e : pluginConfigs.entrySet()) {
+    unsetSection(rc, PLUGIN);
+    for (Map.Entry<String, Config> e : pluginConfigs.entrySet()) {
       String plugin = e.getKey();
       Config pluginConfig = e.getValue();
       for (String name : pluginConfig.getNames(PLUGIN, plugin)) {
@@ -1451,6 +1564,13 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     }
   }
 
+  private void unsetSection(Config rc, String sectionName) {
+    for (String subSectionName : rc.getSubsections(sectionName)) {
+      rc.unsetSection(sectionName, subSectionName);
+    }
+    rc.unsetSection(sectionName, null);
+  }
+
   private <E extends Enum<?>> E getEnum(
       Config rc, String section, String subsection, String name, E defaultValue) {
     try {
@@ -1473,6 +1593,7 @@ public class ProjectConfig extends VersionedMetaData implements ValidationError.
     return m.stream().sorted().collect(toImmutableList());
   }
 
+  @UsedAt(UsedAt.Project.GOOGLE)
   public boolean hasLegacyPermissions() {
     return hasLegacyPermissions;
   }

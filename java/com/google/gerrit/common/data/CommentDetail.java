@@ -14,9 +14,9 @@
 
 package com.google.gerrit.common.data;
 
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Comment;
-import com.google.gerrit.reviewdb.client.PatchSet;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Comment;
+import com.google.gerrit.entities.PatchSet;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -42,7 +42,7 @@ public class CommentDetail {
   protected CommentDetail() {}
 
   public void include(Change.Id changeId, Comment p) {
-    PatchSet.Id psId = new PatchSet.Id(changeId, p.key.patchSetId);
+    PatchSet.Id psId = PatchSet.id(changeId, p.key.patchSetId);
     if (p.side == 0) {
       if (idA == null && idB.equals(psId)) {
         a.add(p);
@@ -84,7 +84,7 @@ public class CommentDetail {
 
   private static List<Comment> get(Map<Integer, List<Comment>> m, int i) {
     List<Comment> r = m.get(i);
-    return r != null ? orderComments(r) : Collections.<Comment>emptyList();
+    return r != null ? orderComments(r) : Collections.emptyList();
   }
 
   /**

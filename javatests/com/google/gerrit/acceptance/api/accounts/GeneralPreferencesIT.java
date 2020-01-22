@@ -16,35 +16,31 @@ package com.google.gerrit.acceptance.api.accounts;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.gerrit.acceptance.AssertUtil.assertPrefs;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
 import com.google.gerrit.acceptance.AbstractDaemonTest;
+import com.google.gerrit.acceptance.ExtensionRegistry;
+import com.google.gerrit.acceptance.ExtensionRegistry.Registration;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.TestAccount;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo.DateFormat;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo.DefaultBase;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo.DiffView;
-import com.google.gerrit.extensions.client.GeneralPreferencesInfo.DownloadCommand;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo.EmailFormat;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo.EmailStrategy;
-import com.google.gerrit.extensions.client.GeneralPreferencesInfo.ReviewCategoryStrategy;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo.TimeFormat;
 import com.google.gerrit.extensions.client.MenuItem;
 import com.google.gerrit.extensions.config.DownloadScheme;
-import com.google.gerrit.extensions.registration.DynamicMap;
-import com.google.gerrit.extensions.registration.PrivateInternals_DynamicMapImpl;
-import com.google.gerrit.extensions.registration.RegistrationHandle;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.inject.Inject;
-import com.google.inject.util.Providers;
 import java.util.ArrayList;
-import java.util.HashMap;
 import org.junit.Before;
 import org.junit.Test;
 
 @NoHttpd
 public class GeneralPreferencesIT extends AbstractDaemonTest {
-  @Inject private DynamicMap<DownloadScheme> downloadSchemes;
+  @Inject private ExtensionRegistry extensionRegistry;
 
   private TestAccount user42;
 
@@ -56,7 +52,7 @@ public class GeneralPreferencesIT extends AbstractDaemonTest {
 
   @Test
   public void getAndSetPreferences() throws Exception {
-    GeneralPreferencesInfo o = gApi.accounts().id(user42.id.toString()).getPreferences();
+    GeneralPreferencesInfo o = gApi.accounts().id(user42.id().toString()).getPreferences();
     assertPrefs(o, GeneralPreferencesInfo.defaults(), "my", "changeTable");
     assertThat(o.my)
         .containsExactly(
@@ -65,16 +61,13 @@ public class GeneralPreferencesIT extends AbstractDaemonTest {
             new MenuItem("Edits", "#/q/has:edit", null),
             new MenuItem("Watched Changes", "#/q/is:watched+is:open", null),
             new MenuItem("Starred Changes", "#/q/is:starred", null),
-            new MenuItem("Groups", "#/groups/self", null));
+            new MenuItem("Groups", "#/settings/#Groups", null));
     assertThat(o.changeTable).isEmpty();
 
     GeneralPreferencesInfo i = GeneralPreferencesInfo.defaults();
 
     // change all default values
     i.changesPerPage *= -1;
-    i.showSiteHeader ^= true;
-    i.useFlashClipboard ^= true;
-    i.downloadCommand = DownloadCommand.REPO_DOWNLOAD;
     i.dateFormat = DateFormat.US;
     i.timeFormat = TimeFormat.HHMM_24;
     i.emailStrategy = EmailStrategy.DISABLED;
@@ -87,16 +80,13 @@ public class GeneralPreferencesIT extends AbstractDaemonTest {
     i.legacycidInChangeTable ^= true;
     i.muteCommonPathPrefixes ^= true;
     i.signedOffBy ^= true;
-    i.reviewCategoryStrategy = ReviewCategoryStrategy.ABBREV;
     i.diffView = DiffView.UNIFIED_DIFF;
     i.my = new ArrayList<>();
     i.my.add(new MenuItem("name", "url"));
     i.changeTable = new ArrayList<>();
     i.changeTable.add("Status");
-    i.urlAliases = new HashMap<>();
-    i.urlAliases.put("foo", "bar");
 
-    o = gApi.accounts().id(user42.getId().toString()).setPreferences(i);
+    o = gApi.accounts().id(user42.id().toString()).setPreferences(i);
     assertPrefs(o, i, "my");
     assertThat(o.my).containsExactlyElementsIn(i.my);
     assertThat(o.changeTable).containsExactlyElementsIn(i.changeTable);
@@ -110,7 +100,7 @@ public class GeneralPreferencesIT extends AbstractDaemonTest {
     update.changesPerPage = newChangesPerPage;
     gApi.config().server().setDefaultPreferences(update);
 
-    GeneralPreferencesInfo o = gApi.accounts().id(user42.getId().toString()).getPreferences();
+    GeneralPreferencesInfo o = gApi.accounts().id(user42.id().toString()).getPreferences();
 
     // assert configured defaults
     assertThat(o.changesPerPage).isEqualTo(newChangesPerPage);
@@ -127,29 +117,29 @@ public class GeneralPreferencesIT extends AbstractDaemonTest {
     update.changesPerPage = configuredChangesPerPage;
     gApi.config().server().setDefaultPreferences(update);
 
-    GeneralPreferencesInfo o = gApi.accounts().id(admin.getId().toString()).getPreferences();
+    GeneralPreferencesInfo o = gApi.accounts().id(admin.id().toString()).getPreferences();
     assertThat(o.changesPerPage).isEqualTo(configuredChangesPerPage);
     assertPrefs(o, d, "my", "changeTable", "changesPerPage");
 
     int newChangesPerPage = configuredChangesPerPage * 2;
     GeneralPreferencesInfo i = new GeneralPreferencesInfo();
     i.changesPerPage = newChangesPerPage;
-    GeneralPreferencesInfo a = gApi.accounts().id(admin.getId().toString()).setPreferences(i);
+    GeneralPreferencesInfo a = gApi.accounts().id(admin.id().toString()).setPreferences(i);
     assertThat(a.changesPerPage).isEqualTo(newChangesPerPage);
     assertPrefs(a, d, "my", "changeTable", "changesPerPage");
 
-    a = gApi.accounts().id(admin.getId().toString()).getPreferences();
+    a = gApi.accounts().id(admin.id().toString()).getPreferences();
     assertThat(a.changesPerPage).isEqualTo(newChangesPerPage);
     assertPrefs(a, d, "my", "changeTable", "changesPerPage");
 
     // overwrite the configured default with original hard-coded default
     i = new GeneralPreferencesInfo();
     i.changesPerPage = d.changesPerPage;
-    a = gApi.accounts().id(admin.getId().toString()).setPreferences(i);
+    a = gApi.accounts().id(admin.id().toString()).setPreferences(i);
     assertThat(a.changesPerPage).isEqualTo(d.changesPerPage);
     assertPrefs(a, d, "my", "changeTable", "changesPerPage");
 
-    a = gApi.accounts().id(admin.getId().toString()).getPreferences();
+    a = gApi.accounts().id(admin.id().toString()).getPreferences();
     assertThat(a.changesPerPage).isEqualTo(d.changesPerPage);
     assertPrefs(a, d, "my", "changeTable", "changesPerPage");
   }
@@ -160,9 +150,11 @@ public class GeneralPreferencesIT extends AbstractDaemonTest {
     i.my = new ArrayList<>();
     i.my.add(new MenuItem(null, "url"));
 
-    exception.expect(BadRequestException.class);
-    exception.expectMessage("name for menu item is required");
-    gApi.accounts().id(user42.getId().toString()).setPreferences(i);
+    BadRequestException thrown =
+        assertThrows(
+            BadRequestException.class,
+            () -> gApi.accounts().id(user42.id().toString()).setPreferences(i));
+    assertThat(thrown).hasMessageThat().contains("name for menu item is required");
   }
 
   @Test
@@ -171,9 +163,11 @@ public class GeneralPreferencesIT extends AbstractDaemonTest {
     i.my = new ArrayList<>();
     i.my.add(new MenuItem("name", null));
 
-    exception.expect(BadRequestException.class);
-    exception.expectMessage("URL for menu item is required");
-    gApi.accounts().id(user42.getId().toString()).setPreferences(i);
+    BadRequestException thrown =
+        assertThrows(
+            BadRequestException.class,
+            () -> gApi.accounts().id(user42.id().toString()).setPreferences(i));
+    assertThat(thrown).hasMessageThat().contains("URL for menu item is required");
   }
 
   @Test
@@ -182,7 +176,7 @@ public class GeneralPreferencesIT extends AbstractDaemonTest {
     i.my = new ArrayList<>();
     i.my.add(new MenuItem(" name\t", " url\t", " _blank\t", " id\t"));
 
-    GeneralPreferencesInfo o = gApi.accounts().id(user42.getId().toString()).setPreferences(i);
+    GeneralPreferencesInfo o = gApi.accounts().id(user42.id().toString()).setPreferences(i);
     assertThat(o.my).containsExactly(new MenuItem("name", "url", "_blank", "id"));
   }
 
@@ -191,28 +185,28 @@ public class GeneralPreferencesIT extends AbstractDaemonTest {
     GeneralPreferencesInfo i = GeneralPreferencesInfo.defaults();
     i.downloadScheme = "foo";
 
-    exception.expect(BadRequestException.class);
-    exception.expectMessage("Unsupported download scheme: " + i.downloadScheme);
-    gApi.accounts().id(user42.getId().toString()).setPreferences(i);
+    BadRequestException thrown =
+        assertThrows(
+            BadRequestException.class,
+            () -> gApi.accounts().id(user42.id().toString()).setPreferences(i));
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains("Unsupported download scheme: " + i.downloadScheme);
   }
 
   @Test
   public void setDownloadScheme() throws Exception {
     String schemeName = "foo";
-    RegistrationHandle registrationHandle =
-        ((PrivateInternals_DynamicMapImpl<DownloadScheme>) downloadSchemes)
-            .put("myPlugin", schemeName, Providers.of(new TestDownloadScheme()));
-    try {
+    try (Registration registration =
+        extensionRegistry.newRegistration().add(new TestDownloadScheme(), schemeName)) {
       GeneralPreferencesInfo i = GeneralPreferencesInfo.defaults();
       i.downloadScheme = schemeName;
 
-      GeneralPreferencesInfo o = gApi.accounts().id(user42.getId().toString()).setPreferences(i);
+      GeneralPreferencesInfo o = gApi.accounts().id(user42.id().toString()).setPreferences(i);
       assertThat(o.downloadScheme).isEqualTo(schemeName);
 
-      o = gApi.accounts().id(user42.getId().toString()).getPreferences();
+      o = gApi.accounts().id(user42.id().toString()).getPreferences();
       assertThat(o.downloadScheme).isEqualTo(schemeName);
-    } finally {
-      registrationHandle.remove();
     }
   }
 
@@ -222,7 +216,7 @@ public class GeneralPreferencesIT extends AbstractDaemonTest {
     // becomes unsupported.
     setDownloadScheme();
 
-    GeneralPreferencesInfo o = gApi.accounts().id(user42.getId().toString()).getPreferences();
+    GeneralPreferencesInfo o = gApi.accounts().id(user42.id().toString()).getPreferences();
     assertThat(o.downloadScheme).isNull();
   }
 

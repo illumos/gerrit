@@ -15,7 +15,7 @@
 package com.google.gerrit.common.data;
 
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.reviewdb.client.PatchSetApproval;
+import com.google.gerrit.entities.PatchSetApproval;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -98,18 +98,18 @@ public enum LabelFunction {
     }
 
     for (PatchSetApproval a : approvals) {
-      if (a.getValue() == 0) {
+      if (a.value() == 0) {
         continue;
       }
 
       if (isBlock && labelType.isMaxNegative(a)) {
-        submitRecordLabel.appliedBy = a.getAccountId();
+        submitRecordLabel.appliedBy = a.accountId();
         submitRecordLabel.status = SubmitRecord.Label.Status.REJECT;
         return submitRecordLabel;
       }
 
       if (labelType.isMaxPositive(a) || !requiresMaxValue) {
-        submitRecordLabel.appliedBy = a.getAccountId();
+        submitRecordLabel.appliedBy = a.accountId();
 
         submitRecordLabel.status = SubmitRecord.Label.Status.MAY;
         if (isRequired) {

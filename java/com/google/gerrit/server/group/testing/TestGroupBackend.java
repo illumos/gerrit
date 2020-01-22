@@ -20,7 +20,7 @@ import static java.util.Objects.requireNonNull;
 import com.google.common.collect.ImmutableList;
 import com.google.gerrit.common.data.GroupDescription;
 import com.google.gerrit.common.data.GroupReference;
-import com.google.gerrit.reviewdb.client.AccountGroup;
+import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.GroupBackend;
 import com.google.gerrit.server.account.GroupMembership;
@@ -43,7 +43,7 @@ public class TestGroupBackend implements GroupBackend {
    */
   public GroupDescription.Basic create(String name) {
     requireNonNull(name);
-    return create(new AccountGroup.UUID(name.startsWith(PREFIX) ? name : PREFIX + name));
+    return create(AccountGroup.uuid(name.startsWith(PREFIX) ? name : PREFIX + name));
   }
 
   /**

@@ -17,32 +17,27 @@ package com.google.gerrit.server.restapi.project;
 import com.google.common.base.Strings;
 import com.google.common.collect.Iterables;
 import com.google.gerrit.common.data.AccessSection;
-import com.google.gerrit.common.errors.InvalidNameException;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.InvalidNameException;
 import com.google.gerrit.extensions.api.access.ProjectAccessInfo;
 import com.google.gerrit.extensions.api.access.ProjectAccessInput;
-import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
-import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestModifyView;
-import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.CreateGroupPermissionSyncer;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.GroupBackend;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
-import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.permissions.RefPermission;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectConfig;
 import com.google.gerrit.server.project.ProjectResource;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
-import java.io.IOException;
 import java.util.List;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 
@@ -56,6 +51,7 @@ public class SetAccess implements RestModifyView<ProjectResource, ProjectAccessI
   private final Provider<IdentifiedUser> identifiedUser;
   private final SetAccessUtil accessUtil;
   private final CreateGroupPermissionSyncer createGroupPermissionSyncer;
+  private final ProjectConfig.Factory projectConfigFactory;
 
   @Inject
   private SetAccess(
@@ -66,7 +62,8 @@ public class SetAccess implements RestModifyView<ProjectResource, ProjectAccessI
       GetAccess getAccess,
       Provider<IdentifiedUser> identifiedUser,
       SetAccessUtil accessUtil,
-      CreateGroupPermissionSyncer createGroupPermissionSyncer) {
+      CreateGroupPermissionSyncer createGroupPermissionSyncer,
+      ProjectConfig.Factory projectConfigFactory) {
     this.groupBackend = groupBackend;
     this.permissionBackend = permissionBackend;
     this.metaDataUpdateFactory = metaDataUpdateFactory;
@@ -75,13 +72,12 @@ public class SetAccess implements RestModifyView<ProjectResource, ProjectAccessI
     this.identifiedUser = identifiedUser;
     this.accessUtil = accessUtil;
     this.createGroupPermissionSyncer = createGroupPermissionSyncer;
+    this.projectConfigFactory = projectConfigFactory;
   }
 
   @Override
-  public ProjectAccessInfo apply(ProjectResource rsrc, ProjectAccessInput input)
-      throws ResourceNotFoundException, ResourceConflictException, IOException, AuthException,
-          BadRequestException, UnprocessableEntityException, OrmException,
-          PermissionBackendException {
+  public Response<ProjectAccessInfo> apply(ProjectResource rsrc, ProjectAccessInput input)
+      throws Exception {
     MetaDataUpdate.User metaDataUpdateUser = metaDataUpdateFactory.get();
 
     ProjectConfig config;
@@ -89,7 +85,7 @@ public class SetAccess implements RestModifyView<ProjectResource, ProjectAccessI
     List<AccessSection> removals = accessUtil.getAccessSections(input.remove);
     List<AccessSection> additions = accessUtil.getAccessSections(input.add);
     try (MetaDataUpdate md = metaDataUpdateUser.create(rsrc.getNameKey())) {
-      config = ProjectConfig.read(md);
+      config = projectConfigFactory.read(md);
 
       // Check that the user has the right permissions.
       boolean checkedAdmin = false;
@@ -116,7 +112,7 @@ public class SetAccess implements RestModifyView<ProjectResource, ProjectAccessI
           identifiedUser.get(),
           config,
           rsrc.getNameKey(),
-          input.parent == null ? null : new Project.NameKey(input.parent),
+          input.parent == null ? null : Project.nameKey(input.parent),
           !checkedAdmin);
 
       if (!Strings.isNullOrEmpty(input.message)) {
@@ -137,6 +133,6 @@ public class SetAccess implements RestModifyView<ProjectResource, ProjectAccessI
       throw new ResourceConflictException(rsrc.getName());
     }
 
-    return getAccess.apply(rsrc.getNameKey());
+    return Response.ok(getAccess.apply(rsrc.getNameKey()));
   }
 }

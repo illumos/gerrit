@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-change-metadata</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="../../plugins/gr-plugin-host/gr-plugin-host.html">
 <link rel="import" href="gr-change-metadata.html">
@@ -83,13 +85,11 @@ limitations under the License.
         getLoggedIn() { return Promise.resolve(false); },
         deleteVote() { return Promise.resolve({ok: true}); },
       });
-      stub('gr-change-metadata', {
-        _computeShowReviewersByState() { return true; },
-      });
     });
 
     teardown(() => {
       sandbox.restore();
+      Gerrit._testOnly_resetPlugins();
     });
 
     suite('by default', () => {
@@ -107,7 +107,7 @@ limitations under the License.
 
     suite('with plugin style', () => {
       setup(done => {
-        Gerrit._resetPlugins();
+        Gerrit._testOnly_resetPlugins();
         const pluginHost = fixture('plugin-host');
         pluginHost.config = {
           plugin: {
@@ -142,7 +142,7 @@ limitations under the License.
             new URL('test/plugin.html?' + Math.random(),
                 window.location.href).toString());
         sandbox.stub(Gerrit, '_arePluginsLoaded').returns(true);
-        Gerrit._setPluginsPending([]);
+        Gerrit._loadPlugins([]);
         element = createElement();
       });
 

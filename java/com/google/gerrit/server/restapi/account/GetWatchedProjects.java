@@ -19,11 +19,12 @@ import static java.util.stream.Collectors.toList;
 
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableSet;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.client.ProjectWatchInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.AccountResource;
 import com.google.gerrit.server.account.AccountState;
@@ -33,7 +34,6 @@ import com.google.gerrit.server.account.ProjectWatches.ProjectWatchKey;
 import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -41,6 +41,12 @@ import java.io.IOException;
 import java.util.List;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 
+/**
+ * REST endpoint to get the project watches of an account.
+ *
+ * <p>This REST endpoint handles {@code GET /accounts/<account-identifier>/watched.projects}
+ * requests.
+ */
 @Singleton
 public class GetWatchedProjects implements RestReadView<AccountResource> {
   private final PermissionBackend permissionBackend;
@@ -56,21 +62,22 @@ public class GetWatchedProjects implements RestReadView<AccountResource> {
   }
 
   @Override
-  public List<ProjectWatchInfo> apply(AccountResource rsrc)
-      throws OrmException, AuthException, IOException, ConfigInvalidException,
-          PermissionBackendException, ResourceNotFoundException {
+  public Response<List<ProjectWatchInfo>> apply(AccountResource rsrc)
+      throws AuthException, IOException, ConfigInvalidException, PermissionBackendException,
+          ResourceNotFoundException {
     if (!self.get().hasSameAccountId(rsrc.getUser())) {
       permissionBackend.currentUser().check(GlobalPermission.ADMINISTRATE_SERVER);
     }
 
     Account.Id accountId = rsrc.getUser().getAccountId();
     AccountState account = accounts.get(accountId).orElseThrow(ResourceNotFoundException::new);
-    return account.getProjectWatches().entrySet().stream()
-        .map(e -> toProjectWatchInfo(e.getKey(), e.getValue()))
-        .sorted(
-            comparing((ProjectWatchInfo pwi) -> pwi.project)
-                .thenComparing(pwi -> Strings.nullToEmpty(pwi.filter)))
-        .collect(toList());
+    return Response.ok(
+        account.projectWatches().entrySet().stream()
+            .map(e -> toProjectWatchInfo(e.getKey(), e.getValue()))
+            .sorted(
+                comparing((ProjectWatchInfo pwi) -> pwi.project)
+                    .thenComparing(pwi -> Strings.nullToEmpty(pwi.filter)))
+            .collect(toList()));
   }
 
   private static ProjectWatchInfo toProjectWatchInfo(

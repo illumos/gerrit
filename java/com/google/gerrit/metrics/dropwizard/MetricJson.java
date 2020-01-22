@@ -21,7 +21,6 @@ import com.codahale.metrics.Meter;
 import com.codahale.metrics.Metric;
 import com.codahale.metrics.Snapshot;
 import com.codahale.metrics.Timer;
-import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.gerrit.metrics.Description;
@@ -30,6 +29,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.function.Function;
 
 class MetricJson {
   String description;
@@ -137,7 +137,7 @@ class MetricJson {
       p99_9 = s.get999thPercentile();
 
       min = (double) s.getMin();
-      avg = (double) s.getMean();
+      avg = s.getMean();
       max = (double) s.getMax();
       sum = s.getMean() * m.getCount();
       std_dev = s.getStdDev();
@@ -189,10 +189,10 @@ class MetricJson {
     String description;
 
     FieldJson(Field<?> field) {
-      this.name = field.getName();
-      this.description = field.getDescription();
+      this.name = field.name();
+      this.description = field.description().orElse(null);
       this.type =
-          Enum.class.isAssignableFrom(field.getType()) ? field.getType().getSimpleName() : null;
+          Enum.class.isAssignableFrom(field.valueType()) ? field.valueType().getSimpleName() : null;
     }
   }
 }

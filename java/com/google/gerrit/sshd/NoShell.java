@@ -14,14 +14,12 @@
 
 package com.google.gerrit.sshd;
 
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.server.ReviewDb;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.config.AnonymousCowardName;
 import com.google.gerrit.server.config.CanonicalWebUrl;
 import com.google.gerrit.server.ssh.SshInfo;
 import com.google.gerrit.sshd.SshScope.Context;
-import com.google.gwtorm.server.SchemaFactory;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import java.io.IOException;
@@ -29,12 +27,13 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.MalformedURLException;
 import java.net.URL;
-import org.apache.sshd.common.Factory;
 import org.apache.sshd.server.Environment;
 import org.apache.sshd.server.ExitCallback;
 import org.apache.sshd.server.SessionAware;
+import org.apache.sshd.server.channel.ChannelSession;
 import org.apache.sshd.server.command.Command;
 import org.apache.sshd.server.session.ServerSession;
+import org.apache.sshd.server.shell.ShellFactory;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.util.SystemReader;
 
@@ -44,7 +43,7 @@ import org.eclipse.jgit.util.SystemReader;
  * <p>This implementation is used to ensure clients who try to SSH directly to this server without
  * supplying a command will get a reasonable error message, but cannot continue further.
  */
-class NoShell implements Factory<Command> {
+class NoShell implements ShellFactory {
   private final Provider<SendMessage> shell;
 
   @Inject
@@ -53,13 +52,12 @@ class NoShell implements Factory<Command> {
   }
 
   @Override
-  public Command create() {
+  public Command createShell(ChannelSession channel) {
     return shell.get();
   }
 
   static class SendMessage implements Command, SessionAware {
     private final Provider<MessageFactory> messageFactory;
-    private final SchemaFactory<ReviewDb> schemaFactory;
     private final SshScope sshScope;
 
     private InputStream in;
@@ -69,10 +67,8 @@ class NoShell implements Factory<Command> {
     private Context context;
 
     @Inject
-    SendMessage(
-        Provider<MessageFactory> messageFactory, SchemaFactory<ReviewDb> sf, SshScope sshScope) {
+    SendMessage(Provider<MessageFactory> messageFactory, SshScope sshScope) {
       this.messageFactory = messageFactory;
-      this.schemaFactory = sf;
       this.sshScope = sshScope;
     }
 
@@ -99,11 +95,11 @@ class NoShell implements Factory<Command> {
     @Override
     public void setSession(ServerSession session) {
       SshSession s = session.getAttribute(SshSession.KEY);
-      this.context = sshScope.newContext(schemaFactory, s, "");
+      this.context = sshScope.newContext(s, "");
     }
 
     @Override
-    public void start(Environment env) throws IOException {
+    public void start(ChannelSession channel, Environment env) throws IOException {
       Context old = sshScope.set(context);
       String message;
       try {
@@ -121,7 +117,7 @@ class NoShell implements Factory<Command> {
     }
 
     @Override
-    public void destroy() {}
+    public void destroy(ChannelSession channel) {}
   }
 
   static class MessageFactory {
@@ -150,7 +146,7 @@ class NoShell implements Factory<Command> {
       msg.append("\r\n");
 
       Account account = user.getAccount();
-      String name = account.getFullName();
+      String name = account.fullName();
       if (name == null || name.isEmpty()) {
         name = user.getUserName().orElse(anonymousCowardName);
       }

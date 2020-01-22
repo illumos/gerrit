@@ -71,7 +71,7 @@ link:cmd-ls-projects.html[gerrit ls-projects]::
 	List projects visible to the caller.
 
 link:cmd-query.html[gerrit query]::
-	Query the change database.
+	Query the change search index.
 
 'gerrit receive-pack'::
 	'Deprecated alias for `git receive-pack`.'
@@ -130,9 +130,6 @@ link:cmd-flush-caches.html[gerrit flush-caches]::
 link:cmd-gc.html[gerrit gc]::
 	Run the Git garbage collection.
 
-link:cmd-gsql.html[gerrit gsql]::
-	Administrative interface to active database.
-
 link:cmd-index-activate.html[gerrit index activate]::
 	Activate the latest index version available.
 
@@ -180,6 +177,9 @@ link:cmd-reload-config.html[gerrit reload-config]::
 
 link:cmd-set-account.html[gerrit set-account]::
 	Change an account's settings.
+
+link:cmd-sequence-show.html[gerrit sequence show]::
+        Display current sequence value.
 
 link:cmd-set-members.html[gerrit set-members]::
 	Set group members.

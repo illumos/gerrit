@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-endpoint-decorator</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-endpoint-decorator.html">
 <link rel="import" href="../gr-endpoint-param/gr-endpoint-param.html">
@@ -56,7 +58,7 @@ limitations under the License.
       stub('gr-endpoint-decorator', {
         _import: sandbox.stub().returns(Promise.resolve()),
       });
-      Gerrit._resetPlugins();
+      Gerrit._testOnly_resetPlugins();
       container = fixture('basic');
       Gerrit.install(p => plugin = p, '0.1', 'http://some/plugin/url.html');
       // Decoration
@@ -65,7 +67,7 @@ limitations under the License.
       replacementHook = plugin.registerCustomComponent(
           'second', 'other-module', {replace: true});
       // Mimic all plugins loaded.
-      Gerrit._setPluginsPending([]);
+      Gerrit._loadPlugins([]);
       flush(done);
     });
 
@@ -86,7 +88,7 @@ limitations under the License.
     test('decoration', () => {
       const element =
           container.querySelector('gr-endpoint-decorator[name="first"]');
-      const modules = Polymer.dom(element.root).children.filter(
+      const modules = Array.from(Polymer.dom(element.root).children).filter(
           element => element.nodeName === 'SOME-MODULE');
       assert.equal(modules.length, 1);
       const [module] = modules;
@@ -94,25 +96,28 @@ limitations under the License.
       assert.equal(module['someparam'], 'barbar');
       return decorationHook.getLastAttached().then(element => {
         assert.strictEqual(element, module);
-      }).then(() => {
-        element.remove();
-        assert.equal(decorationHook.getAllAttached().length, 0);
-      });
+      })
+          .then(() => {
+            element.remove();
+            assert.equal(decorationHook.getAllAttached().length, 0);
+          });
     });
 
     test('replacement', () => {
       const element =
           container.querySelector('gr-endpoint-decorator[name="second"]');
-      const module = Polymer.dom(element.root).children.find(
+      const module = Array.from(Polymer.dom(element.root).children).find(
           element => element.nodeName === 'OTHER-MODULE');
       assert.isOk(module);
       assert.equal(module['someparam'], 'foofoo');
-      return replacementHook.getLastAttached().then(element => {
-        assert.strictEqual(element, module);
-      }).then(() => {
-        element.remove();
-        assert.equal(replacementHook.getAllAttached().length, 0);
-      });
+      return replacementHook.getLastAttached()
+          .then(element => {
+            assert.strictEqual(element, module);
+          })
+          .then(() => {
+            element.remove();
+            assert.equal(replacementHook.getAllAttached().length, 0);
+          });
     });
 
     test('late registration', done => {
@@ -120,7 +125,7 @@ limitations under the License.
       flush(() => {
         const element =
             container.querySelector('gr-endpoint-decorator[name="banana"]');
-        const module = Polymer.dom(element.root).children.find(
+        const module = Array.from(Polymer.dom(element.root).children).find(
             element => element.nodeName === 'NOOB-NOOB');
         assert.isOk(module);
         done();
@@ -133,10 +138,10 @@ limitations under the License.
       flush(() => {
         const element =
             container.querySelector('gr-endpoint-decorator[name="banana"]');
-        const module1 = Polymer.dom(element.root).children.find(
+        const module1 = Array.from(Polymer.dom(element.root).children).find(
             element => element.nodeName === 'MOD-ONE');
         assert.isOk(module1);
-        const module2 = Polymer.dom(element.root).children.find(
+        const module2 = Array.from(Polymer.dom(element.root).children).find(
             element => element.nodeName === 'MOD-TWO');
         assert.isOk(module2);
         done();
@@ -150,14 +155,14 @@ limitations under the License.
       param['value'] = undefined;
       plugin.registerCustomComponent('banana', 'noob-noob');
       flush(() => {
-        let module = Polymer.dom(element.root).children.find(
+        let module = Array.from(Polymer.dom(element.root).children).find(
             element => element.nodeName === 'NOOB-NOOB');
         // Module waits for param to be defined.
         assert.isNotOk(module);
         const value = {abc: 'def'};
         param.value = value;
         flush(() => {
-          module = Polymer.dom(element.root).children.find(
+          module = Array.from(Polymer.dom(element.root).children).find(
               element => element.nodeName === 'NOOB-NOOB');
           assert.isOk(module);
           assert.strictEqual(module['someParam'], value);
@@ -175,7 +180,7 @@ limitations under the License.
       param.value = value1;
       plugin.registerCustomComponent('banana', 'noob-noob');
       flush(() => {
-        const module = Polymer.dom(element.root).children.find(
+        const module = Array.from(Polymer.dom(element.root).children).find(
             element => element.nodeName === 'NOOB-NOOB');
         assert.strictEqual(module['someParam'], value1);
         param.value = value2;

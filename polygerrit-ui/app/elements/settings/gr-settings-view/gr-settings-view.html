@@ -15,10 +15,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/iron-input/iron-input.html">
 
 <link rel="import" href="../../../behaviors/docs-url-behavior/docs-url-behavior.html">
-<link rel="import" href="../../../bower_components/paper-toggle-button/paper-toggle-button.html">
+<link rel="import" href="/bower_components/paper-toggle-button/paper-toggle-button.html">
+
 <link rel="import" href="../../../styles/gr-form-styles.html">
 <link rel="import" href="../../../styles/gr-menu-page-styles.html">
 <link rel="import" href="../../../styles/gr-page-nav-styles.html">
@@ -49,15 +51,18 @@ limitations under the License.
       :host {
         color: var(--primary-text-color);
       }
-      #newEmailInput {
+      .newEmailInput {
         width: 20em;
       }
       #email {
-        margin-bottom: 1em;
+        margin-bottom: var(--spacing-l);
+      }
+      main section.darkToggle {
+        display: block;
       }
       .filters p,
       .darkToggle p {
-        margin-bottom: 1em;
+        margin-bottom: var(--spacing-l);
       }
       .queryExample em {
         color: violet;
@@ -65,13 +70,19 @@ limitations under the License.
       .toggle {
         align-items: center;
         display: flex;
-        margin-bottom: 1rem;
-        margin-right: 1rem;
+        margin-bottom: var(--spacing-l);
+        margin-right: var(--spacing-l);
       }
     </style>
-    <style include="gr-form-styles"></style>
-    <style include="gr-menu-page-styles"></style>
-    <style include="gr-page-nav-styles"></style>
+    <style include="gr-form-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
+    <style include="gr-menu-page-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
+    <style include="gr-page-nav-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <div class="loading" hidden$="[[!_loading]]">Loading...</div>
     <div hidden$="[[_loading]]" hidden>
       <gr-page-nav class="navStyles">
@@ -126,10 +137,9 @@ limitations under the License.
         <fieldset id="profile">
           <gr-account-info
               id="accountInfo"
-              mutable="{{_accountNameMutable}}"
               has-unsaved-changes="{{_accountInfoChanged}}"></gr-account-info>
           <gr-button
-              on-tap="_handleSaveAccountInfo"
+              on-click="_handleSaveAccountInfo"
               disabled="[[!_accountInfoChanged]]">Save changes</gr-button>
         </fieldset>
         <h2
@@ -275,7 +285,7 @@ limitations under the License.
           </section>
           <gr-button
               id="savePrefs"
-              on-tap="_handleSavePreferences"
+              on-click="_handleSavePreferences"
               disabled="[[!_prefsChanged]]">Save changes</gr-button>
         </fieldset>
         <h2
@@ -289,7 +299,7 @@ limitations under the License.
               has-unsaved-changes="{{_diffPrefsChanged}}"></gr-diff-preferences>
           <gr-button
               id="saveDiffPrefs"
-              on-tap="_handleSaveDiffPreferences"
+              on-click="_handleSaveDiffPreferences"
               disabled$="[[!_diffPrefsChanged]]">Save changes</gr-button>
         </fieldset>
         <h2
@@ -303,7 +313,7 @@ limitations under the License.
               has-unsaved-changes="{{_editPrefsChanged}}"></gr-edit-preferences>
           <gr-button
               id="saveEditPrefs"
-              on-tap="_handleSaveEditPreferences"
+              on-click="_handleSaveEditPreferences"
               disabled$="[[!_editPrefsChanged]]">Save changes</gr-button>
         </fieldset>
         <h2 id="Menu" class$="[[_computeHeaderClass(_menuChanged)]]">Menu</h2>
@@ -312,12 +322,12 @@ limitations under the License.
               menu-items="{{_localMenu}}"></gr-menu-editor>
           <gr-button
               id="saveMenu"
-              on-tap="_handleSaveMenu"
+              on-click="_handleSaveMenu"
               disabled="[[!_menuChanged]]">Save changes</gr-button>
           <gr-button
               id="resetMenu"
               link
-              on-tap="_handleResetMenuButton">Reset</gr-button>
+              on-click="_handleResetMenuButton">Reset</gr-button>
         </fieldset>
         <h2 id="ChangeTableColumns"
             class$="[[_computeHeaderClass(_changeTableChanged)]]">
@@ -330,7 +340,7 @@ limitations under the License.
           </gr-change-table-editor>
           <gr-button
               id="saveChangeTable"
-              on-tap="_handleSaveChangeTable"
+              on-click="_handleSaveChangeTable"
               disabled="[[!_changeTableChanged]]">Save changes</gr-button>
         </fieldset>
         <h2
@@ -343,7 +353,7 @@ limitations under the License.
               has-unsaved-changes="{{_watchedProjectsChanged}}"
               id="watchedProjectsEditor"></gr-watched-projects-editor>
           <gr-button
-              on-tap="_handleSaveWatchedProjects"
+              on-click="_handleSaveWatchedProjects"
               disabled$="[[!_watchedProjectsChanged]]"
               id="_handleSaveWatchedProjects">Save changes</gr-button>
         </fieldset>
@@ -357,21 +367,28 @@ limitations under the License.
               id="emailEditor"
               has-unsaved-changes="{{_emailsChanged}}"></gr-email-editor>
           <gr-button
-              on-tap="_handleSaveEmails"
+              on-click="_handleSaveEmails"
               disabled$="[[!_emailsChanged]]">Save changes</gr-button>
         </fieldset>
         <fieldset id="newEmail">
           <section>
             <span class="title">New email address</span>
             <span class="value">
-              <input
-                  id="newEmailInput"
+              <iron-input
+                  class="newEmailInput"
                   bind-value="{{_newEmail}}"
-                  is="iron-input"
                   type="text"
-                  disabled="[[_addingEmail]]"
                   on-keydown="_handleNewEmailKeydown"
                   placeholder="email@example.com">
+                <input
+                    class="newEmailInput"
+                    bind-value="{{_newEmail}}"
+                    is="iron-input"
+                    type="text"
+                    disabled="[[_addingEmail]]"
+                    on-keydown="_handleNewEmailKeydown"
+                    placeholder="email@example.com">
+              </iron-input>
             </span>
           </section>
           <section
@@ -384,7 +401,7 @@ limitations under the License.
           </section>
           <gr-button
               disabled="[[!_computeAddEmailButtonEnabled(_newEmail, _addingEmail)]]"
-              on-tap="_handleAddEmailButton">Send verification</gr-button>
+              on-click="_handleAddEmailButton">Send verification</gr-button>
         </fieldset>
         <template is="dom-if" if="[[_showHttpAuth(_serverConfig)]]">
           <div>

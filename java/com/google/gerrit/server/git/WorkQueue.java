@@ -17,13 +17,12 @@ package com.google.gerrit.server.git;
 import static java.util.stream.Collectors.toList;
 
 import com.google.common.base.CaseFormat;
-import com.google.common.base.Supplier;
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.events.LifecycleListener;
 import com.google.gerrit.lifecycle.LifecycleModule;
 import com.google.gerrit.metrics.Description;
 import com.google.gerrit.metrics.MetricMaker;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.ScheduleConfig.Schedule;
 import com.google.gerrit.server.logging.LoggingContext;
@@ -86,12 +85,8 @@ public class WorkQueue {
   }
 
   private static final UncaughtExceptionHandler LOG_UNCAUGHT_EXCEPTION =
-      new UncaughtExceptionHandler() {
-        @Override
-        public void uncaughtException(Thread t, Throwable e) {
+      (t, e) ->
           logger.atSevere().withCause(e).log("WorkQueue thread %s threw exception", t.getName());
-        }
-      };
 
   private final ScheduledExecutorService defaultQueue;
   private final IdGenerator idGenerator;
@@ -360,75 +355,44 @@ public class WorkQueue {
           new Description("Maximum allowed number of threads in the pool")
               .setGauge()
               .setUnit("threads"),
-          new Supplier<Long>() {
-            @Override
-            public Long get() {
-              return (long) getMaximumPoolSize();
-            }
-          });
+          () -> (long) getMaximumPoolSize());
       metrics.newCallbackMetric(
           getMetricName(queueName, "pool_size"),
           Long.class,
           new Description("Current number of threads in the pool").setGauge().setUnit("threads"),
-          new Supplier<Long>() {
-            @Override
-            public Long get() {
-              return (long) getPoolSize();
-            }
-          });
+          () -> (long) getPoolSize());
       metrics.newCallbackMetric(
           getMetricName(queueName, "active_threads"),
           Long.class,
           new Description("Number number of threads that are actively executing tasks")
               .setGauge()
               .setUnit("threads"),
-          new Supplier<Long>() {
-            @Override
-            public Long get() {
-              return (long) getActiveCount();
-            }
-          });
+          () -> (long) getActiveCount());
       metrics.newCallbackMetric(
           getMetricName(queueName, "scheduled_tasks"),
           Integer.class,
           new Description("Number of scheduled tasks in the queue").setGauge().setUnit("tasks"),
-          new Supplier<Integer>() {
-            @Override
-            public Integer get() {
-              return getQueue().size();
-            }
-          });
+          () -> getQueue().size());
       metrics.newCallbackMetric(
           getMetricName(queueName, "total_scheduled_tasks_count"),
           Long.class,
           new Description("Total number of tasks that have been scheduled for execution")
               .setCumulative()
               .setUnit("tasks"),
-          new Supplier<Long>() {
-            @Override
-            public Long get() {
-              return (long) getTaskCount();
-            }
-          });
+          this::getTaskCount);
       metrics.newCallbackMetric(
           getMetricName(queueName, "total_completed_tasks_count"),
           Long.class,
           new Description("Total number of tasks that have completed execution")
               .setCumulative()
               .setUnit("tasks"),
-          new Supplier<Long>() {
-            @Override
-            public Long get() {
-              return (long) getCompletedTaskCount();
-            }
-          });
+          this::getCompletedTaskCount);
     }
 
     private String getMetricName(String queueName, String metricName) {
       String name =
           CaseFormat.UPPER_CAMEL.to(
-              CaseFormat.LOWER_UNDERSCORE,
-              queueName.replaceFirst("SSH", "Ssh").replaceAll("-", ""));
+              CaseFormat.LOWER_UNDERSCORE, queueName.replaceFirst("SSH", "Ssh").replace("-", ""));
       return metrics.sanitizeMetricName(String.format("queue/%s/%s", name, metricName));
     }
 
@@ -674,7 +638,7 @@ public class WorkQueue {
                 for (Field innerField : innerObj.getClass().getDeclaredFields()) {
                   if (innerField.getType().isAssignableFrom(Callable.class)) {
                     innerField.setAccessible(true);
-                    return ((Callable<?>) innerField.get(innerObj)).toString();
+                    return innerField.get(innerObj).toString();
                   }
                 }
               }

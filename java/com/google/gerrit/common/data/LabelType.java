@@ -19,8 +19,8 @@ import static java.util.stream.Collectors.collectingAndThen;
 import static java.util.stream.Collectors.toList;
 
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.reviewdb.client.LabelId;
-import com.google.gerrit.reviewdb.client.PatchSetApproval;
+import com.google.gerrit.entities.LabelId;
+import com.google.gerrit.entities.PatchSetApproval;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -34,6 +34,7 @@ public class LabelType {
   public static final boolean DEF_COPY_ALL_SCORES_IF_NO_CODE_CHANGE = false;
   public static final boolean DEF_COPY_ALL_SCORES_ON_TRIVIAL_REBASE = false;
   public static final boolean DEF_COPY_ALL_SCORES_ON_MERGE_FIRST_PARENT_UPDATE = false;
+  public static final boolean DEF_COPY_ANY_SCORE = false;
   public static final boolean DEF_COPY_MAX_SCORE = false;
   public static final boolean DEF_COPY_MIN_SCORE = false;
   public static final boolean DEF_IGNORE_SELF_APPROVAL = false;
@@ -94,9 +95,9 @@ public class LabelType {
 
   protected String name;
 
-  // String rather than LabelFunction for backwards compatibility with GWT JSON interface.
-  protected String functionName;
+  protected LabelFunction function;
 
+  protected boolean copyAnyScore;
   protected boolean copyMinScore;
   protected boolean copyMaxScore;
   protected boolean copyAllScoresOnMergeFirstParentUpdate;
@@ -123,7 +124,7 @@ public class LabelType {
     values = sortValues(valueList);
     defaultValue = 0;
 
-    functionName = LabelFunction.MAX_WITH_BLOCK.getFunctionName();
+    function = LabelFunction.MAX_WITH_BLOCK;
 
     maxNegative = Short.MIN_VALUE;
     maxPositive = Short.MAX_VALUE;
@@ -140,6 +141,7 @@ public class LabelType {
     setCopyAllScoresIfNoCodeChange(DEF_COPY_ALL_SCORES_IF_NO_CODE_CHANGE);
     setCopyAllScoresOnTrivialRebase(DEF_COPY_ALL_SCORES_ON_TRIVIAL_REBASE);
     setCopyAllScoresOnMergeFirstParentUpdate(DEF_COPY_ALL_SCORES_ON_MERGE_FIRST_PARENT_UPDATE);
+    setCopyAnyScore(DEF_COPY_ANY_SCORE);
     setCopyMaxScore(DEF_COPY_MAX_SCORE);
     setCopyMinScore(DEF_COPY_MIN_SCORE);
     setAllowPostSubmit(DEF_ALLOW_POST_SUBMIT);
@@ -155,26 +157,27 @@ public class LabelType {
     return name;
   }
 
+  public void setName(String name) {
+    this.name = checkName(name);
+  }
+
   public boolean matches(PatchSetApproval psa) {
-    return psa.getLabelId().get().equalsIgnoreCase(name);
+    return psa.labelId().get().equalsIgnoreCase(name);
   }
 
   public LabelFunction getFunction() {
-    if (functionName == null) {
-      return null;
-    }
-    return LabelFunction.parse(functionName)
-        .orElseThrow(() -> new IllegalStateException("Unsupported functionName: " + functionName));
+    return function;
   }
 
   public void setFunction(@Nullable LabelFunction function) {
-    this.functionName = function != null ? function.getFunctionName() : null;
+    this.function = function;
   }
 
   public boolean canOverride() {
     return canOverride;
   }
 
+  @Nullable
   public List<String> getRefPatterns() {
     return refPatterns;
   }
@@ -200,7 +203,7 @@ public class LabelType {
   }
 
   public void setRefPatterns(List<String> refPatterns) {
-    if (refPatterns != null) {
+    if (refPatterns != null && !refPatterns.isEmpty()) {
       this.refPatterns =
           refPatterns.stream().collect(collectingAndThen(toList(), Collections::unmodifiableList));
     } else {
@@ -210,6 +213,10 @@ public class LabelType {
 
   public List<LabelValue> getValues() {
     return values;
+  }
+
+  public void setValues(List<LabelValue> values) {
+    this.values = sortValues(values);
   }
 
   public LabelValue getMin() {
@@ -232,6 +239,14 @@ public class LabelType {
 
   public void setDefaultValue(short defaultValue) {
     this.defaultValue = defaultValue;
+  }
+
+  public boolean isCopyAnyScore() {
+    return copyAnyScore;
+  }
+
+  public void setCopyAnyScore(boolean copyAnyScore) {
+    this.copyAnyScore = copyAnyScore;
   }
 
   public boolean isCopyMinScore() {
@@ -284,11 +299,11 @@ public class LabelType {
   }
 
   public boolean isMaxNegative(PatchSetApproval ca) {
-    return maxNegative == ca.getValue();
+    return maxNegative == ca.value();
   }
 
   public boolean isMaxPositive(PatchSetApproval ca) {
-    return maxPositive == ca.getValue();
+    return maxPositive == ca.value();
   }
 
   public LabelValue getValue(short value) {
@@ -296,11 +311,11 @@ public class LabelType {
   }
 
   public LabelValue getValue(PatchSetApproval ca) {
-    return byValue.get(ca.getValue());
+    return byValue.get(ca.value());
   }
 
   public LabelId getLabelId() {
-    return new LabelId(name);
+    return LabelId.create(name);
   }
 
   @Override

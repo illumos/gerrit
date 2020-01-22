@@ -16,7 +16,7 @@ package com.google.gerrit.acceptance.git;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
-import static com.google.common.truth.Truth.assert_;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static com.google.gerrit.git.testing.PushResultSubject.assertThat;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
 import static java.util.stream.Collectors.toList;
@@ -24,18 +24,18 @@ import static java.util.stream.Collectors.toList;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.common.data.AccessSection;
 import com.google.gerrit.common.data.GlobalCapability;
 import com.google.gerrit.common.data.Permission;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
-import com.google.gerrit.extensions.client.InheritableBoolean;
 import com.google.gerrit.extensions.client.ProjectState;
 import com.google.gerrit.extensions.common.ChangeInput;
-import com.google.gerrit.reviewdb.client.BooleanProjectConfig;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSet;
 import com.google.gerrit.server.project.ProjectConfig;
-import com.google.gerrit.server.project.testing.Util;
+import com.google.inject.Inject;
 import java.util.Arrays;
 import java.util.function.Consumer;
 import org.eclipse.jgit.api.PushCommand;
@@ -52,12 +52,13 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class PushPermissionsIT extends AbstractDaemonTest {
+  @Inject private ProjectOperations projectOperations;
+  @Inject private RequestScopeOperations requestScopeOperations;
+
   @Before
   public void setUp() throws Exception {
     try (ProjectConfigUpdate u = updateProject(allProjects)) {
       ProjectConfig cfg = u.getConfig();
-      cfg.getProject()
-          .setBooleanConfig(BooleanProjectConfig.REQUIRE_CHANGE_ID, InheritableBoolean.FALSE);
 
       // Remove push-related permissions, so they can be added back individually by test methods.
       removeAllBranchPermissions(
@@ -69,13 +70,15 @@ public class PushPermissionsIT extends AbstractDaemonTest {
           Permission.PUSH_MERGE,
           Permission.SUBMIT);
       removeAllGlobalCapabilities(cfg, GlobalCapability.ADMINISTRATE_SERVER);
-
-      // Include some auxiliary permissions.
-      Util.allow(cfg, Permission.FORGE_AUTHOR, REGISTERED_USERS, "refs/*");
-      Util.allow(cfg, Permission.FORGE_COMMITTER, REGISTERED_USERS, "refs/*");
-
       u.save();
     }
+
+    // Include some auxiliary permissions.
+    projectOperations
+        .allProjectsForUpdate()
+        .add(allow(Permission.FORGE_AUTHOR).ref("refs/*").group(REGISTERED_USERS))
+        .add(allow(Permission.FORGE_COMMITTER).ref("refs/*").group(REGISTERED_USERS))
+        .update();
   }
 
   @Test
@@ -87,17 +90,6 @@ public class PushPermissionsIT extends AbstractDaemonTest {
     assertThat(r.getRemoteUpdate("refs/heads/master")).isNotEqualTo(Status.OK);
     assertThat(r.getRemoteUpdate("refs/for/master")).isNotEqualTo(Status.OK);
     assertThat(r.getRemoteUpdate("refs/for/master").getMessage()).isEqualTo(msg);
-  }
-
-  @Test
-  public void mixingDirectChangesAndRegularPush() throws Exception {
-    testRepo.branch("HEAD").commit().create();
-    PushResult r = push("HEAD:refs/heads/master", "HEAD:refs/changes/01/101");
-
-    String msg = "cannot combine normal pushes and magic pushes";
-    assertThat(r.getRemoteUpdate("refs/heads/master")).isNotEqualTo(Status.OK);
-    assertThat(r.getRemoteUpdate("refs/changes/01/101")).isNotEqualTo(Status.OK);
-    assertThat(r.getRemoteUpdate("refs/heads/master").getMessage()).isEqualTo(msg);
   }
 
   @Test
@@ -155,8 +147,8 @@ public class PushPermissionsIT extends AbstractDaemonTest {
 
   @Test
   public void groupRefsByMessage() throws Exception {
-    try (Repository repo = repoManager.openRepository(project)) {
-      TestRepository<?> tr = new TestRepository<>(repo);
+    try (Repository repo = repoManager.openRepository(project);
+        TestRepository<Repository> tr = new TestRepository<>(repo)) {
       tr.branch("foo").commit().create();
       tr.branch("bar").commit().create();
     }
@@ -198,7 +190,11 @@ public class PushPermissionsIT extends AbstractDaemonTest {
 
   @Test
   public void refsMetaConfigUpdateRequiresProjectOwner() throws Exception {
-    grant(project, "refs/meta/config", Permission.PUSH, false, REGISTERED_USERS);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.PUSH).ref("refs/meta/config").group(REGISTERED_USERS))
+        .update();
 
     forceFetch("refs/meta/config");
     ObjectId commit = testRepo.branch("refs/meta/config").commit().create();
@@ -218,7 +214,11 @@ public class PushPermissionsIT extends AbstractDaemonTest {
             "Contact an administrator to fix the permissions");
     assertThat(r).hasProcessed(ImmutableMap.of("refs", 1));
 
-    grant(project, "refs/*", Permission.OWNER, false, REGISTERED_USERS);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.OWNER).ref("refs/*").group(REGISTERED_USERS))
+        .update();
 
     // Re-fetch refs/meta/config from the server because the grant changed it, and we want a
     // fast-forward.
@@ -245,9 +245,14 @@ public class PushPermissionsIT extends AbstractDaemonTest {
 
   @Test
   public void updateBySubmitDenied() throws Exception {
-    grant(project, "refs/for/refs/heads/*", Permission.PUSH, false, REGISTERED_USERS);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.PUSH).ref("refs/for/refs/heads/*").group(REGISTERED_USERS))
+        .update();
 
-    ObjectId commit = testRepo.branch("HEAD").commit().create();
+    ObjectId commit =
+        testRepo.branch("HEAD").commit().message("test commit").insertChangeId().create();
     assertThat(push("HEAD:refs/for/master")).onlyRef("refs/for/master").isOk();
     gApi.changes().id(commit.name()).current().review(ReviewInput.approve());
 
@@ -263,18 +268,23 @@ public class PushPermissionsIT extends AbstractDaemonTest {
 
   @Test
   public void addPatchSetDenied() throws Exception {
-    grant(project, "refs/for/refs/heads/*", Permission.PUSH, false, REGISTERED_USERS);
-    setApiUser(user);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.PUSH).ref("refs/for/refs/heads/*").group(REGISTERED_USERS))
+        .update();
+    requestScopeOperations.setApiUser(user.id());
     ChangeInput ci = new ChangeInput();
     ci.project = project.get();
     ci.branch = "master";
     ci.subject = "A change";
-    Change.Id id = new Change.Id(gApi.changes().create(ci).get()._number);
+    Change.Id id = Change.id(gApi.changes().create(ci).get()._number);
 
-    setApiUser(admin);
-    ObjectId ps1Id = forceFetch(new PatchSet.Id(id, 1).toRefName());
+    requestScopeOperations.setApiUser(admin.id());
+    ObjectId ps1Id = forceFetch(PatchSet.id(id, 1).toRefName());
     ObjectId ps2Id = testRepo.amend(ps1Id).add("file", "content").create();
     PushResult r = push(ps2Id.name() + ":refs/for/master");
+    // Admin had ADD_PATCH_SET removed in setup.
     assertThat(r)
         .onlyRef("refs/for/master")
         .isRejected("cannot add patch set to " + id.get() + ".");
@@ -284,7 +294,11 @@ public class PushPermissionsIT extends AbstractDaemonTest {
 
   @Test
   public void skipValidationDenied() throws Exception {
-    grant(project, "refs/heads/*", Permission.PUSH, false, REGISTERED_USERS);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.PUSH).ref("refs/heads/*").group(REGISTERED_USERS))
+        .update();
 
     testRepo.branch("HEAD").commit().create();
     PushResult r =
@@ -301,7 +315,11 @@ public class PushPermissionsIT extends AbstractDaemonTest {
 
   @Test
   public void accessDatabaseForNoteDbDenied() throws Exception {
-    grant(project, "refs/heads/*", Permission.PUSH, false, REGISTERED_USERS);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.PUSH).ref("refs/heads/*").group(REGISTERED_USERS))
+        .update();
 
     testRepo.branch("HEAD").commit().create();
     PushResult r =
@@ -318,8 +336,12 @@ public class PushPermissionsIT extends AbstractDaemonTest {
 
   @Test
   public void administrateServerForUpdateParentDenied() throws Exception {
-    grant(project, "refs/meta/config", Permission.PUSH, false, REGISTERED_USERS);
-    grant(project, "refs/*", Permission.OWNER, false, REGISTERED_USERS);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.PUSH).ref("refs/meta/config").group(REGISTERED_USERS))
+        .add(allow(Permission.OWNER).ref("refs/*").group(REGISTERED_USERS))
+        .update();
 
     String project2 = name("project2");
     gApi.projects().create(project2);
@@ -394,7 +416,7 @@ public class PushPermissionsIT extends AbstractDaemonTest {
       case REJECTED_OTHER_REASON:
       case RENAMED:
       default:
-        assert_().fail("fetch failed to update local %s: %s", ref, u.getResult());
+        assertWithMessage("fetch failed to update local %s: %s", ref, u.getResult()).fail();
         break;
     }
     return u.getNewObjectId();

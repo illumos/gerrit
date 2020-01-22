@@ -19,11 +19,11 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.data.LabelTypes;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.index.query.QueryParseException;
 import com.google.gerrit.index.query.QueryResult;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.DynamicOptions;
 import com.google.gerrit.server.config.TrackingFooters;
 import com.google.gerrit.server.data.ChangeAttribute;
@@ -35,7 +35,6 @@ import com.google.gerrit.server.project.SubmitRuleEvaluator;
 import com.google.gerrit.server.project.SubmitRuleOptions;
 import com.google.gerrit.server.util.time.TimeUtil;
 import com.google.gson.Gson;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -76,7 +75,8 @@ public class OutputStreamQuery {
     JSON
   }
 
-  private final ReviewDb db;
+  public static final Gson GSON = new Gson();
+
   private final GitRepositoryManager repoManager;
   private final ChangeQueryBuilder queryBuilder;
   private final ChangeQueryProcessor queryProcessor;
@@ -100,14 +100,12 @@ public class OutputStreamQuery {
 
   @Inject
   OutputStreamQuery(
-      ReviewDb db,
       GitRepositoryManager repoManager,
       ChangeQueryBuilder queryBuilder,
       ChangeQueryProcessor queryProcessor,
       EventFactory eventFactory,
       TrackingFooters trackingFooters,
       SubmitRuleEvaluator.Factory submitRuleEvaluatorFactory) {
-    this.db = db;
     this.repoManager = repoManager;
     this.queryBuilder = queryBuilder;
     this.queryProcessor = queryProcessor;
@@ -118,6 +116,10 @@ public class OutputStreamQuery {
 
   void setLimit(int n) {
     queryProcessor.setUserProvidedLimit(n);
+  }
+
+  public void setNoLimit(boolean on) {
+    queryProcessor.setNoLimit(on);
   }
 
   public void setStart(int n) {
@@ -217,7 +219,7 @@ public class OutputStreamQuery {
         stats.moreChanges = results.more();
         stats.runTimeMilliseconds = TimeUtil.nowMs() - stats.runTimeMilliseconds;
         show(stats);
-      } catch (OrmException err) {
+      } catch (StorageException err) {
         logger.atSevere().withCause(err).log("Cannot execute query: %s", queryString);
 
         ErrorMessage m = new ErrorMessage();
@@ -240,9 +242,9 @@ public class OutputStreamQuery {
 
   private ChangeAttribute buildChangeAttribute(
       ChangeData d, Map<Project.NameKey, Repository> repos, Map<Project.NameKey, RevWalk> revWalks)
-      throws OrmException, IOException {
+      throws IOException {
     LabelTypes labelTypes = d.getLabelTypes();
-    ChangeAttribute c = eventFactory.asChangeAttribute(db, d.change(), d.notes());
+    ChangeAttribute c = eventFactory.asChangeAttribute(d.change(), d.notes());
     eventFactory.extend(c, d.change());
 
     if (!trackingFooters.isEmpty()) {
@@ -250,7 +252,7 @@ public class OutputStreamQuery {
     }
 
     if (includeAllReviewers) {
-      eventFactory.addAllReviewers(db, c, d.notes());
+      eventFactory.addAllReviewers(c, d.notes());
     }
 
     if (includeSubmitRecords) {
@@ -277,7 +279,6 @@ public class OutputStreamQuery {
 
     if (includePatchSets) {
       eventFactory.addPatchSets(
-          db,
           rw,
           c,
           d.patchSets(),
@@ -290,7 +291,7 @@ public class OutputStreamQuery {
     if (includeCurrentPatchSet) {
       PatchSet current = d.currentPatchSet();
       if (current != null) {
-        c.currentPatchSet = eventFactory.asPatchSetAttribute(db, rw, d.change(), current);
+        c.currentPatchSet = eventFactory.asPatchSetAttribute(rw, d.change(), current);
         eventFactory.addApprovals(c.currentPatchSet, d.currentApprovals(), labelTypes);
 
         if (includeFiles) {
@@ -306,7 +307,6 @@ public class OutputStreamQuery {
       eventFactory.addComments(c, d.messages());
       if (includePatchSets) {
         eventFactory.addPatchSets(
-            db,
             rw,
             c,
             d.patchSets(),
@@ -324,7 +324,7 @@ public class OutputStreamQuery {
       eventFactory.addDependencies(rw, c, d.change(), d.currentPatchSet());
     }
 
-    c.plugins = queryProcessor.create(d);
+    c.plugins = queryProcessor.getAttributesFactory().create(d);
     return c;
   }
 
@@ -357,7 +357,7 @@ public class OutputStreamQuery {
         break;
 
       case JSON:
-        out.print(new Gson().toJson(data));
+        out.print(GSON.toJson(data));
         out.print('\n');
         break;
     }
@@ -399,7 +399,7 @@ public class OutputStreamQuery {
       // Idention for multi-line text is
       // current depth indetion + length of field + length of ": "
       indent = indent(indent.length() + field.length() + spacesDepthRatio);
-      out.print(((String) value).replaceAll("\n", "\n" + indent).trim());
+      out.print(((String) value).replace("\n", "\n" + indent).trim());
       out.print('\n');
     } else if (value instanceof Long && isDateField(field)) {
       out.print(' ');

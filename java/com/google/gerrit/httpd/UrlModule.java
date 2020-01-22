@@ -18,10 +18,11 @@ import static com.google.inject.Scopes.SINGLETON;
 
 import com.google.common.base.Strings;
 import com.google.gerrit.common.PageLinks;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.client.AuthType;
+import com.google.gerrit.httpd.raw.AuthorizationCheckServlet;
 import com.google.gerrit.httpd.raw.CatServlet;
-import com.google.gerrit.httpd.raw.HostPageServlet;
-import com.google.gerrit.httpd.raw.LegacyGerritServlet;
 import com.google.gerrit.httpd.raw.SshInfoServlet;
 import com.google.gerrit.httpd.raw.ToolServlet;
 import com.google.gerrit.httpd.restapi.AccessRestApiServlet;
@@ -30,12 +31,8 @@ import com.google.gerrit.httpd.restapi.ChangesRestApiServlet;
 import com.google.gerrit.httpd.restapi.ConfigRestApiServlet;
 import com.google.gerrit.httpd.restapi.GroupsRestApiServlet;
 import com.google.gerrit.httpd.restapi.ProjectsRestApiServlet;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.config.AuthConfig;
-import com.google.gerrit.server.config.GerritOptions;
 import com.google.inject.Key;
-import com.google.inject.Provider;
 import com.google.inject.internal.UniqueAnnotations;
 import com.google.inject.servlet.ServletModule;
 import java.io.IOException;
@@ -45,27 +42,14 @@ import javax.servlet.http.HttpServletResponse;
 import org.eclipse.jgit.lib.Constants;
 
 class UrlModule extends ServletModule {
-  private GerritOptions options;
   private AuthConfig authConfig;
 
-  UrlModule(GerritOptions options, AuthConfig authConfig) {
-    this.options = options;
+  UrlModule(AuthConfig authConfig) {
     this.authConfig = authConfig;
   }
 
   @Override
   protected void configureServlets() {
-    filter("/*").through(GwtCacheControlFilter.class);
-
-    if (options.enableGwtUi()) {
-      filter("/").through(XsrfCookieFilter.class);
-      filter("/accounts/self/detail").through(XsrfCookieFilter.class);
-      serve("/").with(HostPageServlet.class);
-      serve("/Gerrit").with(LegacyGerritServlet.class);
-      serve("/Gerrit/*").with(legacyGerritScreen());
-      // Forward PolyGerrit URLs to their respective GWT equivalents.
-      serveRegex("^/(c|q|x|admin|dashboard|settings)/(.*)").with(gerritUrl());
-    }
     serve("/cat/*").with(CatServlet.class);
 
     if (authConfig.getAuthType() != AuthType.OAUTH && authConfig.getAuthType() != AuthType.OPENID) {
@@ -87,7 +71,7 @@ class UrlModule extends ServletModule {
     serveRegex("^/settings/?$").with(screen(PageLinks.SETTINGS));
     serveRegex("^/register$").with(registerScreen(false));
     serveRegex("^/register/(.+)$").with(registerScreen(true));
-    serveRegex("^/([1-9][0-9]*)/?$").with(directChangeById());
+    serveRegex("^/([1-9][0-9]*)/?$").with(NumericChangeIdRedirectServlet.class);
     serveRegex("^/p/(.*)$").with(queryProjectNew());
     serveRegex("^/r/(.+)/?$").with(DirectChangeByCommit.class);
 
@@ -98,6 +82,9 @@ class UrlModule extends ServletModule {
     install(new RunAsFilter.Module());
 
     serveRegex("^/(?:a/)?tools/(.*)$").with(ToolServlet.class);
+
+    // Serve auth check. Mainly used by PolyGerrit for checking if a user is still logged in.
+    serveRegex("^/(?:a/)?auth-check$").with(AuthorizationCheckServlet.class);
 
     // Bind servlets for REST root collections.
     // The '/plugins/' root collection is already handled by HttpPluginServlet
@@ -127,19 +114,6 @@ class UrlModule extends ServletModule {
         });
   }
 
-  private Key<HttpServlet> gerritUrl() {
-    return key(
-        new HttpServlet() {
-          private static final long serialVersionUID = 1L;
-
-          @Override
-          protected void doGet(HttpServletRequest req, HttpServletResponse rsp) throws IOException {
-            String path = req.getRequestURI().substring(req.getContextPath().length());
-            toGerrit(path, req, rsp, true);
-          }
-        });
-  }
-
   private Key<HttpServlet> screen(String target) {
     return key(
         new HttpServlet() {
@@ -148,43 +122,6 @@ class UrlModule extends ServletModule {
           @Override
           protected void doGet(HttpServletRequest req, HttpServletResponse rsp) throws IOException {
             toGerrit(target, req, rsp);
-          }
-        });
-  }
-
-  private Key<HttpServlet> legacyGerritScreen() {
-    return key(
-        new HttpServlet() {
-          private static final long serialVersionUID = 1L;
-
-          @Override
-          protected void doGet(HttpServletRequest req, HttpServletResponse rsp) throws IOException {
-            final String token = req.getPathInfo().substring(1);
-            toGerrit(token, req, rsp);
-          }
-        });
-  }
-
-  private Key<HttpServlet> directChangeById() {
-    return key(
-        new HttpServlet() {
-          private static final long serialVersionUID = 1L;
-
-          @Override
-          protected void doGet(HttpServletRequest req, HttpServletResponse rsp) throws IOException {
-            try {
-              String idString = req.getPathInfo();
-              if (idString.endsWith("/")) {
-                idString = idString.substring(0, idString.length() - 1);
-              }
-              Change.Id id = Change.Id.parse(idString);
-              // User accessed Gerrit with /1234, so we have no project yet.
-              // TODO(hiesel) Replace with a preflight request to obtain project before we deprecate
-              // the numeric change id.
-              toGerrit(PageLinks.toChange(null, id), req, rsp);
-            } catch (IllegalArgumentException err) {
-              rsp.sendError(HttpServletResponse.SC_NOT_FOUND);
-            }
           }
         });
   }
@@ -214,7 +151,7 @@ class UrlModule extends ServletModule {
             while (name.endsWith("/")) {
               name = name.substring(0, name.length() - 1);
             }
-            Project.NameKey project = new Project.NameKey(name);
+            Project.NameKey project = Project.nameKey(name);
             toGerrit(
                 PageLinks.toChangeQuery(PageLinks.projectQuery(project, Change.Status.NEW)),
                 req,
@@ -237,15 +174,7 @@ class UrlModule extends ServletModule {
 
   private Key<HttpServlet> key(HttpServlet servlet) {
     final Key<HttpServlet> srv = Key.get(HttpServlet.class, UniqueAnnotations.create());
-    bind(srv)
-        .toProvider(
-            new Provider<HttpServlet>() {
-              @Override
-              public HttpServlet get() {
-                return servlet;
-              }
-            })
-        .in(SINGLETON);
+    bind(srv).toProvider(() -> servlet).in(SINGLETON);
     return srv;
   }
 
@@ -277,16 +206,8 @@ class UrlModule extends ServletModule {
 
   static void toGerrit(String target, HttpServletRequest req, HttpServletResponse rsp)
       throws IOException {
-    toGerrit(target, req, rsp, false);
-  }
-
-  static void toGerrit(String target, HttpServletRequest req, HttpServletResponse rsp, boolean gwt)
-      throws IOException {
     final StringBuilder url = new StringBuilder();
     url.append(req.getContextPath());
-    if (gwt) {
-      url.append("/#");
-    }
     url.append(target);
     rsp.sendRedirect(url.toString());
   }

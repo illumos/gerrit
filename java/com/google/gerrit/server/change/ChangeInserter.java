@@ -17,35 +17,32 @@ package com.google.gerrit.server.change;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
-import static com.google.gerrit.reviewdb.client.Change.INITIAL_PATCH_SET_ID;
+import static com.google.gerrit.entities.Change.INITIAL_PATCH_SET_ID;
 import static com.google.gerrit.server.change.ReviewerAdder.newAddReviewerInputFromCommitIdentity;
 import static com.google.gerrit.server.notedb.ReviewerStateInternal.REVIEWER;
 import static java.util.Objects.requireNonNull;
 
 import com.google.common.base.MoreObjects;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.Iterables;
-import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Streams;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.FooterConstants;
 import com.google.gerrit.common.data.LabelType;
 import com.google.gerrit.common.data.LabelTypes;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.ChangeMessage;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.PatchSetApproval;
+import com.google.gerrit.entities.PatchSetInfo;
+import com.google.gerrit.entities.SubmissionId;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
-import com.google.gerrit.extensions.api.changes.RecipientType;
 import com.google.gerrit.extensions.client.ReviewerState;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.ChangeMessage;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.PatchSetApproval;
-import com.google.gerrit.reviewdb.client.PatchSetInfo;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.PatchSetUtil;
@@ -72,7 +69,6 @@ import com.google.gerrit.server.update.Context;
 import com.google.gerrit.server.update.InsertChangeOp;
 import com.google.gerrit.server.update.RepoContext;
 import com.google.gerrit.server.util.RequestScopePropagator;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 import java.io.IOException;
@@ -88,7 +84,6 @@ import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.transport.ReceiveCommand;
-import org.eclipse.jgit.util.ChangeIdUtil;
 
 public class ChangeInserter implements InsertChangeOp {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
@@ -116,6 +111,7 @@ public class ChangeInserter implements InsertChangeOp {
   private final String refName;
 
   // Fields exposed as setters.
+  private PatchSet.Id cherryPickOf;
   private Change.Status status;
   private String topic;
   private String message;
@@ -124,8 +120,6 @@ public class ChangeInserter implements InsertChangeOp {
   private boolean workInProgress;
   private List<String> groups = Collections.emptyList();
   private boolean validate = true;
-  private NotifyHandling notify = NotifyHandling.ALL;
-  private ListMultimap<RecipientType, Account.Id> accountsToNotify = ImmutableListMultimap.of();
   private Map<String, Short> approvals;
   private RequestScopePropagator requestScopePropagator;
   private boolean fireRevisionCreated;
@@ -175,7 +169,7 @@ public class ChangeInserter implements InsertChangeOp {
     this.reviewerAdder = reviewerAdder;
 
     this.changeId = changeId;
-    this.psId = new PatchSet.Id(changeId, INITIAL_PATCH_SET_ID);
+    this.psId = PatchSet.id(changeId, INITIAL_PATCH_SET_ID);
     this.commitId = commitId.copy();
     this.refName = refName;
     this.reviewerInputs = ImmutableList.of();
@@ -192,10 +186,11 @@ public class ChangeInserter implements InsertChangeOp {
             getChangeKey(ctx.getRevWalk(), commitId),
             changeId,
             ctx.getAccountId(),
-            new Branch.NameKey(ctx.getProject(), refName),
+            BranchNameKey.create(ctx.getProject(), refName),
             ctx.getWhen());
     change.setStatus(MoreObjects.firstNonNull(status, Change.Status.NEW));
     change.setTopic(topic);
+    change.setCherryPickOf(cherryPickOf);
     change.setPrivate(isPrivate);
     change.setWorkInProgress(workInProgress);
     change.setReviewStarted(!workInProgress);
@@ -208,18 +203,11 @@ public class ChangeInserter implements InsertChangeOp {
     rw.parseBody(commit);
     List<String> idList = commit.getFooterLines(FooterConstants.CHANGE_ID);
     if (!idList.isEmpty()) {
-      return new Change.Key(idList.get(idList.size() - 1).trim());
+      return Change.key(idList.get(idList.size() - 1).trim());
     }
-    ObjectId changeId =
-        ChangeIdUtil.computeChangeId(
-            commit.getTree(),
-            commit,
-            commit.getAuthorIdent(),
-            commit.getCommitterIdent(),
-            commit.getShortMessage());
-    StringBuilder changeIdStr = new StringBuilder();
-    changeIdStr.append("I").append(ObjectId.toString(changeId));
-    return new Change.Key(changeIdStr.toString());
+    // A Change-Id is generated for the review, but not appended to the commit message.
+    // This can happen if requireChangeId is false.
+    return Change.generateKey();
   }
 
   public PatchSet.Id getPatchSetId() {
@@ -241,6 +229,11 @@ public class ChangeInserter implements InsertChangeOp {
     return this;
   }
 
+  public ChangeInserter setCherryPickOf(PatchSet.Id cherryPickOf) {
+    this.cherryPickOf = cherryPickOf;
+    return this;
+  }
+
   public ChangeInserter setMessage(String message) {
     this.message = message;
     return this;
@@ -253,17 +246,6 @@ public class ChangeInserter implements InsertChangeOp {
 
   public ChangeInserter setValidate(boolean validate) {
     this.validate = validate;
-    return this;
-  }
-
-  public ChangeInserter setNotify(NotifyHandling notify) {
-    this.notify = notify;
-    return this;
-  }
-
-  public ChangeInserter setAccountsToNotify(
-      ListMultimap<RecipientType, Account.Id> accountsToNotify) {
-    this.accountsToNotify = requireNonNull(accountsToNotify);
     return this;
   }
 
@@ -386,10 +368,8 @@ public class ChangeInserter implements InsertChangeOp {
 
   @Override
   public boolean updateChange(ChangeContext ctx)
-      throws RestApiException, OrmException, IOException, PermissionBackendException,
-          ConfigInvalidException {
+      throws RestApiException, IOException, PermissionBackendException, ConfigInvalidException {
     change = ctx.getChange(); // Use defensive copy created by ChangeControl.
-    ReviewDb db = ctx.getDb();
     patchSetInfo =
         patchSetInfoFactory.get(ctx.getRevWalk(), ctx.getRevWalk().parseCommit(commitId), psId);
     ctx.getChange().setCurrentPatchSet(patchSetInfo);
@@ -397,13 +377,16 @@ public class ChangeInserter implements InsertChangeOp {
     ChangeUpdate update = ctx.getUpdate(psId);
     update.setChangeId(change.getKey().get());
     update.setSubjectForCommit("Create change");
-    update.setBranch(change.getDest().get());
+    update.setBranch(change.getDest().branch());
     update.setTopic(change.getTopic());
     update.setPsDescription(patchSetDescription);
     update.setPrivate(isPrivate);
     update.setWorkInProgress(workInProgress);
     if (revertOf != null) {
       update.setRevertOf(revertOf.get());
+    }
+    if (cherryPickOf != null) {
+      update.setCherryPickOf(cherryPickOf.getCommaSeparatedChangeAndPatchSetId());
     }
 
     List<String> newGroups = groups;
@@ -412,16 +395,9 @@ public class ChangeInserter implements InsertChangeOp {
     }
     patchSet =
         psUtil.insert(
-            ctx.getDb(),
-            ctx.getRevWalk(),
-            update,
-            psId,
-            commitId,
-            newGroups,
-            pushCert,
-            patchSetDescription);
+            ctx.getRevWalk(), update, psId, commitId, newGroups, pushCert, patchSetDescription);
 
-    /* TODO: fixStatus is used here because the tests
+    /* TODO: fixStatusToMerged is used here because the tests
      * (byStatusClosed() in AbstractQueryChangesTest)
      * insert changes that are already merged,
      * and setStatus may not be used to set the Status to merged
@@ -429,11 +405,14 @@ public class ChangeInserter implements InsertChangeOp {
      * is it possible to make the tests use the merge code path,
      * instead of setting the status directly?
      */
-    update.fixStatus(change.getStatus());
+    if (change.getStatus() == Change.Status.MERGED) {
+      update.fixStatusToMerged(new SubmissionId(change));
+    } else {
+      update.setStatus(change.getStatus());
+    }
 
     reviewerAdditions =
-        reviewerAdder.prepare(
-            ctx.getDb(), ctx.getNotes(), ctx.getUser(), getReviewerInputs(), true);
+        reviewerAdder.prepare(ctx.getNotes(), ctx.getUser(), getReviewerInputs(), true);
     Optional<ReviewerAddition> reviewerError = reviewerAdditions.getFailures().stream().findFirst();
     if (reviewerError.isPresent()) {
       throw new UnprocessableEntityException(reviewerError.get().result.error);
@@ -442,7 +421,7 @@ public class ChangeInserter implements InsertChangeOp {
 
     LabelTypes labelTypes = projectState.getLabelTypes();
     approvalsUtil.addApprovalsForNewPatchSet(
-        db, update, labelTypes, patchSet, ctx.getUser(), approvals);
+        update, labelTypes, patchSet, ctx.getUser(), approvals);
 
     // Check if approvals are changing in with this update. If so, add current user to reviewers.
     // Note that this is done separately as addReviewers is filtering out the change owner as
@@ -454,12 +433,12 @@ public class ChangeInserter implements InsertChangeOp {
     if (message != null) {
       changeMessage =
           ChangeMessagesUtil.newMessage(
-              patchSet.getId(),
+              patchSet.id(),
               ctx.getUser(),
-              patchSet.getCreatedOn(),
+              patchSet.createdOn(),
               message,
               ChangeMessagesUtil.uploadedPatchSetTag(workInProgress));
-      cmUtil.addChangeMessage(db, update, changeMessage);
+      cmUtil.addChangeMessage(update, changeMessage);
     }
     return true;
   }
@@ -467,7 +446,8 @@ public class ChangeInserter implements InsertChangeOp {
   @Override
   public void postUpdate(Context ctx) throws Exception {
     reviewerAdditions.postUpdate(ctx);
-    if (sendMail && (notify != NotifyHandling.NONE || !accountsToNotify.isEmpty())) {
+    NotifyResolver.Result notify = ctx.getNotify(change.getId());
+    if (sendMail && notify.shouldNotify()) {
       Runnable sender =
           new Runnable() {
             @Override
@@ -478,10 +458,9 @@ public class ChangeInserter implements InsertChangeOp {
                 cm.setFrom(change.getOwner());
                 cm.setPatchSet(patchSet, patchSetInfo);
                 cm.setNotify(notify);
-                cm.setAccountsToNotify(accountsToNotify);
                 cm.addReviewers(
                     reviewerAdditions.flattenResults(AddReviewersOp.Result::addedReviewers).stream()
-                        .map(PatchSetApproval::getAccountId)
+                        .map(PatchSetApproval::accountId)
                         .collect(toImmutableSet()));
                 cm.addReviewersByEmail(
                     reviewerAdditions.flattenResults(AddReviewersOp.Result::addedReviewersByEmail));
@@ -546,14 +525,14 @@ public class ChangeInserter implements InsertChangeOp {
           new CommitReceivedEvent(
               cmd,
               projectState.getProject(),
-              change.getDest().get(),
+              change.getDest().branch(),
               ctx.getRevWalk().getObjectReader(),
               commitId,
               ctx.getIdentifiedUser())) {
         commitValidatorsFactory
             .forGerritCommits(
                 permissionBackend.user(ctx.getUser()).project(ctx.getProject()),
-                new Branch.NameKey(ctx.getProject(), refName),
+                BranchNameKey.create(ctx.getProject(), refName),
                 ctx.getIdentifiedUser(),
                 new NoSshInfo(),
                 ctx.getRevWalk(),
@@ -587,10 +566,16 @@ public class ChangeInserter implements InsertChangeOp {
             reviewerInputs.stream(),
             Streams.stream(
                 newAddReviewerInputFromCommitIdentity(
-                    change, patchSetInfo.getAuthor().getAccount(), NotifyHandling.NONE)),
+                    change,
+                    patchSetInfo.getCommitId(),
+                    patchSetInfo.getAuthor().getAccount(),
+                    NotifyHandling.NONE)),
             Streams.stream(
                 newAddReviewerInputFromCommitIdentity(
-                    change, patchSetInfo.getCommitter().getAccount(), NotifyHandling.NONE)))
+                    change,
+                    patchSetInfo.getCommitId(),
+                    patchSetInfo.getCommitter().getAccount(),
+                    NotifyHandling.NONE)))
         .collect(toImmutableList());
   }
 }

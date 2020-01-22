@@ -17,24 +17,30 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-select',
-    properties: {
-      bindValue: {
-        type: String,
-        notify: true,
-        observer: '_updateValue',
-      },
-    },
+  /**
+   * @appliesMixin Gerrit.FireMixin
+   * @extends Polymer.Element
+   */
+  class GrSelect extends Polymer.mixinBehaviors( [
+    Gerrit.FireBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-select'; }
 
-    listeners: {
-      'change': '_valueChanged',
-      'dom-change': '_updateValue',
-    },
+    static get properties() {
+      return {
+        bindValue: {
+          type: String,
+          notify: true,
+          observer: '_updateValue',
+        },
+      };
+    }
 
     get nativeSelect() {
       return this.$$('select');
-    },
+    }
 
     _updateValue() {
       // It's possible to have a value of 0.
@@ -48,15 +54,34 @@
           this.nativeSelect.value = this.bindValue;
         }, 1);
       }
-    },
+    }
 
     _valueChanged() {
       this.bindValue = this.nativeSelect.value;
-    },
+    }
 
+    focus() {
+      this.nativeSelect.focus();
+    }
+
+    /** @override */
+    created() {
+      super.created();
+      this.addEventListener('change',
+          () => this._valueChanged());
+      this.addEventListener('dom-change',
+          () => this._updateValue());
+    }
+
+    /** @override */
     ready() {
+      super.ready();
       // If not set via the property, set bind-value to the element value.
-      if (!this.bindValue) { this.bindValue = this.nativeSelect.value; }
-    },
-  });
+      if (this.bindValue == undefined && this.nativeSelect.options.length > 0) {
+        this.bindValue = this.nativeSelect.value;
+      }
+    }
+  }
+
+  customElements.define(GrSelect.is, GrSelect);
 })();

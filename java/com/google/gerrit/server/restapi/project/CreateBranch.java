@@ -14,19 +14,21 @@
 
 package com.google.gerrit.server.restapi.project;
 
-import static com.google.gerrit.reviewdb.client.RefNames.isConfigRef;
+import static com.google.gerrit.entities.RefNames.isConfigRef;
 
 import com.google.common.base.Strings;
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.projects.BranchInfo;
 import com.google.gerrit.extensions.api.projects.BranchInput;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestCollectionCreateView;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.gerrit.git.LockFailureException;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.GitRepositoryManager;
@@ -82,7 +84,7 @@ public class CreateBranch
   }
 
   @Override
-  public BranchInfo apply(ProjectResource rsrc, IdString id, BranchInput input)
+  public Response<BranchInfo> apply(ProjectResource rsrc, IdString id, BranchInput input)
       throws BadRequestException, AuthException, ResourceConflictException, IOException,
           PermissionBackendException, NoSuchProjectException {
     String ref = id.get();
@@ -112,7 +114,7 @@ public class CreateBranch
               + "\"");
     }
 
-    final Branch.NameKey name = new Branch.NameKey(rsrc.getNameKey(), ref);
+    final BranchNameKey name = BranchNameKey.create(rsrc.getNameKey(), ref);
     try (Repository repo = repoManager.openRepository(rsrc.getNameKey())) {
       ObjectId revid = RefUtil.parseBaseRevision(repo, rsrc.getNameKey(), input.revision);
       RevWalk rw = RefUtil.verifyConnected(repo, revid);
@@ -144,7 +146,7 @@ public class CreateBranch
           case NEW:
           case NO_CHANGE:
             referenceUpdated.fire(
-                name.getParentKey(), u, ReceiveCommand.Type.CREATE, identifiedUser.get().state());
+                name.project(), u, ReceiveCommand.Type.CREATE, identifiedUser.get().state());
             break;
           case LOCK_FAILURE:
             if (repo.getRefDatabase().exactRef(ref) != null) {
@@ -162,8 +164,7 @@ public class CreateBranch
               }
               refPrefix = RefUtil.getRefPrefix(refPrefix);
             }
-            // fall through
-            // $FALL-THROUGH$
+            throw new LockFailureException(String.format("Failed to create %s", ref), u);
           case FORCED:
           case IO_FAILURE:
           case NOT_ATTEMPTED:
@@ -173,16 +174,14 @@ public class CreateBranch
           case REJECTED_MISSING_OBJECT:
           case REJECTED_OTHER_REASON:
           default:
-            {
-              throw new IOException(result.name());
-            }
+            throw new IOException(String.format("Failed to create %s: %s", ref, result.name()));
         }
 
         BranchInfo info = new BranchInfo();
         info.ref = ref;
         info.revision = revid.getName();
 
-        if (isConfigRef(name.get())) {
+        if (isConfigRef(name.branch())) {
           // Never allow to delete the meta config branch.
           info.canDelete = null;
         } else {
@@ -192,7 +191,7 @@ public class CreateBranch
                   ? true
                   : null;
         }
-        return info;
+        return Response.created(info);
       } catch (IOException err) {
         logger.atSevere().withCause(err).log("Cannot create branch \"%s\"", name);
         throw err;

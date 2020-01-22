@@ -16,8 +16,8 @@ package com.google.gerrit.mail;
 
 import static com.google.common.truth.Truth.assertThat;
 
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Comment;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Comment;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -40,7 +40,7 @@ public class AbstractParserTest {
       String message, MailComment comment, Comment inReplyTo) {
     assertThat(comment.fileName).isNull();
     assertThat(comment.message).isEqualTo(message);
-    assertThat(comment.inReplyTo).isEqualTo(inReplyTo);
+    assertThat(comment.inReplyTo.key).isEqualTo(inReplyTo.key);
     assertThat(comment.type).isEqualTo(MailComment.CommentType.INLINE_COMMENT);
   }
 
@@ -55,7 +55,7 @@ public class AbstractParserTest {
     Comment c =
         new Comment(
             new Comment.Key(uuid, file, 1),
-            new Account.Id(0),
+            Account.id(0),
             new Timestamp(0L),
             (short) 0,
             message,
@@ -69,7 +69,7 @@ public class AbstractParserTest {
     Comment c =
         new Comment(
             new Comment.Key(uuid, file, 1),
-            new Account.Id(0),
+            Account.id(0),
             new Timestamp(0L),
             (short) 0,
             message,

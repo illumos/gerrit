@@ -17,12 +17,22 @@ package com.google.gerrit.server.restapi.account;
 import com.google.common.base.Strings;
 import com.google.gerrit.extensions.registration.DynamicItem;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.server.account.AccountResource;
 import com.google.gerrit.server.avatar.AvatarProvider;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 
+/**
+ * REST endpoint to get the URL for changing the avatar image of an account.
+ *
+ * <p>This REST endpoint handles {@code GET /accounts/<account-identifier>/avatar.change.url}
+ * requests.
+ *
+ * <p>Avatar images are only available if an {@link AvatarProvider} plugin is installed. Not all
+ * avatar plugins provide a URL for changing avatar images.
+ */
 @Singleton
 public class GetAvatarChangeUrl implements RestReadView<AccountResource> {
   private final DynamicItem<AvatarProvider> avatarProvider;
@@ -33,7 +43,7 @@ public class GetAvatarChangeUrl implements RestReadView<AccountResource> {
   }
 
   @Override
-  public String apply(AccountResource rsrc) throws ResourceNotFoundException {
+  public Response<String> apply(AccountResource rsrc) throws ResourceNotFoundException {
     AvatarProvider impl = avatarProvider.get();
     if (impl == null) {
       throw new ResourceNotFoundException();
@@ -43,6 +53,6 @@ public class GetAvatarChangeUrl implements RestReadView<AccountResource> {
     if (Strings.isNullOrEmpty(url)) {
       throw new ResourceNotFoundException();
     }
-    return url;
+    return Response.ok(url);
   }
 }

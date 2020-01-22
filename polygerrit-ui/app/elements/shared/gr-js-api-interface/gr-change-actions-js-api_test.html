@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-change-actions-js-api</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <!--
 This must refer to the element this interface is wrapping around. Otherwise
@@ -52,17 +54,18 @@ breaking changes to gr-change-actions won’t be noticed.
 
     suite('early init', () => {
       setup(() => {
-        Gerrit._resetPlugins();
+        Gerrit._testOnly_resetPlugins();
         Gerrit.install(p => { plugin = p; }, '0.1',
             'http://test.com/plugins/testplugin/static/test.js');
         // Mimic all plugins loaded.
-        Gerrit._setPluginsPending([]);
+        Gerrit._loadPlugins([]);
         changeActions = plugin.changeActions();
         element = fixture('basic');
       });
 
       teardown(() => {
         changeActions = null;
+        Gerrit._testOnly_resetPlugins();
       });
 
       test('does not throw', ()=> {
@@ -74,7 +77,7 @@ breaking changes to gr-change-actions won’t be noticed.
 
     suite('normal init', () => {
       setup(() => {
-        Gerrit._resetPlugins();
+        Gerrit._testOnly_resetPlugins();
         element = fixture('basic');
         sinon.stub(element, '_editStatusChanged');
         element.change = {};
@@ -83,11 +86,12 @@ breaking changes to gr-change-actions won’t be noticed.
             'http://test.com/plugins/testplugin/static/test.js');
         changeActions = plugin.changeActions();
         // Mimic all plugins loaded.
-        Gerrit._setPluginsPending([]);
+        Gerrit._loadPlugins([]);
       });
 
       teardown(() => {
         changeActions = null;
+        Gerrit._testOnly_resetPlugins();
       });
 
       test('property existence', () => {

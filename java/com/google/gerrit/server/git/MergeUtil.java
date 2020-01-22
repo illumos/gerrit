@@ -17,34 +17,38 @@ package com.google.gerrit.server.git;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
+import static com.google.common.collect.ImmutableSortedSet.toImmutableSortedSet;
+import static com.google.gerrit.git.ObjectIds.abbreviateName;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.Comparator.naturalOrder;
 import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.joining;
 
-import com.google.common.base.Joiner;
 import com.google.common.base.Strings;
-import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.FooterConstants;
 import com.google.gerrit.common.data.LabelType;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.BooleanProjectConfig;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.LabelId;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.PatchSetApproval;
+import com.google.gerrit.exceptions.InvalidMergeStrategyException;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.registration.DynamicItem;
 import com.google.gerrit.extensions.registration.DynamicSet;
+import com.google.gerrit.extensions.registration.Extension;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.MergeConflictException;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.BooleanProjectConfig;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.LabelId;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.PatchSet.Id;
-import com.google.gerrit.reviewdb.client.PatchSetApproval;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.config.GerritServerConfig;
@@ -57,9 +61,7 @@ import com.google.gerrit.server.submit.CommitMergeStatus;
 import com.google.gerrit.server.submit.IntegrationException;
 import com.google.gerrit.server.submit.MergeIdenticalTreeException;
 import com.google.gerrit.server.submit.MergeSorter;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.assistedinject.Assisted;
 import com.google.inject.assistedinject.AssistedInject;
 import java.io.IOException;
@@ -69,7 +71,6 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -86,7 +87,6 @@ import org.eclipse.jgit.errors.MissingObjectException;
 import org.eclipse.jgit.errors.NoMergeBaseException;
 import org.eclipse.jgit.errors.NoMergeBaseException.MergeBaseFailureReason;
 import org.eclipse.jgit.errors.RevisionSyntaxException;
-import org.eclipse.jgit.lib.AnyObjectId;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.Constants;
@@ -120,6 +120,13 @@ import org.eclipse.jgit.util.TemporaryBuffer;
 public class MergeUtil {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
+  /**
+   * Length of abbreviated hex SHA-1s in merged filenames.
+   *
+   * <p>This is a constant so output is stable over time even if the SHA-1 prefix becomes ambiguous.
+   */
+  private static final int NAME_ABBREV_LEN = 6;
+
   static class PluggableCommitMessageGenerator {
     private final DynamicSet<ChangeMessageModifier> changeMessageModifiers;
 
@@ -129,20 +136,31 @@ public class MergeUtil {
     }
 
     public String generate(
-        RevCommit original, RevCommit mergeTip, Branch.NameKey dest, String current) {
+        RevCommit original, RevCommit mergeTip, BranchNameKey dest, String originalMessage) {
       requireNonNull(original.getRawBuffer());
       if (mergeTip != null) {
         requireNonNull(mergeTip.getRawBuffer());
       }
-      for (ChangeMessageModifier changeMessageModifier : changeMessageModifiers) {
+
+      int count = 0;
+      String current = originalMessage;
+      for (Extension<ChangeMessageModifier> ext : changeMessageModifiers.entries()) {
+        ChangeMessageModifier changeMessageModifier = ext.get();
+        String className = changeMessageModifier.getClass().getName();
         current = changeMessageModifier.onSubmit(current, original, mergeTip, dest);
-        requireNonNull(
-            current,
-            () ->
-                String.format(
-                    "%s.OnSubmit returned null instead of new commit message",
-                    changeMessageModifier.getClass().getName()));
+        checkState(
+            current != null,
+            "%s.onSubmit from plugin %s returned null instead of new commit message",
+            className,
+            ext.getPluginName());
+        count++;
+        logger.atFine().log(
+            "Invoked %s from plugin %s, message length now %d",
+            className, ext.getPluginName(), current.length());
       }
+      logger.atFine().log(
+          "Invoked %d ChangeMessageModifiers on message with original length %d",
+          count, originalMessage.length());
       return current;
     }
   }
@@ -163,7 +181,6 @@ public class MergeUtil {
     MergeUtil create(ProjectState project, boolean useContentMerge);
   }
 
-  private final Provider<ReviewDb> db;
   private final IdentifiedUser.GenericFactory identifiedUserFactory;
   private final DynamicItem<UrlFormatter> urlFormatter;
   private final ApprovalsUtil approvalsUtil;
@@ -175,7 +192,6 @@ public class MergeUtil {
   @AssistedInject
   MergeUtil(
       @GerritServerConfig Config serverConfig,
-      Provider<ReviewDb> db,
       IdentifiedUser.GenericFactory identifiedUserFactory,
       DynamicItem<UrlFormatter> urlFormatter,
       ApprovalsUtil approvalsUtil,
@@ -183,7 +199,6 @@ public class MergeUtil {
       @Assisted ProjectState project) {
     this(
         serverConfig,
-        db,
         identifiedUserFactory,
         urlFormatter,
         approvalsUtil,
@@ -195,14 +210,12 @@ public class MergeUtil {
   @AssistedInject
   MergeUtil(
       @GerritServerConfig Config serverConfig,
-      Provider<ReviewDb> db,
       IdentifiedUser.GenericFactory identifiedUserFactory,
       DynamicItem<UrlFormatter> urlFormatter,
       ApprovalsUtil approvalsUtil,
       @Assisted ProjectState project,
       PluggableCommitMessageGenerator commitMessageGenerator,
       @Assisted boolean useContentMerge) {
-    this.db = db;
     this.identifiedUserFactory = identifiedUserFactory;
     this.urlFormatter = urlFormatter;
     this.approvalsUtil = approvalsUtil;
@@ -234,7 +247,7 @@ public class MergeUtil {
     List<CodeReviewCommit> result = new ArrayList<>();
     try {
       result.addAll(mergeSorter.sort(toSort));
-    } catch (IOException | OrmException e) {
+    } catch (IOException | StorageException e) {
       throw new IntegrationException("Branch head sorting failed", e);
     }
     result.sort(CodeReviewCommit.ORDER);
@@ -253,7 +266,8 @@ public class MergeUtil {
       boolean ignoreIdenticalTree,
       boolean allowConflicts)
       throws MissingObjectException, IncorrectObjectTypeException, IOException,
-          MergeIdenticalTreeException, MergeConflictException, MethodNotAllowedException {
+          MergeIdenticalTreeException, MergeConflictException, MethodNotAllowedException,
+          InvalidMergeStrategyException {
 
     ThreeWayMerger m = newThreeWayMerger(inserter, repoConfig);
     m.setBase(originalCommit.getParent(parentIndex));
@@ -334,13 +348,13 @@ public class MergeUtil {
         String.format(
             "%0$-" + nameLength + "s (%s %s)",
             oursName,
-            ours.abbreviate(6).name(),
+            abbreviateName(ours, NAME_ABBREV_LEN),
             oursMsg.substring(0, Math.min(oursMsg.length(), 60)));
     String theirsNameFormatted =
         String.format(
             "%0$-" + nameLength + "s (%s %s)",
             theirsName,
-            theirs.abbreviate(6).name(),
+            abbreviateName(theirs, NAME_ABBREV_LEN),
             theirsMsg.substring(0, Math.min(theirsMsg.length(), 60)));
 
     MergeFormatter fmt = new MergeFormatter();
@@ -351,8 +365,8 @@ public class MergeUtil {
       try {
         // TODO(dborowitz): Respect inCoreLimit here.
         buf = new TemporaryBuffer.LocalFile(null, 10 * 1024 * 1024);
-        fmt.formatMerge(buf, p, "BASE", oursNameFormatted, theirsNameFormatted, UTF_8.name());
-        buf.close();
+        fmt.formatMerge(buf, p, "BASE", oursNameFormatted, theirsNameFormatted, UTF_8);
+        buf.close(); // Flush file and close for writes, but leave available for reading.
 
         try (InputStream in = buf.openInputStream()) {
           resolved.put(entry.getKey(), ins.insert(Constants.OBJ_BLOB, buf.length(), in));
@@ -419,7 +433,8 @@ public class MergeUtil {
       PersonIdent committerIndent,
       String commitMsg,
       RevWalk rw)
-      throws IOException, MergeIdenticalTreeException, MergeConflictException {
+      throws IOException, MergeIdenticalTreeException, MergeConflictException,
+          InvalidMergeStrategyException {
 
     if (!MergeStrategy.THEIRS.getName().equals(mergeStrategy)
         && rw.isMergedInto(originalCommit, mergeTip)) {
@@ -511,7 +526,7 @@ public class MergeUtil {
     PatchSetApproval submitAudit = null;
 
     for (PatchSetApproval a : safeGetApprovals(notes, psId)) {
-      if (a.getValue() <= 0) {
+      if (a.value() <= 0) {
         // Negative votes aren't counted.
         continue;
       }
@@ -519,29 +534,29 @@ public class MergeUtil {
       if (a.isLegacySubmit()) {
         // Submit is treated specially, below (becomes committer)
         //
-        if (submitAudit == null || a.getGranted().compareTo(submitAudit.getGranted()) > 0) {
+        if (submitAudit == null || a.granted().compareTo(submitAudit.granted()) > 0) {
           submitAudit = a;
         }
         continue;
       }
 
-      final Account acc = identifiedUserFactory.create(a.getAccountId()).getAccount();
+      final Account acc = identifiedUserFactory.create(a.accountId()).getAccount();
       final StringBuilder identbuf = new StringBuilder();
-      if (acc.getFullName() != null && acc.getFullName().length() > 0) {
+      if (acc.fullName() != null && acc.fullName().length() > 0) {
         if (identbuf.length() > 0) {
           identbuf.append(' ');
         }
-        identbuf.append(acc.getFullName());
+        identbuf.append(acc.fullName());
       }
-      if (acc.getPreferredEmail() != null && acc.getPreferredEmail().length() > 0) {
-        if (isSignedOffBy(footers, acc.getPreferredEmail())) {
+      if (acc.preferredEmail() != null && acc.preferredEmail().length() > 0) {
+        if (isSignedOffBy(footers, acc.preferredEmail())) {
           continue;
         }
         if (identbuf.length() > 0) {
           identbuf.append(' ');
         }
         identbuf.append('<');
-        identbuf.append(acc.getPreferredEmail());
+        identbuf.append(acc.preferredEmail());
         identbuf.append('>');
       }
       if (identbuf.length() == 0) {
@@ -550,12 +565,12 @@ public class MergeUtil {
       }
 
       final String tag;
-      if (isCodeReview(a.getLabelId())) {
+      if (isCodeReview(a.labelId())) {
         tag = "Reviewed-by";
-      } else if (isVerified(a.getLabelId())) {
+      } else if (isVerified(a.labelId())) {
         tag = "Tested-by";
       } else {
-        final LabelType lt = project.getLabelTypes().byLabel(a.getLabelId());
+        final LabelType lt = project.getLabelTypes().byLabel(a.labelId());
         if (lt == null) {
           continue;
         }
@@ -590,7 +605,7 @@ public class MergeUtil {
    * @return new message
    */
   public String createCommitMessageOnSubmit(
-      RevCommit n, RevCommit mergeTip, ChangeNotes notes, Id id) {
+      RevCommit n, RevCommit mergeTip, ChangeNotes notes, PatchSet.Id id) {
     return commitMessageGenerator.generate(
         n, mergeTip, notes.getChange().getDest(), createDetailedCommitMessage(n, notes, id));
   }
@@ -605,8 +620,8 @@ public class MergeUtil {
 
   private Iterable<PatchSetApproval> safeGetApprovals(ChangeNotes notes, PatchSet.Id psId) {
     try {
-      return approvalsUtil.byPatchSet(db.get(), notes, psId, null, null);
-    } catch (OrmException e) {
+      return approvalsUtil.byPatchSet(notes, psId, null, null);
+    } catch (StorageException e) {
       logger.atSevere().withCause(e).log("Can't read approval records for %s", psId);
       return Collections.emptyList();
     }
@@ -638,7 +653,7 @@ public class MergeUtil {
     }
 
     try (ObjectInserter ins = new InMemoryInserter(repo)) {
-      return newThreeWayMerger(ins, repo.getConfig()).merge(new AnyObjectId[] {mergeTip, toMerge});
+      return newThreeWayMerger(ins, repo.getConfig()).merge(mergeTip, toMerge);
     } catch (LargeObjectException e) {
       logger.atWarning().log("Cannot merge due to LargeObjectException: %s", toMerge.name());
       return false;
@@ -719,7 +734,7 @@ public class MergeUtil {
       throws IntegrationException {
     try {
       return !mergeSorter.sort(Collections.singleton(toMerge)).contains(toMerge);
-    } catch (IOException | OrmException e) {
+    } catch (IOException | StorageException e) {
       throw new IntegrationException("Branch head sorting failed", e);
     }
   }
@@ -730,13 +745,13 @@ public class MergeUtil {
       CodeReviewRevWalk rw,
       ObjectInserter inserter,
       Config repoConfig,
-      Branch.NameKey destBranch,
+      BranchNameKey destBranch,
       CodeReviewCommit mergeTip,
       CodeReviewCommit n)
-      throws IntegrationException {
+      throws IntegrationException, InvalidMergeStrategyException {
     ThreeWayMerger m = newThreeWayMerger(inserter, repoConfig);
     try {
-      if (m.merge(new AnyObjectId[] {mergeTip, n})) {
+      if (m.merge(mergeTip, n)) {
         return writeMergeCommit(
             author, committer, rw, inserter, destBranch, mergeTip, m.getResultTreeId(), n);
       }
@@ -785,7 +800,7 @@ public class MergeUtil {
       PersonIdent committer,
       CodeReviewRevWalk rw,
       ObjectInserter inserter,
-      Branch.NameKey destBranch,
+      BranchNameKey destBranch,
       CodeReviewCommit mergeTip,
       ObjectId treeId,
       CodeReviewCommit n)
@@ -802,9 +817,9 @@ public class MergeUtil {
     }
 
     StringBuilder msgbuf = new StringBuilder().append(summarize(rw, merged));
-    if (!R_HEADS_MASTER.equals(destBranch.get())) {
+    if (!R_HEADS_MASTER.equals(destBranch.branch())) {
       msgbuf.append(" into ");
-      msgbuf.append(destBranch.getShortName());
+      msgbuf.append(destBranch.shortName());
     }
 
     if (merged.size() > 1) {
@@ -836,29 +851,26 @@ public class MergeUtil {
       return String.format("Merge \"%s\"", c.getShortMessage());
     }
 
-    LinkedHashSet<String> topics = new LinkedHashSet<>(4);
-    for (CodeReviewCommit c : merged) {
-      if (!Strings.isNullOrEmpty(c.change().getTopic())) {
-        topics.add(c.change().getTopic());
-      }
-    }
+    ImmutableSortedSet<String> topics =
+        merged.stream()
+            .map(c -> c.change().getTopic())
+            .filter(t -> !Strings.isNullOrEmpty(t))
+            .map(t -> "\"" + t + "\"")
+            .collect(toImmutableSortedSet(naturalOrder()));
 
-    if (topics.size() == 1) {
-      return String.format("Merge changes from topic \"%s\"", Iterables.getFirst(topics, null));
-    } else if (topics.size() > 1) {
-      return String.format("Merge changes from topics \"%s\"", Joiner.on("\", \"").join(topics));
-    } else {
+    if (!topics.isEmpty()) {
       return String.format(
-          "Merge changes %s%s",
-          FluentIterable.from(merged)
-              .limit(5)
-              .transform(c -> c.change().getKey().abbreviate())
-              .join(Joiner.on(',')),
-          merged.size() > 5 ? ", ..." : "");
+          "Merge changes from topic%s %s",
+          topics.size() > 1 ? "s" : "", topics.stream().collect(joining(", ")));
     }
+    return merged.stream()
+        .limit(5)
+        .map(c -> c.change().getKey().abbreviate())
+        .collect(joining(",", "Merge changes ", merged.size() > 5 ? ", ..." : ""));
   }
 
-  public ThreeWayMerger newThreeWayMerger(ObjectInserter inserter, Config repoConfig) {
+  public ThreeWayMerger newThreeWayMerger(ObjectInserter inserter, Config repoConfig)
+      throws InvalidMergeStrategyException {
     return newThreeWayMerger(inserter, repoConfig, mergeStrategyName());
   }
 
@@ -867,22 +879,32 @@ public class MergeUtil {
   }
 
   public static String mergeStrategyName(boolean useContentMerge, boolean useRecursiveMerge) {
+    String mergeStrategy;
+
     if (useContentMerge) {
       // Settings for this project allow us to try and automatically resolve
       // conflicts within files if needed. Use either the old resolve merger or
       // new recursive merger, and instruct to operate in core.
       if (useRecursiveMerge) {
-        return MergeStrategy.RECURSIVE.getName();
+        mergeStrategy = MergeStrategy.RECURSIVE.getName();
+      } else {
+        mergeStrategy = MergeStrategy.RESOLVE.getName();
       }
-      return MergeStrategy.RESOLVE.getName();
+    } else {
+      // No auto conflict resolving allowed. If any of the
+      // affected files was modified, merge will fail.
+      mergeStrategy = MergeStrategy.SIMPLE_TWO_WAY_IN_CORE.getName();
     }
-    // No auto conflict resolving allowed. If any of the
-    // affected files was modified, merge will fail.
-    return MergeStrategy.SIMPLE_TWO_WAY_IN_CORE.getName();
+
+    logger.atFine().log(
+        "mergeStrategy = %s (useContentMerge = %s, useRecursiveMerge = %s)",
+        mergeStrategy, useContentMerge, useRecursiveMerge);
+    return mergeStrategy;
   }
 
   public static ThreeWayMerger newThreeWayMerger(
-      ObjectInserter inserter, Config repoConfig, String strategyName) {
+      ObjectInserter inserter, Config repoConfig, String strategyName)
+      throws InvalidMergeStrategyException {
     Merger m = newMerger(inserter, repoConfig, strategyName);
     checkArgument(
         m instanceof ThreeWayMerger,
@@ -891,9 +913,12 @@ public class MergeUtil {
     return (ThreeWayMerger) m;
   }
 
-  public static Merger newMerger(ObjectInserter inserter, Config repoConfig, String strategyName) {
+  public static Merger newMerger(ObjectInserter inserter, Config repoConfig, String strategyName)
+      throws InvalidMergeStrategyException {
     MergeStrategy strategy = MergeStrategy.get(strategyName);
-    checkArgument(strategy != null, "invalid merge strategy: %s", strategyName);
+    if (strategy == null) {
+      throw new InvalidMergeStrategyException(strategyName);
+    }
     return strategy.newMerger(
         new ObjectInserter.Filter() {
           @Override
@@ -971,7 +996,7 @@ public class MergeUtil {
         if (c.getPatchsetId() == null) {
           continue;
         }
-        Change.Id id = c.getPatchsetId().getParentKey();
+        Change.Id id = c.getPatchsetId().changeId();
         if (!expected.contains(id)) {
           continue;
         }

@@ -15,12 +15,13 @@
 package com.google.gerrit.server.project;
 
 import com.google.common.util.concurrent.Striped;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.registration.DynamicItem;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.inject.AbstractModule;
 import com.google.inject.Singleton;
 import java.util.concurrent.locks.Lock;
 
+/** In-memory lock for project names. */
 @Singleton
 public class DefaultProjectNameLockManager implements ProjectNameLockManager {
 

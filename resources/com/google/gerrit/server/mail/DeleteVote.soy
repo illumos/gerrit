@@ -19,12 +19,12 @@
 /**
  * The .DeleteVote template will determine the contents of the email related
  * to removing votes on changes.
- * @param change
- * @param coverLetter
- * @param email
- * @param fromName
  */
 {template .DeleteVote kind="text"}
+  {@param change: ?}
+  {@param coverLetter: ?}
+  {@param email: ?}
+  {@param fromName: ?}
   {$fromName} has removed a vote from this change.{if $email.changeUrl} ( {$email.changeUrl} ){/if}{\n}{\n}
   {\n}
   Change subject: {$change.subject}{\n}

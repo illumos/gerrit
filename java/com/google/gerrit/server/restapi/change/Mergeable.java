@@ -14,18 +14,16 @@
 
 package com.google.gerrit.server.restapi.change;
 
-import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.data.SubmitTypeRecord;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.extensions.client.SubmitType;
 import com.google.gerrit.extensions.common.MergeableInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.server.ReviewDb;
-import com.google.gerrit.reviewdb.server.ReviewDbUtil;
 import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.change.MergeabilityCache;
 import com.google.gerrit.server.change.RevisionResource;
@@ -38,12 +36,9 @@ import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.project.SubmitRuleEvaluator;
 import com.google.gerrit.server.project.SubmitRuleOptions;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Future;
@@ -54,8 +49,6 @@ import org.eclipse.jgit.lib.Repository;
 import org.kohsuke.args4j.Option;
 
 public class Mergeable implements RestReadView<RevisionResource> {
-  private static final FluentLogger logger = FluentLogger.forEnclosingClass();
-
   @Option(
       name = "--other-branches",
       aliases = {"-o"},
@@ -66,7 +59,6 @@ public class Mergeable implements RestReadView<RevisionResource> {
   private final ProjectCache projectCache;
   private final MergeUtil.Factory mergeUtilFactory;
   private final ChangeData.Factory changeDataFactory;
-  private final Provider<ReviewDb> db;
   private final ChangeIndexer indexer;
   private final MergeabilityCache cache;
   private final SubmitRuleEvaluator submitRuleEvaluator;
@@ -77,7 +69,6 @@ public class Mergeable implements RestReadView<RevisionResource> {
       ProjectCache projectCache,
       MergeUtil.Factory mergeUtilFactory,
       ChangeData.Factory changeDataFactory,
-      Provider<ReviewDb> db,
       ChangeIndexer indexer,
       MergeabilityCache cache,
       SubmitRuleEvaluator.Factory submitRuleEvaluatorFactory) {
@@ -85,7 +76,6 @@ public class Mergeable implements RestReadView<RevisionResource> {
     this.projectCache = projectCache;
     this.mergeUtilFactory = mergeUtilFactory;
     this.changeDataFactory = changeDataFactory;
-    this.db = db;
     this.indexer = indexer;
     this.cache = cache;
     submitRuleEvaluator = submitRuleEvaluatorFactory.create(SubmitRuleOptions.defaults());
@@ -96,26 +86,25 @@ public class Mergeable implements RestReadView<RevisionResource> {
   }
 
   @Override
-  public MergeableInfo apply(RevisionResource resource)
-      throws AuthException, ResourceConflictException, BadRequestException, OrmException,
-          IOException {
+  public Response<MergeableInfo> apply(RevisionResource resource)
+      throws AuthException, ResourceConflictException, BadRequestException, IOException {
     Change change = resource.getChange();
     PatchSet ps = resource.getPatchSet();
     MergeableInfo result = new MergeableInfo();
 
-    if (!change.getStatus().isOpen()) {
+    if (!change.isNew()) {
       throw new ResourceConflictException("change is " + ChangeUtil.status(change));
-    } else if (!ps.getId().equals(change.currentPatchSetId())) {
+    } else if (!ps.id().equals(change.currentPatchSetId())) {
       // Only the current revision is mergeable. Others always fail.
-      return result;
+      return Response.ok(result);
     }
 
-    ChangeData cd = changeDataFactory.create(db.get(), resource.getNotes());
+    ChangeData cd = changeDataFactory.create(resource.getNotes());
     result.submitType = getSubmitType(cd);
 
     try (Repository git = gitManager.openRepository(change.getProject())) {
-      ObjectId commit = toId(ps);
-      Ref ref = git.getRefDatabase().exactRef(change.getDest().get());
+      ObjectId commit = ps.commitId();
+      Ref ref = git.getRefDatabase().exactRef(change.getDest().branch());
       ProjectState projectState = projectCache.get(change.getProject());
       String strategy = mergeUtilFactory.create(projectState).mergeStrategyName();
       result.strategy = strategy;
@@ -140,13 +129,13 @@ public class Mergeable implements RestReadView<RevisionResource> {
         }
       }
     }
-    return result;
+    return Response.ok(result);
   }
 
-  private SubmitType getSubmitType(ChangeData cd) throws OrmException {
+  private SubmitType getSubmitType(ChangeData cd) throws ResourceConflictException {
     SubmitTypeRecord rec = submitRuleEvaluator.getSubmitType(cd);
     if (rec.status != SubmitTypeRecord.Status.OK) {
-      throw new OrmException("Submit type rule failed: " + rec);
+      throw new ResourceConflictException("submit type rule error: " + rec.errorMessage);
     }
     return rec.type;
   }
@@ -157,8 +146,7 @@ public class Mergeable implements RestReadView<RevisionResource> {
       ObjectId commit,
       Ref ref,
       SubmitType submitType,
-      String strategy)
-      throws OrmException {
+      String strategy) {
     if (commit == null) {
       return false;
     }
@@ -170,15 +158,6 @@ public class Mergeable implements RestReadView<RevisionResource> {
     return refresh(change, commit, ref, submitType, strategy, git, old);
   }
 
-  private static ObjectId toId(PatchSet ps) {
-    try {
-      return ObjectId.fromString(ps.getRevision().get());
-    } catch (IllegalArgumentException e) {
-      logger.atSevere().log("Invalid revision on patch set %s", ps);
-      return null;
-    }
-  }
-
   private boolean refresh(
       final Change change,
       ObjectId commit,
@@ -186,25 +165,14 @@ public class Mergeable implements RestReadView<RevisionResource> {
       SubmitType type,
       String strategy,
       Repository git,
-      Boolean old)
-      throws OrmException {
-    final boolean mergeable = cache.get(commit, ref, type, strategy, change.getDest(), git);
+      Boolean old) {
+    boolean mergeable = cache.get(commit, ref, type, strategy, change.getDest(), git);
+    // TODO(dborowitz): Include something else in the change ETag that it's possible to bump here,
+    // such as cache or secondary index update time.
     if (!Objects.equals(mergeable, old)) {
-      invalidateETag(change.getId(), db.get());
-
       @SuppressWarnings("unused")
       Future<?> possiblyIgnoredError = indexer.indexAsync(change.getProject(), change.getId());
     }
     return mergeable;
-  }
-
-  private static void invalidateETag(Change.Id id, ReviewDb db) throws OrmException {
-    // Empty update of Change to bump rowVersion, changing its ETag.
-    // TODO(dborowitz): Include cache info in ETag somehow instead.
-    db = ReviewDbUtil.unwrapDb(db);
-    Change c = db.changes().get(id);
-    if (c != null) {
-      db.changes().update(Collections.singleton(c));
-    }
   }
 }

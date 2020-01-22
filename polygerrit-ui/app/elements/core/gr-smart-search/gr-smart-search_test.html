@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-smart-search</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-smart-search.html">
 
@@ -46,7 +48,6 @@ limitations under the License.
       sandbox.restore();
     });
 
-
     test('Autocompletes accounts', () => {
       sandbox.stub(element.$.restAPI, 'getSuggestedAccounts', () =>
         Promise.resolve([
@@ -70,12 +71,15 @@ limitations under the License.
           },
         ])
       );
-      element._fetchAccounts('owner', 's').then(s => {
-        assert.deepEqual(s[0], {text: 'owner:fred@goog.co', label: 'fred'});
-        assert.deepEqual(s[1], {text: 'owner:self'});
-      }).then(() => element._fetchAccounts('owner', 'selfs')).then(s => {
-        assert.notEqual(s[0], {text: 'owner:self'});
-      });
+      element._fetchAccounts('owner', 's')
+          .then(s => {
+            assert.deepEqual(s[0], {text: 'owner:fred@goog.co', label: 'fred'});
+            assert.deepEqual(s[1], {text: 'owner:self'});
+          })
+          .then(() => element._fetchAccounts('owner', 'selfs'))
+          .then(s => {
+            assert.notEqual(s[0], {text: 'owner:self'});
+          });
     });
 
     test('Inserts me as option when valid', () => {
@@ -87,12 +91,15 @@ limitations under the License.
           },
         ])
       );
-      return element._fetchAccounts('owner', 'm').then(s => {
-        assert.deepEqual(s[0], {text: 'owner:fred@goog.co', label: 'fred'});
-        assert.deepEqual(s[1], {text: 'owner:me'});
-      }).then(() => element._fetchAccounts('owner', 'meme')).then(s => {
-        assert.notEqual(s[0], {text: 'owner:me'});
-      });
+      return element._fetchAccounts('owner', 'm')
+          .then(s => {
+            assert.deepEqual(s[0], {text: 'owner:fred@goog.co', label: 'fred'});
+            assert.deepEqual(s[1], {text: 'owner:me'});
+          })
+          .then(() => element._fetchAccounts('owner', 'meme'))
+          .then(s => {
+            assert.notEqual(s[0], {text: 'owner:me'});
+          });
     });
 
     test('Autocompletes groups', () => {

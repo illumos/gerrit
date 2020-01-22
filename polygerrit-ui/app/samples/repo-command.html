@@ -7,7 +7,8 @@
             if (repoName !== 'All-Projects') {
               return false;
             }
-          }).onTap(() => {
+          })
+          .onTap(() => {
             alert('Bork, bork!');
           });
 
@@ -29,6 +30,8 @@
   <script>
     Polymer({
       is: 'repo-command-low',
+
+      /** @override */
       attached() {
         console.log(this.repoName);
         console.log(this.config);

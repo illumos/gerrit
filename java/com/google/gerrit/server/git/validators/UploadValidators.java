@@ -14,7 +14,7 @@
 
 package com.google.gerrit.server.git.validators;
 
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.gerrit.server.validators.ValidationException;
 import com.google.inject.Inject;
@@ -26,6 +26,7 @@ import org.eclipse.jgit.transport.PreUploadHook;
 import org.eclipse.jgit.transport.ServiceMayNotContinueException;
 import org.eclipse.jgit.transport.UploadPack;
 
+/** Collection of validators to run before Gerrit sends pack data to a client. */
 public class UploadValidators implements PreUploadHook {
 
   private final PluginSetContext<UploadValidationListener> uploadValidationListeners;

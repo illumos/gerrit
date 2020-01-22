@@ -18,16 +18,19 @@ import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.data.ContributorAgreement;
 import com.google.gerrit.common.data.PermissionRule;
 import com.google.gerrit.common.data.PermissionRule.Action;
+import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.extensions.common.AgreementInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestReadView;
-import com.google.gerrit.reviewdb.client.AccountGroup;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.AccountResource;
 import com.google.gerrit.server.config.GerritServerConfig;
+import com.google.gerrit.server.permissions.GlobalPermission;
+import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.restapi.config.AgreementJson;
@@ -39,6 +42,14 @@ import java.util.Collection;
 import java.util.List;
 import org.eclipse.jgit.lib.Config;
 
+/**
+ * REST endpoint to get all contributor agreements that have been signed by an account.
+ *
+ * <p>This REST endpoint handles {@code GET /accounts/<account-identifier>/agreements} requests.
+ *
+ * <p>Contributor agreements are only available if contributor agreements have been enabled in
+ * {@code gerrit.config} (see {@code auth.contributorAgreements}).
+ */
 @Singleton
 public class GetAgreements implements RestReadView<AccountResource> {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
@@ -47,21 +58,24 @@ public class GetAgreements implements RestReadView<AccountResource> {
   private final ProjectCache projectCache;
   private final AgreementJson agreementJson;
   private final boolean agreementsEnabled;
+  private final PermissionBackend permissionBackend;
 
   @Inject
   GetAgreements(
       Provider<CurrentUser> self,
       ProjectCache projectCache,
       AgreementJson agreementJson,
+      PermissionBackend permissionBackend,
       @GerritServerConfig Config config) {
     this.self = self;
     this.projectCache = projectCache;
     this.agreementJson = agreementJson;
     this.agreementsEnabled = config.getBoolean("auth", "contributorAgreements", false);
+    this.permissionBackend = permissionBackend;
   }
 
   @Override
-  public List<AgreementInfo> apply(AccountResource resource)
+  public Response<List<AgreementInfo>> apply(AccountResource resource)
       throws RestApiException, PermissionBackendException {
     if (!agreementsEnabled) {
       throw new MethodNotAllowedException("contributor agreements disabled");
@@ -73,7 +87,11 @@ public class GetAgreements implements RestReadView<AccountResource> {
 
     IdentifiedUser user = self.get().asIdentifiedUser();
     if (user != resource.getUser()) {
-      throw new AuthException("not allowed to get contributor agreements");
+      try {
+        permissionBackend.user(user).check(GlobalPermission.ADMINISTRATE_SERVER);
+      } catch (AuthException e) {
+        throw new AuthException("not allowed to get contributor agreements", e);
+      }
     }
 
     List<AgreementInfo> results = new ArrayList<>();
@@ -97,6 +115,6 @@ public class GetAgreements implements RestReadView<AccountResource> {
         results.add(agreementJson.format(ca));
       }
     }
-    return results;
+    return Response.ok(results);
   }
 }

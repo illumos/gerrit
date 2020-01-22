@@ -18,18 +18,22 @@ import com.google.common.collect.Streams;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.data.SubmitRecord;
 import com.google.gerrit.common.data.SubmitTypeRecord;
-import com.google.gerrit.reviewdb.client.Change;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.exceptions.StorageException;
+import com.google.gerrit.metrics.Description;
+import com.google.gerrit.metrics.Description.Units;
+import com.google.gerrit.metrics.MetricMaker;
+import com.google.gerrit.metrics.Timer0;
 import com.google.gerrit.server.index.OnlineReindexMode;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.rules.PrologRule;
 import com.google.gerrit.server.rules.SubmitRule;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -44,6 +48,8 @@ public class SubmitRuleEvaluator {
   private final ProjectCache projectCache;
   private final PrologRule prologRule;
   private final PluginSetContext<SubmitRule> submitRules;
+  private final Timer0 submitRuleEvaluationLatency;
+  private final Timer0 submitTypeEvaluationLatency;
   private final SubmitRuleOptions opts;
 
   public interface Factory {
@@ -56,23 +62,36 @@ public class SubmitRuleEvaluator {
       ProjectCache projectCache,
       PrologRule prologRule,
       PluginSetContext<SubmitRule> submitRules,
+      MetricMaker metricMaker,
       @Assisted SubmitRuleOptions options) {
     this.projectCache = projectCache;
     this.prologRule = prologRule;
     this.submitRules = submitRules;
+    this.submitRuleEvaluationLatency =
+        metricMaker.newTimer(
+            "change/submit_rule_evaluation",
+            new Description("Latency for evaluating submit rules on a change.")
+                .setCumulative()
+                .setUnit(Units.MILLISECONDS));
+    this.submitTypeEvaluationLatency =
+        metricMaker.newTimer(
+            "change/submit_type_evaluation",
+            new Description("Latency for evaluating the submit type on a change.")
+                .setCumulative()
+                .setUnit(Units.MILLISECONDS));
 
     this.opts = options;
   }
 
-  public static List<SubmitRecord> defaultRuleError() {
+  public static SubmitRecord defaultRuleError() {
     return createRuleError(DEFAULT_MSG);
   }
 
-  public static List<SubmitRecord> createRuleError(String err) {
+  public static SubmitRecord createRuleError(String err) {
     SubmitRecord rec = new SubmitRecord();
     rec.status = SubmitRecord.Status.RULE_ERROR;
     rec.errorMessage = err;
-    return Collections.singletonList(rec);
+    return rec;
   }
 
   public static SubmitTypeRecord defaultTypeError() {
@@ -87,46 +106,42 @@ public class SubmitRuleEvaluator {
    * @param cd ChangeData to evaluate
    */
   public List<SubmitRecord> evaluate(ChangeData cd) {
-    Change change;
-    ProjectState projectState;
-    try {
-      change = cd.change();
-      if (change == null) {
-        throw new OrmException("Change not found");
+    try (Timer0.Context ignored = submitRuleEvaluationLatency.start()) {
+      Change change;
+      ProjectState projectState;
+      try {
+        change = cd.change();
+        if (change == null) {
+          throw new StorageException("Change not found");
+        }
+
+        projectState = projectCache.get(cd.project());
+        if (projectState == null) {
+          throw new NoSuchProjectException(cd.project());
+        }
+      } catch (StorageException | NoSuchProjectException e) {
+        return Collections.singletonList(ruleError("Error looking up change " + cd.getId(), e));
       }
 
-      projectState = projectCache.get(cd.project());
-      if (projectState == null) {
-        throw new NoSuchProjectException(cd.project());
+      if ((!opts.allowClosed() || OnlineReindexMode.isActive()) && change.isClosed()) {
+        SubmitRecord rec = new SubmitRecord();
+        rec.status = SubmitRecord.Status.CLOSED;
+        return Collections.singletonList(rec);
       }
-    } catch (OrmException | NoSuchProjectException e) {
-      return ruleError("Error looking up change " + cd.getId(), e);
-    }
 
-    if ((!opts.allowClosed() || OnlineReindexMode.isActive()) && change.getStatus().isClosed()) {
-      SubmitRecord rec = new SubmitRecord();
-      rec.status = SubmitRecord.Status.CLOSED;
-      return Collections.singletonList(rec);
+      // We evaluate all the plugin-defined evaluators,
+      // and then we collect the results in one list.
+      return Streams.stream(submitRules)
+          .map(c -> c.call(s -> s.evaluate(cd)))
+          .filter(Optional::isPresent)
+          .map(Optional::get)
+          .collect(Collectors.toList());
     }
-
-    // We evaluate all the plugin-defined evaluators,
-    // and then we collect the results in one list.
-    return Streams.stream(submitRules)
-        .map(c -> c.call(s -> s.evaluate(cd, opts)))
-        .flatMap(Collection::stream)
-        .collect(Collectors.toList());
   }
 
-  private List<SubmitRecord> ruleError(String err, Exception e) {
-    if (opts.logErrors()) {
-      if (e == null) {
-        logger.atSevere().log(err);
-      } else {
-        logger.atSevere().withCause(e).log(err);
-      }
-      return defaultRuleError();
-    }
-    return createRuleError(err);
+  private SubmitRecord ruleError(String err, Exception e) {
+    logger.atSevere().withCause(e).log(err);
+    return defaultRuleError();
   }
 
   /**
@@ -136,24 +151,23 @@ public class SubmitRuleEvaluator {
    * @param cd
    */
   public SubmitTypeRecord getSubmitType(ChangeData cd) {
-    ProjectState projectState;
-    try {
-      projectState = projectCache.get(cd.project());
-      if (projectState == null) {
-        throw new NoSuchProjectException(cd.project());
+    try (Timer0.Context ignored = submitTypeEvaluationLatency.start()) {
+      ProjectState projectState;
+      try {
+        projectState = projectCache.get(cd.project());
+        if (projectState == null) {
+          throw new NoSuchProjectException(cd.project());
+        }
+      } catch (NoSuchProjectException e) {
+        return typeError("Error looking up change " + cd.getId(), e);
       }
-    } catch (NoSuchProjectException e) {
-      return typeError("Error looking up change " + cd.getId(), e);
-    }
 
-    return prologRule.getSubmitType(cd, opts);
+      return prologRule.getSubmitType(cd);
+    }
   }
 
   private SubmitTypeRecord typeError(String err, Exception e) {
-    if (opts.logErrors()) {
-      logger.atSevere().withCause(e).log(err);
-      return defaultTypeError();
-    }
-    return SubmitTypeRecord.error(err);
+    logger.atSevere().withCause(e).log(err);
+    return defaultTypeError();
   }
 }

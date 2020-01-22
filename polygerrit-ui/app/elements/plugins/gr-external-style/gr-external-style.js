@@ -17,36 +17,51 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-external-style',
+  /** @extends Polymer.Element */
+  class GrExternalStyle extends Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element)) {
+    static get is() { return 'gr-external-style'; }
 
-    properties: {
-      name: String,
-      _urlsImported: {
-        type: Array,
-        value() { return []; },
-      },
-      _stylesApplied: {
-        type: Array,
-        value() { return []; },
-      },
-    },
+    static get properties() {
+      return {
+        name: String,
+        _urlsImported: {
+          type: Array,
+          value() { return []; },
+        },
+        _stylesApplied: {
+          type: Array,
+          value() { return []; },
+        },
+      };
+    }
 
+    /**
+     * @suppress {checkTypes}
+     */
     _import(url) {
       if (this._urlsImported.includes(url)) { return Promise.resolve(); }
       this._urlsImported.push(url);
       return new Promise((resolve, reject) => {
-        this.importHref(url, resolve, reject);
+        (this.importHref || Polymer.importHref)(url, resolve, reject);
       });
-    },
+    }
 
     _applyStyle(name) {
       if (this._stylesApplied.includes(name)) { return; }
       this._stylesApplied.push(name);
-      const s = document.createElement('style', 'custom-style');
+
+      const s = document.createElement('style');
       s.setAttribute('include', name);
-      Polymer.dom(this.root).appendChild(s);
-    },
+      const cs = document.createElement('custom-style');
+      cs.appendChild(s);
+      // When using Shadow DOM <custom-style> must be added to the <body>.
+      // Within <gr-external-style> itself the styles would have no effect.
+      const topEl = document.getElementsByTagName('body')[0];
+      topEl.insertBefore(cs, topEl.firstChild);
+      Polymer.updateStyles();
+    }
 
     _importAndApply() {
       Promise.all(Gerrit._endpoints.getPlugins(this.name).map(
@@ -57,14 +72,20 @@
           this._applyStyle(name);
         }
       });
-    },
+    }
 
+    /** @override */
     attached() {
+      super.attached();
       this._importAndApply();
-    },
+    }
 
+    /** @override */
     ready() {
+      super.ready();
       Gerrit.awaitPluginsLoaded().then(() => this._importAndApply());
-    },
-  });
+    }
+  }
+
+  customElements.define(GrExternalStyle.is, GrExternalStyle);
 })();

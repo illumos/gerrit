@@ -17,34 +17,29 @@ package com.google.gerrit.server;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.gerrit.server.notedb.ReviewerStateInternal.CC;
 import static com.google.gerrit.server.notedb.ReviewerStateInternal.REVIEWER;
-import static java.util.Comparator.comparing;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
-import com.google.common.collect.Ordering;
 import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
-import com.google.common.primitives.Shorts;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.data.LabelType;
 import com.google.gerrit.common.data.LabelTypes;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.LabelId;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.PatchSetApproval;
+import com.google.gerrit.entities.PatchSetInfo;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.RestApiException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.LabelId;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.PatchSetApproval;
-import com.google.gerrit.reviewdb.client.PatchSetInfo;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ChangeUpdate;
-import com.google.gerrit.server.notedb.NotesMigration;
 import com.google.gerrit.server.notedb.ReviewerStateInternal;
 import com.google.gerrit.server.permissions.ChangePermission;
 import com.google.gerrit.server.permissions.LabelPermission;
@@ -52,7 +47,6 @@ import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.util.LabelVote;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.io.IOException;
@@ -76,50 +70,38 @@ import org.eclipse.jgit.revwalk.RevWalk;
  * for each reviewer, even if the reviewer hasn't actually given a score to the change. To mark the
  * "no score" case, a dummy approval, which may live in any of the available categories, with a
  * score of 0 is used.
- *
- * <p>The methods in this class only modify the gwtorm database.
  */
 @Singleton
 public class ApprovalsUtil {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
-  private static final Ordering<PatchSetApproval> SORT_APPROVALS =
-      Ordering.from(comparing(PatchSetApproval::getGranted));
-
-  public static List<PatchSetApproval> sortApprovals(Iterable<PatchSetApproval> approvals) {
-    return SORT_APPROVALS.sortedCopy(approvals);
-  }
-
-  public static PatchSetApproval newApproval(
+  public static PatchSetApproval.Builder newApproval(
       PatchSet.Id psId, CurrentUser user, LabelId labelId, int value, Date when) {
-    PatchSetApproval psa =
-        new PatchSetApproval(
-            new PatchSetApproval.Key(psId, user.getAccountId(), labelId),
-            Shorts.checkedCast(value),
-            when);
-    user.updateRealAccountId(psa::setRealAccountId);
-    return psa;
+    PatchSetApproval.Builder b =
+        PatchSetApproval.builder()
+            .key(PatchSetApproval.key(psId, user.getAccountId(), labelId))
+            .value(value)
+            .granted(when);
+    user.updateRealAccountId(b::realAccountId);
+    return b;
   }
 
   private static Iterable<PatchSetApproval> filterApprovals(
       Iterable<PatchSetApproval> psas, Account.Id accountId) {
-    return Iterables.filter(psas, a -> Objects.equals(a.getAccountId(), accountId));
+    return Iterables.filter(psas, a -> Objects.equals(a.accountId(), accountId));
   }
 
-  private final NotesMigration migration;
-  private final ApprovalCopier copier;
+  private final ApprovalInference approvalInference;
   private final PermissionBackend permissionBackend;
   private final ProjectCache projectCache;
 
   @VisibleForTesting
   @Inject
   public ApprovalsUtil(
-      NotesMigration migration,
-      ApprovalCopier copier,
+      ApprovalInference approvalInference,
       PermissionBackend permissionBackend,
       ProjectCache projectCache) {
-    this.migration = migration;
-    this.copier = copier;
+    this.approvalInference = approvalInference;
     this.permissionBackend = permissionBackend;
     this.projectCache = projectCache;
   }
@@ -127,15 +109,10 @@ public class ApprovalsUtil {
   /**
    * Get all reviewers for a change.
    *
-   * @param db review database.
    * @param notes change notes.
    * @return reviewers for the change.
-   * @throws OrmException if reviewers for the change could not be read.
    */
-  public ReviewerSet getReviewers(ReviewDb db, ChangeNotes notes) throws OrmException {
-    if (!migration.readChanges()) {
-      return ReviewerSet.fromApprovals(db.patchSetApprovals().byChange(notes.getChangeId()));
-    }
+  public ReviewerSet getReviewers(ChangeNotes notes) {
     return notes.load().getReviewers();
   }
 
@@ -144,46 +121,34 @@ public class ApprovalsUtil {
    *
    * @param allApprovals all approvals to consider; must all belong to the same change.
    * @return reviewers for the change.
-   * @throws OrmException if reviewers for the change could not be read.
    */
-  public ReviewerSet getReviewers(ChangeNotes notes, Iterable<PatchSetApproval> allApprovals)
-      throws OrmException {
-    if (!migration.readChanges()) {
-      return ReviewerSet.fromApprovals(allApprovals);
-    }
+  public ReviewerSet getReviewers(ChangeNotes notes, Iterable<PatchSetApproval> allApprovals) {
     return notes.load().getReviewers();
   }
 
   /**
-   * Get updates to reviewer set. Always returns empty list for ReviewDb.
+   * Get updates to reviewer set.
    *
    * @param notes change notes.
    * @return reviewer updates for the change.
-   * @throws OrmException if reviewer updates for the change could not be read.
    */
-  public List<ReviewerStatusUpdate> getReviewerUpdates(ChangeNotes notes) throws OrmException {
-    if (!migration.readChanges()) {
-      return ImmutableList.of();
-    }
+  public List<ReviewerStatusUpdate> getReviewerUpdates(ChangeNotes notes) {
     return notes.load().getReviewerUpdates();
   }
 
   public List<PatchSetApproval> addReviewers(
-      ReviewDb db,
       ChangeUpdate update,
       LabelTypes labelTypes,
       Change change,
       PatchSet ps,
       PatchSetInfo info,
       Iterable<Account.Id> wantReviewers,
-      Collection<Account.Id> existingReviewers)
-      throws OrmException {
+      Collection<Account.Id> existingReviewers) {
     return addReviewers(
-        db,
         update,
         labelTypes,
         change,
-        ps.getId(),
+        ps.id(),
         info.getAuthor().getAccount(),
         info.getCommitter().getAccount(),
         wantReviewers,
@@ -191,22 +156,14 @@ public class ApprovalsUtil {
   }
 
   public List<PatchSetApproval> addReviewers(
-      ReviewDb db,
       ChangeNotes notes,
       ChangeUpdate update,
       LabelTypes labelTypes,
       Change change,
-      Iterable<Account.Id> wantReviewers)
-      throws OrmException {
+      Iterable<Account.Id> wantReviewers) {
     PatchSet.Id psId = change.currentPatchSetId();
     Collection<Account.Id> existingReviewers;
-    if (migration.readChanges()) {
-      // If using NoteDB, we only want reviewers in the REVIEWER state.
-      existingReviewers = notes.load().getReviewers().byState(REVIEWER);
-    } else {
-      // Prior to NoteDB, we gather all reviewers regardless of state.
-      existingReviewers = getReviewers(db, notes).all();
-    }
+    existingReviewers = notes.load().getReviewers().byState(REVIEWER);
     // Existing reviewers should include pending additions in the REVIEWER
     // state, taken from ChangeUpdate.
     existingReviewers = Lists.newArrayList(existingReviewers);
@@ -216,11 +173,10 @@ public class ApprovalsUtil {
       }
     }
     return addReviewers(
-        db, update, labelTypes, change, psId, null, null, wantReviewers, existingReviewers);
+        update, labelTypes, change, psId, null, null, wantReviewers, existingReviewers);
   }
 
   private List<PatchSetApproval> addReviewers(
-      ReviewDb db,
       ChangeUpdate update,
       LabelTypes labelTypes,
       Change change,
@@ -228,19 +184,18 @@ public class ApprovalsUtil {
       Account.Id authorId,
       Account.Id committerId,
       Iterable<Account.Id> wantReviewers,
-      Collection<Account.Id> existingReviewers)
-      throws OrmException {
+      Collection<Account.Id> existingReviewers) {
     List<LabelType> allTypes = labelTypes.getLabelTypes();
     if (allTypes.isEmpty()) {
       return ImmutableList.of();
     }
 
     Set<Account.Id> need = Sets.newLinkedHashSet(wantReviewers);
-    if (authorId != null && canSee(db, update.getNotes(), authorId)) {
+    if (authorId != null && canSee(update.getNotes(), authorId)) {
       need.add(authorId);
     }
 
-    if (committerId != null && canSee(db, update.getNotes(), committerId)) {
+    if (committerId != null && canSee(update.getNotes(), committerId)) {
       need.add(committerId);
     }
     need.remove(change.getOwner());
@@ -253,24 +208,22 @@ public class ApprovalsUtil {
     LabelId labelId = Iterables.getLast(allTypes).getLabelId();
     for (Account.Id account : need) {
       cells.add(
-          new PatchSetApproval(
-              new PatchSetApproval.Key(psId, account, labelId), (short) 0, update.getWhen()));
+          PatchSetApproval.builder()
+              .key(PatchSetApproval.key(psId, account, labelId))
+              .value(0)
+              .granted(update.getWhen())
+              .build());
       update.putReviewer(account, REVIEWER);
     }
-    db.patchSetApprovals().upsert(cells);
     return Collections.unmodifiableList(cells);
   }
 
-  private boolean canSee(ReviewDb db, ChangeNotes notes, Account.Id accountId) {
+  private boolean canSee(ChangeNotes notes, Account.Id accountId) {
     try {
       if (!projectCache.checkedGet(notes.getProjectName()).statePermitsRead()) {
         return false;
       }
-      permissionBackend
-          .absentUser(accountId)
-          .change(notes)
-          .database(db)
-          .check(ChangePermission.READ);
+      permissionBackend.absentUser(accountId).change(notes).check(ChangePermission.READ);
       return true;
     } catch (AuthException e) {
       return false;
@@ -288,18 +241,28 @@ public class ApprovalsUtil {
    * @param notes change notes.
    * @param update change update.
    * @param wantCCs accounts to CC.
+   * @param keepExistingReviewers whether provided accounts that are already reviewer should be kept
+   *     as reviewer or be downgraded to CC
    * @return whether a change was made.
-   * @throws OrmException
    */
   public Collection<Account.Id> addCcs(
-      ChangeNotes notes, ChangeUpdate update, Collection<Account.Id> wantCCs) throws OrmException {
-    return addCcs(update, wantCCs, notes.load().getReviewers());
+      ChangeNotes notes,
+      ChangeUpdate update,
+      Collection<Account.Id> wantCCs,
+      boolean keepExistingReviewers) {
+    return addCcs(update, wantCCs, notes.load().getReviewers(), keepExistingReviewers);
   }
 
   private Collection<Account.Id> addCcs(
-      ChangeUpdate update, Collection<Account.Id> wantCCs, ReviewerSet existingReviewers) {
+      ChangeUpdate update,
+      Collection<Account.Id> wantCCs,
+      ReviewerSet existingReviewers,
+      boolean keepExistingReviewers) {
     Set<Account.Id> need = new LinkedHashSet<>(wantCCs);
-    need.removeAll(existingReviewers.all());
+    need.removeAll(existingReviewers.byState(CC));
+    if (keepExistingReviewers) {
+      need.removeAll(existingReviewers.byState(REVIEWER));
+    }
     need.removeAll(update.getReviewers().keySet());
     for (Account.Id account : need) {
       update.putReviewer(account, CC);
@@ -308,45 +271,41 @@ public class ApprovalsUtil {
   }
 
   /**
-   * Adds approvals to ChangeUpdate for a new patch set, and writes to ReviewDb.
+   * Adds approvals to ChangeUpdate for a new patch set, and writes to NoteDb.
    *
-   * @param db review database.
    * @param update change update.
    * @param labelTypes label types for the containing project.
    * @param ps patch set being approved.
    * @param user user adding approvals.
    * @param approvals approvals to add.
    * @throws RestApiException
-   * @throws OrmException
    */
   public Iterable<PatchSetApproval> addApprovalsForNewPatchSet(
-      ReviewDb db,
       ChangeUpdate update,
       LabelTypes labelTypes,
       PatchSet ps,
       CurrentUser user,
       Map<String, Short> approvals)
-      throws RestApiException, OrmException, PermissionBackendException {
+      throws RestApiException, PermissionBackendException {
     Account.Id accountId = user.getAccountId();
     checkArgument(
-        accountId.equals(ps.getUploader()),
+        accountId.equals(ps.uploader()),
         "expected user %s to match patch set uploader %s",
         accountId,
-        ps.getUploader());
+        ps.uploader());
     if (approvals.isEmpty()) {
       return ImmutableList.of();
     }
-    checkApprovals(approvals, permissionBackend.user(user).database(db).change(update.getNotes()));
+    checkApprovals(approvals, permissionBackend.user(user).change(update.getNotes()));
     List<PatchSetApproval> cells = new ArrayList<>(approvals.size());
     Date ts = update.getWhen();
     for (Map.Entry<String, Short> vote : approvals.entrySet()) {
       LabelType lt = labelTypes.byLabel(vote.getKey());
-      cells.add(newApproval(ps.getId(), user, lt.getLabelId(), vote.getValue(), ts));
+      cells.add(newApproval(ps.id(), user, lt.getLabelId(), vote.getValue(), ts).build());
     }
     for (PatchSetApproval psa : cells) {
-      update.putApproval(psa.getLabel(), psa.getValue());
+      update.putApproval(psa.label(), psa.value());
     }
-    db.patchSetApprovals().insert(cells);
     return cells;
   }
 
@@ -377,54 +336,32 @@ public class ApprovalsUtil {
     }
   }
 
-  public ListMultimap<PatchSet.Id, PatchSetApproval> byChange(ReviewDb db, ChangeNotes notes)
-      throws OrmException {
-    if (!migration.readChanges()) {
-      ImmutableListMultimap.Builder<PatchSet.Id, PatchSetApproval> result =
-          ImmutableListMultimap.builder();
-      for (PatchSetApproval psa : db.patchSetApprovals().byChange(notes.getChangeId())) {
-        result.put(psa.getPatchSetId(), psa);
-      }
-      return result.build();
-    }
+  public ListMultimap<PatchSet.Id, PatchSetApproval> byChange(ChangeNotes notes) {
     return notes.load().getApprovals();
   }
 
   public Iterable<PatchSetApproval> byPatchSet(
-      ReviewDb db,
-      ChangeNotes notes,
-      PatchSet.Id psId,
-      @Nullable RevWalk rw,
-      @Nullable Config repoConfig)
-      throws OrmException {
-    if (!migration.readChanges()) {
-      return sortApprovals(db.patchSetApprovals().byPatchSet(psId));
-    }
-    return copier.getForPatchSet(db, notes, psId, rw, repoConfig);
+      ChangeNotes notes, PatchSet.Id psId, @Nullable RevWalk rw, @Nullable Config repoConfig) {
+    return approvalInference.forPatchSet(notes, psId, rw, repoConfig);
   }
 
   public Iterable<PatchSetApproval> byPatchSetUser(
-      ReviewDb db,
       ChangeNotes notes,
       PatchSet.Id psId,
       Account.Id accountId,
       @Nullable RevWalk rw,
-      @Nullable Config repoConfig)
-      throws OrmException {
-    if (!migration.readChanges()) {
-      return sortApprovals(db.patchSetApprovals().byPatchSetUser(psId, accountId));
-    }
-    return filterApprovals(byPatchSet(db, notes, psId, rw, repoConfig), accountId);
+      @Nullable Config repoConfig) {
+    return filterApprovals(byPatchSet(notes, psId, rw, repoConfig), accountId);
   }
 
-  public PatchSetApproval getSubmitter(ReviewDb db, ChangeNotes notes, PatchSet.Id c) {
+  public PatchSetApproval getSubmitter(ChangeNotes notes, PatchSet.Id c) {
     if (c == null) {
       return null;
     }
     try {
       // Submit approval is never copied, so bypass expensive byPatchSet call.
-      return getSubmitter(c, byChange(db, notes).get(c));
-    } catch (OrmException e) {
+      return getSubmitter(c, byChange(notes).get(c));
+    } catch (StorageException e) {
       return null;
     }
   }
@@ -435,8 +372,8 @@ public class ApprovalsUtil {
     }
     PatchSetApproval submitter = null;
     for (PatchSetApproval a : approvals) {
-      if (a.getPatchSetId().equals(c) && a.getValue() > 0 && a.isLegacySubmit()) {
-        if (submitter == null || a.getGranted().compareTo(submitter.getGranted()) > 0) {
+      if (a.patchSetId().equals(c) && a.value() > 0 && a.isLegacySubmit()) {
+        if (submitter == null || a.granted().compareTo(submitter.granted()) > 0) {
           submitter = a;
         }
       }
@@ -450,7 +387,7 @@ public class ApprovalsUtil {
     if (!n.isEmpty()) {
       boolean first = true;
       for (Map.Entry<String, Short> e : n.entrySet()) {
-        if (c.containsKey(e.getKey()) && c.get(e.getKey()).getValue() == e.getValue()) {
+        if (c.containsKey(e.getKey()) && c.get(e.getKey()).value() == e.getValue()) {
           continue;
         }
         if (first) {

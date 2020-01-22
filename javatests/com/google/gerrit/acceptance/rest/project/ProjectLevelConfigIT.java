@@ -19,9 +19,11 @@ import static com.google.gerrit.acceptance.GitUtil.fetch;
 
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.PushOneCommit;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.server.project.ProjectState;
+import com.google.inject.Inject;
 import java.util.Arrays;
 import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.lib.Config;
@@ -29,6 +31,8 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class ProjectLevelConfigIT extends AbstractDaemonTest {
+  @Inject private ProjectOperations projectOperations;
+
   @Before
   public void setUp() throws Exception {
     fetch(testRepo, RefNames.REFS_CONFIG + ":refs/heads/config");
@@ -43,12 +47,7 @@ public class ProjectLevelConfigIT extends AbstractDaemonTest {
     cfg.setString("s2", "ss", "k2", "v2");
     PushOneCommit push =
         pushFactory.create(
-            db,
-            admin.getIdent(),
-            testRepo,
-            "Create Project Level Config",
-            configName,
-            cfg.toText());
+            admin.newIdent(), testRepo, "Create Project Level Config", configName, cfg.toText());
     push.to(RefNames.REFS_CONFIG);
 
     ProjectState state = projectCache.get(project);
@@ -73,8 +72,7 @@ public class ProjectLevelConfigIT extends AbstractDaemonTest {
 
     pushFactory
         .create(
-            db,
-            admin.getIdent(),
+            admin.newIdent(),
             testRepo,
             "Create Project Level Config",
             configName,
@@ -82,7 +80,7 @@ public class ProjectLevelConfigIT extends AbstractDaemonTest {
         .to(RefNames.REFS_CONFIG)
         .assertOkStatus();
 
-    Project.NameKey childProject = createProject("child", project);
+    Project.NameKey childProject = projectOperations.newProject().parent(project).create();
     TestRepository<?> childTestRepo = cloneProject(childProject);
     fetch(childTestRepo, RefNames.REFS_CONFIG + ":refs/heads/config");
     childTestRepo.reset("refs/heads/config");
@@ -93,8 +91,7 @@ public class ProjectLevelConfigIT extends AbstractDaemonTest {
 
     pushFactory
         .create(
-            db,
-            admin.getIdent(),
+            admin.newIdent(),
             childTestRepo,
             "Create Project Level Config",
             configName,
@@ -128,8 +125,7 @@ public class ProjectLevelConfigIT extends AbstractDaemonTest {
 
     pushFactory
         .create(
-            db,
-            admin.getIdent(),
+            admin.newIdent(),
             testRepo,
             "Create Project Level Config",
             configName,
@@ -137,7 +133,7 @@ public class ProjectLevelConfigIT extends AbstractDaemonTest {
         .to(RefNames.REFS_CONFIG)
         .assertOkStatus();
 
-    Project.NameKey childProject = createProject("child", project);
+    Project.NameKey childProject = projectOperations.newProject().parent(project).create();
     TestRepository<?> childTestRepo = cloneProject(childProject);
     fetch(childTestRepo, RefNames.REFS_CONFIG + ":refs/heads/config");
     childTestRepo.reset("refs/heads/config");
@@ -154,8 +150,7 @@ public class ProjectLevelConfigIT extends AbstractDaemonTest {
 
     pushFactory
         .create(
-            db,
-            admin.getIdent(),
+            admin.newIdent(),
             childTestRepo,
             "Create Project Level Config",
             configName,

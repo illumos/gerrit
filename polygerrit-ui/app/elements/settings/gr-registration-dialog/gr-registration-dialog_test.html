@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-registration-dialog</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-registration-dialog.html">
 
@@ -144,11 +146,13 @@ limitations under the License.
         assert.equal(account.email, 'email');
 
         // Save and verify new values are committed.
-        save().then(() => {
-          assert.equal(account.name, 'new name');
-          assert.equal(account.username, 'new username');
-          assert.equal(account.email, 'email3');
-        }).then(done);
+        save()
+            .then(() => {
+              assert.equal(account.name, 'new name');
+              assert.equal(account.username, 'new username');
+              assert.equal(account.email, 'email3');
+            })
+            .then(done);
       });
     });
 

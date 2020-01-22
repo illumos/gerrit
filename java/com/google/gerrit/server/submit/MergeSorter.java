@@ -14,10 +14,11 @@
 
 package com.google.gerrit.server.submit;
 
+import com.google.gerrit.common.Nullable;
+import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.git.CodeReviewCommit;
 import com.google.gerrit.server.git.CodeReviewCommit.CodeReviewRevWalk;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Provider;
 import java.io.IOException;
 import java.util.Collection;
@@ -29,6 +30,7 @@ import org.eclipse.jgit.revwalk.RevCommitList;
 import org.eclipse.jgit.revwalk.RevFlag;
 
 public class MergeSorter {
+  @Nullable private final CurrentUser caller;
   private final CodeReviewRevWalk rw;
   private final RevFlag canMergeFlag;
   private final Set<RevCommit> accepted;
@@ -36,11 +38,13 @@ public class MergeSorter {
   private final Set<CodeReviewCommit> incoming;
 
   public MergeSorter(
+      @Nullable CurrentUser caller,
       CodeReviewRevWalk rw,
       Set<RevCommit> alreadyAccepted,
       RevFlag canMergeFlag,
       Provider<InternalChangeQuery> queryProvider,
       Set<CodeReviewCommit> incoming) {
+    this.caller = caller;
     this.rw = rw;
     this.canMergeFlag = canMergeFlag;
     this.accepted = alreadyAccepted;
@@ -49,7 +53,7 @@ public class MergeSorter {
   }
 
   public Collection<CodeReviewCommit> sort(Collection<CodeReviewCommit> toMerge)
-      throws IOException, OrmException {
+      throws IOException {
     final Set<CodeReviewCommit> heads = new HashSet<>();
     final Set<CodeReviewCommit> sort = new HashSet<>(toMerge);
     while (!sort.isEmpty()) {
@@ -70,7 +74,8 @@ public class MergeSorter {
           //
           n.setStatusCode(CommitMergeStatus.MISSING_DEPENDENCY);
           n.setStatusMessage(
-              CommitMergeStatus.createMissingDependencyMessage(queryProvider, n.name(), c.name()));
+              CommitMergeStatus.createMissingDependencyMessage(
+                  caller, queryProvider, n.name(), c.name()));
           break;
         }
         contents.add(c);

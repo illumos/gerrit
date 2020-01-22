@@ -15,11 +15,15 @@
 package com.google.gerrit.server.query.group;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.common.truth.Truth8.assertThat;
 import static com.google.common.truth.TruthJUnit.assume;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static java.util.stream.Collectors.toList;
 
 import com.google.common.base.CharMatcher;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.extensions.api.GerritApi;
 import com.google.gerrit.extensions.api.accounts.AccountInput;
 import com.google.gerrit.extensions.api.groups.GroupInput;
@@ -32,9 +36,6 @@ import com.google.gerrit.index.QueryOptions;
 import com.google.gerrit.index.Schema;
 import com.google.gerrit.index.query.FieldBundle;
 import com.google.gerrit.lifecycle.LifecycleManager;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.AnonymousUser;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
@@ -58,11 +59,10 @@ import com.google.gerrit.server.util.OneOffRequestContext;
 import com.google.gerrit.server.util.RequestContext;
 import com.google.gerrit.server.util.ThreadLocalRequestContext;
 import com.google.gerrit.testing.GerritServerTests;
-import com.google.gerrit.testing.InMemoryDatabase;
+import com.google.gerrit.testing.GerritTestName;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.Provider;
-import com.google.inject.util.Providers;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
@@ -71,10 +71,13 @@ import java.util.Optional;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Ignore;
+import org.junit.Rule;
 import org.junit.Test;
 
 @Ignore
 public abstract class AbstractQueryGroupsTest extends GerritServerTests {
+  @Rule public final GerritTestName testName = new GerritTestName();
+
   @Inject protected Accounts accounts;
 
   @Inject @ServerInitiated protected Provider<AccountsUpdate> accountsUpdate;
@@ -88,8 +91,6 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
   @Inject protected IdentifiedUser.GenericFactory userFactory;
 
   @Inject private Provider<AnonymousUser> anonymousUser;
-
-  @Inject protected InMemoryDatabase schemaFactory;
 
   @Inject protected SchemaCreator schemaCreator;
 
@@ -109,7 +110,6 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
 
   protected LifecycleManager lifecycle;
   protected Injector injector;
-  protected ReviewDb db;
   protected AccountInfo currentUserInfo;
   protected CurrentUser user;
 
@@ -129,12 +129,10 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
   @After
   public void cleanUp() {
     lifecycle.stop();
-    db.close();
   }
 
   protected void setUpDatabase() throws Exception {
-    db = schemaFactory.open();
-    schemaCreator.create(db);
+    schemaCreator.create();
 
     Account.Id userId =
         createAccountOutsideRequestContext("user", "User", "user@example.com", true);
@@ -147,32 +145,11 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
 
   protected RequestContext newRequestContext(Account.Id requestUserId) {
     final CurrentUser requestUser = userFactory.create(requestUserId);
-    return new RequestContext() {
-      @Override
-      public CurrentUser getUser() {
-        return requestUser;
-      }
-
-      @Override
-      public Provider<ReviewDb> getReviewDbProvider() {
-        return Providers.of(db);
-      }
-    };
+    return () -> requestUser;
   }
 
   protected void setAnonymous() {
-    requestContext.setContext(
-        new RequestContext() {
-          @Override
-          public CurrentUser getUser() {
-            return anonymousUser.get();
-          }
-
-          @Override
-          public Provider<ReviewDb> getReviewDbProvider() {
-            return Providers.of(db);
-          }
-        });
+    requestContext.setContext(anonymousUser::get);
   }
 
   @After
@@ -183,10 +160,6 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
     if (requestContext != null) {
       requestContext.setContext(null);
     }
-    if (db != null) {
-      db.close();
-    }
-    InMemoryDatabase.drop(schemaFactory);
   }
 
   @Test
@@ -217,7 +190,7 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
 
   @Test
   public void byInname() throws Exception {
-    String namePart = getSanitizedMethodName();
+    String namePart = testName.getSanitizedMethodName();
     namePart = CharMatcher.is('_').removeFrom(namePart);
 
     GroupInfo group1 = createGroup("group-" + namePart);
@@ -237,9 +210,9 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
 
     assertQuery("description:non-existing");
 
-    exception.expect(BadRequestException.class);
-    exception.expectMessage("description operator requires a value");
-    assertQuery("description:\"\"");
+    BadRequestException thrown =
+        assertThrows(BadRequestException.class, () -> assertQuery("description:\"\""));
+    assertThat(thrown).hasMessageThat().contains("description operator requires a value");
   }
 
   @Test
@@ -373,7 +346,7 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
 
     // update group in the database so that group index is stale
     String newDescription = "barY";
-    AccountGroup.UUID groupUuid = new AccountGroup.UUID(group1.id);
+    AccountGroup.UUID groupUuid = AccountGroup.uuid(group1.id);
     InternalGroupUpdate groupUpdate =
         InternalGroupUpdate.builder().setDescription(newDescription).build();
     groupsUpdateProvider.get().updateGroupInNoteDb(groupUuid, groupUpdate);
@@ -389,7 +362,7 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
   @Test
   public void rawDocument() throws Exception {
     GroupInfo group1 = createGroup(name("group1"));
-    AccountGroup.UUID uuid = new AccountGroup.UUID(group1.id);
+    AccountGroup.UUID uuid = AccountGroup.uuid(group1.id);
 
     Optional<FieldBundle> rawFields =
         indexes
@@ -409,7 +382,7 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
   @Test
   public void byDeletedGroup() throws Exception {
     GroupInfo group = createGroup(name("group"));
-    AccountGroup.UUID uuid = new AccountGroup.UUID(group.id);
+    AccountGroup.UUID uuid = AccountGroup.uuid(group.id);
     String query = "uuid:" + uuid;
     assertQuery(query, group);
 
@@ -492,8 +465,8 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
       throws Exception {
     List<GroupInfo> result = query.get();
     Iterable<String> uuids = uuids(result);
-    assertThat(uuids)
-        .named(format(query, result, groups))
+    assertWithMessage(format(query, result, groups))
+        .that(uuids)
         .containsExactlyElementsIn(uuids(groups))
         .inOrder();
     return result;
@@ -568,7 +541,7 @@ public abstract class AbstractQueryGroupsTest extends GerritServerTests {
       return null;
     }
 
-    return name + "_" + getSanitizedMethodName();
+    return name + "_" + testName.getSanitizedMethodName();
   }
 
   protected int getSchemaVersion() {

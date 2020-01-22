@@ -19,6 +19,7 @@ import static com.google.gerrit.server.account.externalids.ExternalId.SCHEME_USE
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.gerrit.extensions.common.AccountExternalIdInfo;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.server.CurrentUser;
@@ -29,7 +30,6 @@ import com.google.gerrit.server.config.AuthConfig;
 import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -39,6 +39,11 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * REST endpoint to get the external IDs of an account.
+ *
+ * <p>This REST endpoint handles {@code GET /accounts/<account-identifier>/external.ids} requests.
+ */
 @Singleton
 public class GetExternalIds implements RestReadView<AccountResource> {
   private final PermissionBackend permissionBackend;
@@ -59,15 +64,15 @@ public class GetExternalIds implements RestReadView<AccountResource> {
   }
 
   @Override
-  public List<AccountExternalIdInfo> apply(AccountResource resource)
-      throws RestApiException, IOException, OrmException, PermissionBackendException {
+  public Response<List<AccountExternalIdInfo>> apply(AccountResource resource)
+      throws RestApiException, IOException, PermissionBackendException {
     if (!self.get().hasSameAccountId(resource.getUser())) {
       permissionBackend.currentUser().check(GlobalPermission.ACCESS_DATABASE);
     }
 
     Collection<ExternalId> ids = externalIds.byAccount(resource.getUser().getAccountId());
     if (ids.isEmpty()) {
-      return ImmutableList.of();
+      return Response.ok(ImmutableList.of());
     }
     List<AccountExternalIdInfo> result = Lists.newArrayListWithCapacity(ids.size());
     for (ExternalId id : ids) {
@@ -84,7 +89,7 @@ public class GetExternalIds implements RestReadView<AccountResource> {
       }
       result.add(info);
     }
-    return result;
+    return Response.ok(result);
   }
 
   private static Boolean toBoolean(boolean v) {

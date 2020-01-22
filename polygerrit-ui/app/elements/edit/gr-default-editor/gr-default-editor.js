@@ -17,22 +17,29 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-default-editor',
-
+  /** @extends Polymer.Element */
+  class GrDefaultEditor extends Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element)) {
+    static get is() { return 'gr-default-editor'; }
     /**
      * Fired when the content of the editor changes.
      *
      * @event content-change
      */
 
-    properties: {
-      fileContent: String,
-    },
+    static get properties() {
+      return {
+        fileContent: String,
+      };
+    }
 
     _handleTextareaInput(e) {
-      this.dispatchEvent(new CustomEvent('content-change',
-          {detail: {value: e.target.value}, bubbles: true}));
-    },
-  });
+      this.dispatchEvent(new CustomEvent(
+          'content-change',
+          {detail: {value: e.target.value}, bubbles: true, composed: true}));
+    }
+  }
+
+  customElements.define(GrDefaultEditor.is, GrDefaultEditor);
 })();

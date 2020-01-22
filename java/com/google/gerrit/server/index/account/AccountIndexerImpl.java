@@ -17,11 +17,14 @@ package com.google.gerrit.server.index.account;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.events.AccountIndexedListener;
 import com.google.gerrit.index.Index;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountState;
+import com.google.gerrit.server.index.StalenessCheckResult;
+import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.logging.TraceContext.TraceTimer;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
@@ -32,9 +35,14 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Optional;
 
+/**
+ * Implementation for indexing a Gerrit account. The account will be loaded from {@link
+ * AccountCache}.
+ */
 public class AccountIndexerImpl implements AccountIndexer {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
+  /** Factory for creating an instance. */
   public interface Factory {
     AccountIndexerImpl create(AccountIndexCollection indexes);
 
@@ -74,7 +82,7 @@ public class AccountIndexerImpl implements AccountIndexer {
   }
 
   @Override
-  public void index(Account.Id id) throws IOException {
+  public void index(Account.Id id) {
     byIdCache.evict(id);
     Optional<AccountState> accountState = byIdCache.get(id);
 
@@ -89,14 +97,34 @@ public class AccountIndexerImpl implements AccountIndexer {
       if (accountState.isPresent()) {
         try (TraceTimer traceTimer =
             TraceContext.newTimer(
-                "Replacing account %d in index version %d", id.get(), i.getSchema().getVersion())) {
+                "Replacing account in index",
+                Metadata.builder()
+                    .accountId(id.get())
+                    .indexVersion(i.getSchema().getVersion())
+                    .build())) {
           i.replace(accountState.get());
+        } catch (RuntimeException e) {
+          throw new StorageException(
+              String.format(
+                  "Failed to replace account %d in index version %d",
+                  id.get(), i.getSchema().getVersion()),
+              e);
         }
       } else {
         try (TraceTimer traceTimer =
             TraceContext.newTimer(
-                "Deleteing account %d in index version %d", id.get(), i.getSchema().getVersion())) {
+                "Deleting account in index",
+                Metadata.builder()
+                    .accountId(id.get())
+                    .indexVersion(i.getSchema().getVersion())
+                    .build())) {
           i.delete(id);
+        } catch (RuntimeException e) {
+          throw new StorageException(
+              String.format(
+                  "Failed to delete account %d from index version %d",
+                  id.get(), i.getSchema().getVersion()),
+              e);
         }
       }
     }
@@ -104,10 +132,16 @@ public class AccountIndexerImpl implements AccountIndexer {
   }
 
   @Override
-  public boolean reindexIfStale(Account.Id id) throws IOException {
-    if (stalenessChecker.isStale(id)) {
-      index(id);
-      return true;
+  public boolean reindexIfStale(Account.Id id) {
+    try {
+      StalenessCheckResult stalenessCheckResult = stalenessChecker.check(id);
+      if (stalenessCheckResult.isStale()) {
+        logger.atInfo().log("Reindexing stale document %s", stalenessCheckResult);
+        index(id);
+        return true;
+      }
+    } catch (IOException e) {
+      throw new StorageException(e);
     }
     return false;
   }
@@ -121,6 +155,6 @@ public class AccountIndexerImpl implements AccountIndexer {
       return indexes.getWriteIndexes();
     }
 
-    return index != null ? Collections.singleton(index) : ImmutableSet.<AccountIndex>of();
+    return index != null ? Collections.singleton(index) : ImmutableSet.of();
   }
 }

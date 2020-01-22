@@ -14,18 +14,18 @@
 
 package com.google.gerrit.server.restapi.project;
 
-import static com.google.gerrit.reviewdb.client.RefNames.REFS_HEADS;
+import static com.google.gerrit.entities.RefNames.REFS_HEADS;
 
 import com.google.common.base.Strings;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.extensions.api.config.AccessCheckInfo;
 import com.google.gerrit.extensions.api.config.AccessCheckInput;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestModifyView;
-import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Branch;
 import com.google.gerrit.server.account.AccountResolver;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.permissions.DefaultPermissionMappings;
@@ -35,7 +35,6 @@ import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.permissions.ProjectPermission;
 import com.google.gerrit.server.permissions.RefPermission;
 import com.google.gerrit.server.project.ProjectResource;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.io.IOException;
@@ -61,9 +60,8 @@ public class CheckAccess implements RestModifyView<ProjectResource, AccessCheckI
   }
 
   @Override
-  public AccessCheckInfo apply(ProjectResource rsrc, AccessCheckInput input)
-      throws OrmException, PermissionBackendException, RestApiException, IOException,
-          ConfigInvalidException {
+  public Response<AccessCheckInfo> apply(ProjectResource rsrc, AccessCheckInput input)
+      throws PermissionBackendException, RestApiException, IOException, ConfigInvalidException {
     permissionBackend.user(rsrc.getUser()).check(GlobalPermission.VIEW_ACCESS);
 
     rsrc.getProjectState().checkStatePermitsRead();
@@ -75,22 +73,18 @@ public class CheckAccess implements RestModifyView<ProjectResource, AccessCheckI
       throw new BadRequestException("input requires 'account'");
     }
 
-    Account match = accountResolver.find(input.account);
-    if (match == null) {
-      throw new UnprocessableEntityException(
-          String.format("cannot find account %s", input.account));
-    }
+    Account.Id match = accountResolver.resolve(input.account).asUnique().account().id();
 
     AccessCheckInfo info = new AccessCheckInfo();
     try {
       permissionBackend
-          .absentUser(match.getId())
+          .absentUser(match)
           .project(rsrc.getNameKey())
           .check(ProjectPermission.ACCESS);
     } catch (AuthException e) {
-      info.message = String.format("user %s cannot see project %s", match.getId(), rsrc.getName());
+      info.message = String.format("user %s cannot see project %s", match, rsrc.getName());
       info.status = HttpServletResponse.SC_FORBIDDEN;
-      return info;
+      return Response.ok(info);
     }
 
     RefPermission refPerm;
@@ -112,16 +106,16 @@ public class CheckAccess implements RestModifyView<ProjectResource, AccessCheckI
     if (!Strings.isNullOrEmpty(input.ref)) {
       try {
         permissionBackend
-            .absentUser(match.getId())
-            .ref(new Branch.NameKey(rsrc.getNameKey(), input.ref))
+            .absentUser(match)
+            .ref(BranchNameKey.create(rsrc.getNameKey(), input.ref))
             .check(refPerm);
       } catch (AuthException e) {
         info.status = HttpServletResponse.SC_FORBIDDEN;
         info.message =
             String.format(
                 "user %s lacks permission %s for %s in project %s",
-                match.getId(), input.permission, input.ref, rsrc.getName());
-        return info;
+                match, input.permission, input.ref, rsrc.getName());
+        return Response.ok(info);
       }
     } else {
       // We say access is okay if there are no refs, but this warrants a warning,
@@ -133,6 +127,6 @@ public class CheckAccess implements RestModifyView<ProjectResource, AccessCheckI
       }
     }
     info.status = HttpServletResponse.SC_OK;
-    return info;
+    return Response.ok(info);
   }
 }

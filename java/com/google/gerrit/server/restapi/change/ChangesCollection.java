@@ -14,17 +14,17 @@
 
 package com.google.gerrit.server.restapi.change;
 
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.IdString;
+import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestCollection;
 import com.google.gerrit.extensions.restapi.RestView;
 import com.google.gerrit.extensions.restapi.TopLevelResource;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.change.ChangeFinder;
 import com.google.gerrit.server.change.ChangeResource;
@@ -34,7 +34,6 @@ import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectState;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -43,7 +42,6 @@ import java.util.List;
 
 @Singleton
 public class ChangesCollection implements RestCollection<TopLevelResource, ChangeResource> {
-  private final Provider<ReviewDb> db;
   private final Provider<CurrentUser> user;
   private final Provider<QueryChanges> queryFactory;
   private final DynamicMap<RestView<ChangeResource>> views;
@@ -54,7 +52,6 @@ public class ChangesCollection implements RestCollection<TopLevelResource, Chang
 
   @Inject
   public ChangesCollection(
-      Provider<ReviewDb> db,
       Provider<CurrentUser> user,
       Provider<QueryChanges> queryFactory,
       DynamicMap<RestView<ChangeResource>> views,
@@ -62,7 +59,6 @@ public class ChangesCollection implements RestCollection<TopLevelResource, Chang
       ChangeResource.Factory changeResourceFactory,
       PermissionBackend permissionBackend,
       ProjectCache projectCache) {
-    this.db = db;
     this.user = user;
     this.queryFactory = queryFactory;
     this.views = views;
@@ -84,7 +80,7 @@ public class ChangesCollection implements RestCollection<TopLevelResource, Chang
 
   @Override
   public ChangeResource parse(TopLevelResource root, IdString id)
-      throws RestApiException, OrmException, PermissionBackendException, IOException {
+      throws RestApiException, PermissionBackendException, IOException {
     List<ChangeNotes> notes = changeFinder.find(id.encoded(), true);
     if (notes.isEmpty()) {
       throw new ResourceNotFoundException(id);
@@ -101,7 +97,8 @@ public class ChangesCollection implements RestCollection<TopLevelResource, Chang
   }
 
   public ChangeResource parse(Change.Id id)
-      throws RestApiException, OrmException, PermissionBackendException, IOException {
+      throws ResourceConflictException, ResourceNotFoundException, PermissionBackendException,
+          IOException {
     List<ChangeNotes> notes = changeFinder.find(id);
     if (notes.isEmpty()) {
       throw new ResourceNotFoundException(toIdString(id));
@@ -127,7 +124,7 @@ public class ChangesCollection implements RestCollection<TopLevelResource, Chang
 
   private boolean canRead(ChangeNotes notes) throws PermissionBackendException, IOException {
     try {
-      permissionBackend.currentUser().change(notes).database(db).check(ChangePermission.READ);
+      permissionBackend.currentUser().change(notes).check(ChangePermission.READ);
     } catch (AuthException e) {
       return false;
     }
@@ -139,7 +136,7 @@ public class ChangesCollection implements RestCollection<TopLevelResource, Chang
   }
 
   private void checkProjectStatePermitsRead(Project.NameKey project)
-      throws IOException, RestApiException {
+      throws IOException, ResourceNotFoundException, ResourceConflictException {
     ProjectState projectState = projectCache.checkedGet(project);
     if (projectState == null) {
       throw new ResourceNotFoundException("project not found: " + project.get());

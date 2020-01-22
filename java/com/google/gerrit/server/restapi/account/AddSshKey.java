@@ -18,8 +18,8 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.common.flogger.FluentLogger;
 import com.google.common.io.ByteSource;
-import com.google.gerrit.common.errors.EmailException;
-import com.google.gerrit.common.errors.InvalidSshKeyException;
+import com.google.gerrit.exceptions.EmailException;
+import com.google.gerrit.exceptions.InvalidSshKeyException;
 import com.google.gerrit.extensions.api.accounts.SshKeyInput;
 import com.google.gerrit.extensions.common.SshKeyInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
@@ -37,7 +37,6 @@ import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.ssh.SshKeyCache;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -45,6 +44,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 
+/**
+ * REST endpoint to add an SSH key for an account.
+ *
+ * <p>This REST endpoint handles {@code POST /accounts/<account-identifier>/sshkeys/} requests.
+ */
 @Singleton
 public class AddSshKey
     implements RestCollectionModifyView<AccountResource, AccountResource.SshKey, SshKeyInput> {
@@ -72,7 +76,7 @@ public class AddSshKey
 
   @Override
   public Response<SshKeyInfo> apply(AccountResource rsrc, SshKeyInput input)
-      throws AuthException, BadRequestException, OrmException, IOException, ConfigInvalidException,
+      throws AuthException, BadRequestException, IOException, ConfigInvalidException,
           PermissionBackendException {
     if (!self.get().hasSameAccountId(rsrc.getUser())) {
       permissionBackend.currentUser().check(GlobalPermission.ADMINISTRATE_SERVER);
@@ -105,11 +109,11 @@ public class AddSshKey
         addKeyFactory.create(user, sshKey).send();
       } catch (EmailException e) {
         logger.atSevere().withCause(e).log(
-            "Cannot send SSH key added message to %s", user.getAccount().getPreferredEmail());
+            "Cannot send SSH key added message to %s", user.getAccount().preferredEmail());
       }
 
       user.getUserName().ifPresent(sshKeyCache::evict);
-      return Response.<SshKeyInfo>created(GetSshKeys.newSshKeyInfo(sshKey));
+      return Response.created(GetSshKeys.newSshKeyInfo(sshKey));
     } catch (InvalidSshKeyException e) {
       throw new BadRequestException(e.getMessage());
     }

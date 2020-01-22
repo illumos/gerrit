@@ -14,7 +14,7 @@
 
 package com.google.gerrit.sshd;
 
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.AccessPath;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.git.GitRepositoryManager;
@@ -24,11 +24,14 @@ import com.google.gerrit.sshd.SshScope.Context;
 import com.google.inject.Inject;
 import java.io.IOException;
 import org.apache.sshd.server.Environment;
+import org.apache.sshd.server.channel.ChannelSession;
 import org.eclipse.jgit.errors.RepositoryNotFoundException;
 import org.eclipse.jgit.lib.Repository;
 import org.kohsuke.args4j.Argument;
 
 public abstract class AbstractGitCommand extends BaseCommand {
+  private static final String GIT_PROTOCOL = "GIT_PROTOCOL";
+
   @Argument(index = 0, metaVar = "PROJECT.git", required = true, usage = "project name")
   protected ProjectState projectState;
 
@@ -45,9 +48,15 @@ public abstract class AbstractGitCommand extends BaseCommand {
   protected Repository repo;
   protected Project.NameKey projectName;
   protected Project project;
+  protected String[] extraParameters;
 
   @Override
-  public void start(Environment env) {
+  public void start(ChannelSession channel, Environment env) {
+    String gitProtocol = env.getEnv().get(GIT_PROTOCOL);
+    if (gitProtocol != null) {
+      extraParameters = gitProtocol.split(":");
+    }
+
     Context ctx = context.subContext(newSession(), context.getCommandLine());
     final Context old = sshScope.set(ctx);
     try {

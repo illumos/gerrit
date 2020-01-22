@@ -14,8 +14,9 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 -->
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
-<link rel="import" href="../../../bower_components/paper-input/paper-input.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/paper-input/paper-input.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../behaviors/keyboard-shortcut-behavior/keyboard-shortcut-behavior.html">
 <link rel="import" href="../../shared/gr-autocomplete-dropdown/gr-autocomplete-dropdown.html">
 <link rel="import" href="../../shared/gr-cursor-manager/gr-cursor-manager.html">
@@ -29,38 +30,53 @@ limitations under the License.
         display: none;
       }
       .searchIcon.showSearchIcon {
-        display: initial;
+        display: inline-block;
       }
       iron-icon {
-        margin: 0 .25em;
+        margin: 0 var(--spacing-xs);
+        vertical-align: top;
       }
-      paper-input:not(.borderless) {
-        border: 1px solid var(--border-color);
+      paper-input.borderless {
+        border: none;
+        padding: 0;
       }
       paper-input {
-        height: 100%;
-        width: 100%;
-        @apply --gr-autocomplete;
+        border: 1px solid var(--border-color);
+        border-radius: var(--border-radius);
+        padding: var(--spacing-s);
         --paper-input-container: {
           padding: 0;
-        }
+        };
         --paper-input-container-input: {
           font-size: var(--font-size-normal);
-        }
+          line-height: var(--line-height-normal);
+        };
+        /* This is a hack for not being able to set height:0 on the underline
+           of a paper-input 2.2.3 element. All the underline fixes below only
+           actually work in 3.x.x, so the height must be adjusted directly as
+           a workaround until we are on Polymer 3. */
+        height: var(--line-height-normal);
+        --paper-input-container-underline-height: 0;
+        --paper-input-container-underline-wrapper-height: 0;
+        --paper-input-container-underline-focus-height: 0;
+        --paper-input-container-underline-legacy-height: 0;
         --paper-input-container-underline: {
+          height: 0;
           display: none;
         };
         --paper-input-container-underline-focus: {
+          height: 0;
           display: none;
         };
         --paper-input-container-underline-disabled: {
+          height: 0;
           display: none;
         };
       }
       paper-input.warnUncommitted {
         --paper-input-container-input: {
           color: var(--error-text-color);
-          font-size: var(--font-size-normal);
+          font-size: inherit;
         }
       }
     </style>
@@ -68,7 +84,6 @@ limitations under the License.
         no-label-float
         id="input"
         class$="[[_computeClass(borderless)]]"
-        is="iron-input"
         disabled$="[[disabled]]"
         value="{{text}}"
         placeholder="[[placeholder]]"
@@ -76,14 +91,14 @@ limitations under the License.
         on-focus="_onInputFocus"
         on-blur="_onInputBlur"
         autocomplete="off">
-      <!-- slot is for future use (2.x) while prefix attribute is for 1.x
-        (current) -->
-      <iron-icon
+
+      <!-- prefix as attribute is required to for polymer 1 -->
+      <div slot="prefix" prefix>
+        <iron-icon
           icon="gr-icons:search"
-          slot="prefix"
-          prefix
           class$="searchIcon [[_computeShowSearchIconClass(showSearchIcon)]]">
-      </iron-icon>
+        </iron-icon>
+      </div>
     </paper-input>
     <gr-autocomplete-dropdown
         vertical-align="top"

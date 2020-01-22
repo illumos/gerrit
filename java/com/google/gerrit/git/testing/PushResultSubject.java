@@ -15,8 +15,9 @@
 package com.google.gerrit.git.testing;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.truth.Fact.fact;
 import static com.google.common.truth.Truth.assertAbout;
-import static java.util.stream.Collectors.joining;
+import static com.google.gerrit.git.testing.PushResultSubject.RemoteRefUpdateSubject.refs;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Splitter;
@@ -25,44 +26,46 @@ import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
 import com.google.common.truth.FailureMetadata;
+import com.google.common.truth.StreamSubject;
 import com.google.common.truth.Subject;
-import com.google.common.truth.Truth;
-import com.google.common.truth.Truth8;
 import com.google.gerrit.common.Nullable;
-import java.util.Arrays;
 import org.eclipse.jgit.transport.PushResult;
 import org.eclipse.jgit.transport.RemoteRefUpdate;
 
-public class PushResultSubject extends Subject<PushResultSubject, PushResult> {
+public class PushResultSubject extends Subject {
   public static PushResultSubject assertThat(PushResult actual) {
     return assertAbout(PushResultSubject::new).that(actual);
   }
 
-  private PushResultSubject(FailureMetadata metadata, PushResult actual) {
-    super(metadata, actual);
+  private final PushResult pushResult;
+
+  private PushResultSubject(FailureMetadata metadata, PushResult pushResult) {
+    super(metadata, pushResult);
+    this.pushResult = pushResult;
   }
 
   public void hasNoMessages() {
-    Truth.assertWithMessage("expected no messages")
-        .that(Strings.nullToEmpty(trimMessages()))
-        .isEqualTo("");
+    isNotNull();
+    check("hasNoMessages()").that(Strings.nullToEmpty(getTrimmedMessages())).isEqualTo("");
   }
 
   public void hasMessages(String... expectedLines) {
     checkArgument(expectedLines.length > 0, "use hasNoMessages()");
     isNotNull();
-    Truth.assertThat(trimMessages()).isEqualTo(Arrays.stream(expectedLines).collect(joining("\n")));
+    check("getTrimmedMessages()")
+        .that(getTrimmedMessages())
+        .isEqualTo(String.join("\n", expectedLines));
   }
 
   public void containsMessages(String... expectedLines) {
     checkArgument(expectedLines.length > 0, "use hasNoMessages()");
     isNotNull();
-    Iterable<String> got = Splitter.on("\n").split(trimMessages());
-    Truth.assertThat(got).containsAllIn(expectedLines).inOrder();
+    Iterable<String> got = Splitter.on("\n").split(getTrimmedMessages());
+    check("getTrimmedMessages()").that(got).containsAtLeastElementsIn(expectedLines).inOrder();
   }
 
-  private String trimMessages() {
-    return trimMessages(actual().getMessages());
+  private String getTrimmedMessages() {
+    return trimMessages(pushResult.getMessages());
   }
 
   @VisibleForTesting
@@ -79,21 +82,19 @@ public class PushResultSubject extends Subject<PushResultSubject, PushResult> {
   }
 
   public void hasProcessed(ImmutableMap<String, Integer> expected) {
+    isNotNull();
     ImmutableMap<String, Integer> actual;
-    String messages = actual().getMessages();
+    String messages = pushResult.getMessages();
     try {
       actual = parseProcessed(messages);
     } catch (RuntimeException e) {
-      Truth.assert_()
-          .fail(
-              "failed to parse \"Processing changes\" line from messages: %s\n%s",
-              messages, Throwables.getStackTraceAsString(e));
+      failWithActual(
+          fact(
+              "failed to parse \"Processing changes\" line from messages, reason:",
+              Throwables.getStackTraceAsString(e)));
       return;
     }
-    Truth.assertThat(actual)
-        .named("processed commands")
-        .containsExactlyEntriesIn(expected)
-        .inOrder();
+    check("processedCommands()").that(actual).containsExactlyEntriesIn(expected).inOrder();
   }
 
   @VisibleForTesting
@@ -123,55 +124,60 @@ public class PushResultSubject extends Subject<PushResultSubject, PushResult> {
   }
 
   public RemoteRefUpdateSubject ref(String refName) {
-    return assertAbout(
-            (FailureMetadata m, RemoteRefUpdate a) -> new RemoteRefUpdateSubject(refName, m, a))
-        .that(actual().getRemoteUpdate(refName));
+    isNotNull();
+    return check("getRemoteUpdate(%s)", refName)
+        .about(refs())
+        .that(pushResult.getRemoteUpdate(refName));
   }
 
   public RemoteRefUpdateSubject onlyRef(String refName) {
-    Truth8.assertThat(actual().getRemoteUpdates().stream().map(RemoteRefUpdate::getRemoteName))
-        .named("set of refs")
+    isNotNull();
+    check("setOfRefs()")
+        .about(StreamSubject.streams())
+        .that(pushResult.getRemoteUpdates().stream().map(RemoteRefUpdate::getRemoteName))
         .containsExactly(refName);
     return ref(refName);
   }
 
-  public static class RemoteRefUpdateSubject
-      extends Subject<RemoteRefUpdateSubject, RemoteRefUpdate> {
-    private final String refName;
+  public static class RemoteRefUpdateSubject extends Subject {
+    private final RemoteRefUpdate remoteRefUpdate;
 
-    private RemoteRefUpdateSubject(
-        String refName, FailureMetadata metadata, RemoteRefUpdate actual) {
-      super(metadata, actual);
-      this.refName = refName;
-      named("ref update for %s", refName).isNotNull();
+    private RemoteRefUpdateSubject(FailureMetadata metadata, RemoteRefUpdate remoteRefUpdate) {
+      super(metadata, remoteRefUpdate);
+      this.remoteRefUpdate = remoteRefUpdate;
+    }
+
+    static Factory<RemoteRefUpdateSubject, RemoteRefUpdate> refs() {
+      return RemoteRefUpdateSubject::new;
     }
 
     public void hasStatus(RemoteRefUpdate.Status status) {
-      RemoteRefUpdate u = actual();
-      Truth.assertThat(u.getStatus())
-          .named(
-              "status of ref update for %s%s",
-              refName, u.getMessage() != null ? ": " + u.getMessage() : "")
+      isNotNull();
+      RemoteRefUpdate u = remoteRefUpdate;
+      check("getStatus()")
+          .withMessage(
+              "status message: %s", u.getMessage() != null ? ": " + u.getMessage() : "<emtpy>")
+          .that(u.getStatus())
           .isEqualTo(status);
     }
 
     public void hasNoMessage() {
-      Truth.assertThat(actual().getMessage())
-          .named("message of ref update for %s", refName)
-          .isNull();
+      isNotNull();
+      check("getMessage()").that(remoteRefUpdate.getMessage()).isNull();
     }
 
     public void hasMessage(String expected) {
-      Truth.assertThat(actual().getMessage())
-          .named("message of ref update for %s", refName)
-          .isEqualTo(expected);
+      isNotNull();
+      check("getMessage()").that(remoteRefUpdate.getMessage()).isEqualTo(expected);
     }
 
     public void isOk() {
+      isNotNull();
       hasStatus(RemoteRefUpdate.Status.OK);
     }
 
     public void isRejected(String expectedMessage) {
+      isNotNull();
       hasStatus(RemoteRefUpdate.Status.REJECTED_OTHER_REASON);
       hasMessage(expectedMessage);
     }

@@ -20,14 +20,15 @@ import com.google.common.base.MoreObjects;
 import com.google.common.base.Strings;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Multimap;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.api.projects.ParentInput;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.config.AllProjectsName;
 import com.google.gerrit.server.config.AllUsersName;
@@ -62,6 +63,7 @@ public class SetParent
   private final Provider<MetaDataUpdate.Server> updateFactory;
   private final AllProjectsName allProjects;
   private final AllUsersName allUsers;
+  private final ProjectConfig.Factory projectConfigFactory;
   private volatile boolean allowProjectOwnersToChangeParent;
 
   @Inject
@@ -71,22 +73,24 @@ public class SetParent
       Provider<MetaDataUpdate.Server> updateFactory,
       AllProjectsName allProjects,
       AllUsersName allUsers,
+      ProjectConfig.Factory projectConfigFactory,
       @GerritServerConfig Config config) {
     this.cache = cache;
     this.permissionBackend = permissionBackend;
     this.updateFactory = updateFactory;
     this.allProjects = allProjects;
     this.allUsers = allUsers;
+    this.projectConfigFactory = projectConfigFactory;
     this.allowProjectOwnersToChangeParent =
         config.getBoolean("receive", "allowProjectOwnersToChangeParent", false);
   }
 
   @Override
-  public String apply(ProjectResource rsrc, ParentInput input)
+  public Response<String> apply(ProjectResource rsrc, ParentInput input)
       throws AuthException, ResourceConflictException, ResourceNotFoundException,
           UnprocessableEntityException, IOException, PermissionBackendException,
           BadRequestException {
-    return apply(rsrc, input, true);
+    return Response.ok(apply(rsrc, input, true));
   }
 
   public String apply(ProjectResource rsrc, ParentInput input, boolean checkIfAdmin)
@@ -98,7 +102,7 @@ public class SetParent
         MoreObjects.firstNonNull(Strings.emptyToNull(input.parent), allProjects.get());
     validateParentUpdate(rsrc.getProjectState().getNameKey(), user, parentName, checkIfAdmin);
     try (MetaDataUpdate md = updateFactory.get().create(rsrc.getNameKey())) {
-      ProjectConfig config = ProjectConfig.read(md);
+      ProjectConfig config = projectConfigFactory.read(md);
       Project project = config.getProject();
       project.setParentName(parentName);
 
@@ -152,7 +156,7 @@ public class SetParent
 
     newParent = Strings.emptyToNull(newParent);
     if (newParent != null) {
-      ProjectState parent = cache.get(new Project.NameKey(newParent));
+      ProjectState parent = cache.get(Project.nameKey(newParent));
       if (parent == null) {
         throw new UnprocessableEntityException("parent project " + newParent + " not found");
       }

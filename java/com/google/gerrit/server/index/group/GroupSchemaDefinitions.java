@@ -20,6 +20,7 @@ import com.google.gerrit.index.Schema;
 import com.google.gerrit.index.SchemaDefinitions;
 import com.google.gerrit.server.group.InternalGroup;
 
+/** Definition of group index versions (schemata). See {@link SchemaDefinitions}. */
 public class GroupSchemaDefinitions extends SchemaDefinitions<InternalGroup> {
   @Deprecated
   static final Schema<InternalGroup> V2 =
@@ -43,8 +44,13 @@ public class GroupSchemaDefinitions extends SchemaDefinitions<InternalGroup> {
   @Deprecated static final Schema<InternalGroup> V6 = schema(V5);
 
   // Lucene index was changed to add an additional field for sorting.
-  static final Schema<InternalGroup> V7 = schema(V6);
+  @Deprecated static final Schema<InternalGroup> V7 = schema(V6);
 
+  // New numeric types: use dimensional points using the k-d tree geo-spatial data structure
+  // to offer fast single- and multi-dimensional numeric range.
+  static final Schema<InternalGroup> V8 = schema(V7, false);
+
+  /** Singleton instance of the schema definitions. This is one per JVM. */
   public static final GroupSchemaDefinitions INSTANCE = new GroupSchemaDefinitions();
 
   private GroupSchemaDefinitions() {

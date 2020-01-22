@@ -23,8 +23,8 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.gerrit.common.data.GroupReference;
+import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.index.SiteIndexer;
-import com.google.gerrit.reviewdb.client.AccountGroup;
 import com.google.gerrit.server.account.GroupCache;
 import com.google.gerrit.server.group.InternalGroup;
 import com.google.gerrit.server.group.db.Groups;
@@ -43,6 +43,10 @@ import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.ProgressMonitor;
 import org.eclipse.jgit.lib.TextProgressMonitor;
 
+/**
+ * Implementation that can index all groups on a host. Used by Gerrit's initialization and upgrade
+ * programs as well as by REST API endpoints that offer this functionality.
+ */
 @Singleton
 public class AllGroupsIndexer extends SiteIndexer<AccountGroup.UUID, InternalGroup, GroupIndex> {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
@@ -71,7 +75,7 @@ public class AllGroupsIndexer extends SiteIndexer<AccountGroup.UUID, InternalGro
       uuids = collectGroups(progress);
     } catch (IOException | ConfigInvalidException e) {
       logger.atSevere().withCause(e).log("Error collecting groups");
-      return new SiteIndexer.Result(sw, false, 0, 0);
+      return SiteIndexer.Result.create(sw, false, 0, 0);
     }
     return reindexGroups(index, uuids, progress);
   }
@@ -117,11 +121,11 @@ public class AllGroupsIndexer extends SiteIndexer<AccountGroup.UUID, InternalGro
       Futures.successfulAsList(futures).get();
     } catch (ExecutionException | InterruptedException e) {
       logger.atSevere().withCause(e).log("Error waiting on group futures");
-      return new SiteIndexer.Result(sw, false, 0, 0);
+      return SiteIndexer.Result.create(sw, false, 0, 0);
     }
 
     progress.endTask();
-    return new SiteIndexer.Result(sw, ok.get(), done.get(), failed.get());
+    return SiteIndexer.Result.create(sw, ok.get(), done.get(), failed.get());
   }
 
   private List<AccountGroup.UUID> collectGroups(ProgressMonitor progress)

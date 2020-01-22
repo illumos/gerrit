@@ -14,7 +14,7 @@
 
 package com.google.gerrit.server.restapi.project;
 
-import static com.google.gerrit.reviewdb.client.RefNames.REFS_DASHBOARDS;
+import static com.google.gerrit.entities.RefNames.REFS_DASHBOARDS;
 import static com.google.gerrit.server.restapi.project.DashboardsCollection.isDefaultDashboard;
 
 import com.google.common.base.Splitter;
@@ -25,6 +25,7 @@ import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.extensions.restapi.Url;
@@ -56,7 +57,7 @@ public class GetDashboard implements RestReadView<DashboardResource> {
   }
 
   @Override
-  public DashboardInfo apply(DashboardResource rsrc)
+  public Response<DashboardInfo> apply(DashboardResource rsrc)
       throws RestApiException, IOException, PermissionBackendException {
     if (inherited && !rsrc.isProjectDefault()) {
       throw new BadRequestException("inherited flag can only be used with default");
@@ -71,13 +72,14 @@ public class GetDashboard implements RestReadView<DashboardResource> {
       }
     }
 
-    return DashboardsCollection.parse(
-        rsrc.getProjectState().getProject(),
-        rsrc.getRefName().substring(REFS_DASHBOARDS.length()),
-        rsrc.getPathName(),
-        rsrc.getConfig(),
-        rsrc.getProjectState().getName(),
-        true);
+    return Response.ok(
+        DashboardsCollection.parse(
+            rsrc.getProjectState().getProject(),
+            rsrc.getRefName().substring(REFS_DASHBOARDS.length()),
+            rsrc.getPathName(),
+            rsrc.getConfig(),
+            rsrc.getProjectState().getName(),
+            true));
   }
 
   private DashboardResource defaultOf(ProjectState projectState, CurrentUser user)

@@ -14,9 +14,17 @@
 
 package com.google.gerrit.server.restapi.project;
 
+import static com.google.gerrit.server.project.ProjectConfig.COMMENTLINK;
+import static com.google.gerrit.server.project.ProjectConfig.KEY_ENABLED;
+import static com.google.gerrit.server.project.ProjectConfig.KEY_LINK;
+import static com.google.gerrit.server.project.ProjectConfig.KEY_MATCH;
+
 import com.google.common.base.Joiner;
 import com.google.common.base.Strings;
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.BooleanProjectConfig;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.extensions.api.projects.CommentLinkInput;
 import com.google.gerrit.extensions.api.projects.ConfigInfo;
 import com.google.gerrit.extensions.api.projects.ConfigInput;
 import com.google.gerrit.extensions.api.projects.ConfigValue;
@@ -26,11 +34,10 @@ import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.extensions.restapi.RestView;
-import com.google.gerrit.reviewdb.client.BooleanProjectConfig;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.EnableSignedPush;
 import com.google.gerrit.server.config.AllProjectsName;
@@ -47,6 +54,7 @@ import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectConfig;
 import com.google.gerrit.server.project.ProjectResource;
 import com.google.gerrit.server.project.ProjectState;
+import com.google.gerrit.server.project.ProjectState.Factory;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -54,10 +62,10 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.regex.Pattern;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.errors.RepositoryNotFoundException;
+import org.eclipse.jgit.lib.Config;
 
 @Singleton
 public class PutConfig implements RestModifyView<ProjectResource, ConfigInput> {
@@ -77,20 +85,22 @@ public class PutConfig implements RestModifyView<ProjectResource, ConfigInput> {
   private final DynamicMap<RestView<ProjectResource>> views;
   private final Provider<CurrentUser> user;
   private final PermissionBackend permissionBackend;
+  private final ProjectConfig.Factory projectConfigFactory;
 
   @Inject
   PutConfig(
       @EnableSignedPush boolean serverEnableSignedPush,
       Provider<MetaDataUpdate.User> metaDataUpdateFactory,
       ProjectCache projectCache,
-      ProjectState.Factory projectStateFactory,
+      Factory projectStateFactory,
       DynamicMap<ProjectConfigEntry> pluginConfigEntries,
       PluginConfigFactory cfgFactory,
       AllProjectsName allProjects,
       UiActions uiActions,
       DynamicMap<RestView<ProjectResource>> views,
       Provider<CurrentUser> user,
-      PermissionBackend permissionBackend) {
+      PermissionBackend permissionBackend,
+      ProjectConfig.Factory projectConfigFactory) {
     this.serverEnableSignedPush = serverEnableSignedPush;
     this.metaDataUpdateFactory = metaDataUpdateFactory;
     this.projectCache = projectCache;
@@ -102,16 +112,17 @@ public class PutConfig implements RestModifyView<ProjectResource, ConfigInput> {
     this.views = views;
     this.user = user;
     this.permissionBackend = permissionBackend;
+    this.projectConfigFactory = projectConfigFactory;
   }
 
   @Override
-  public ConfigInfo apply(ProjectResource rsrc, ConfigInput input)
+  public Response<ConfigInfo> apply(ProjectResource rsrc, ConfigInput input)
       throws RestApiException, PermissionBackendException {
     permissionBackend
         .currentUser()
         .project(rsrc.getNameKey())
         .check(ProjectPermission.WRITE_CONFIG);
-    return apply(rsrc.getProjectState(), input);
+    return Response.ok(apply(rsrc.getProjectState(), input));
   }
 
   public ConfigInfo apply(ProjectState projectState, ConfigInput input)
@@ -122,7 +133,7 @@ public class PutConfig implements RestModifyView<ProjectResource, ConfigInput> {
     }
 
     try (MetaDataUpdate md = metaDataUpdateFactory.get().create(projectName)) {
-      ProjectConfig projectConfig = ProjectConfig.read(md);
+      ProjectConfig projectConfig = projectConfigFactory.read(md);
       Project p = projectConfig.getProject();
 
       p.setDescription(Strings.emptyToNull(input.description));
@@ -150,6 +161,10 @@ public class PutConfig implements RestModifyView<ProjectResource, ConfigInput> {
         setPluginConfigValues(projectState, projectConfig, input.pluginConfigValues);
       }
 
+      if (input.commentLinks != null) {
+        updateCommentLinks(projectConfig, input.commentLinks);
+      }
+
       md.setMessage("Modified project settings\n");
       try {
         projectConfig.commit(md);
@@ -164,7 +179,7 @@ public class PutConfig implements RestModifyView<ProjectResource, ConfigInput> {
         throw new ResourceConflictException("Cannot update " + projectName);
       }
 
-      ProjectState state = projectStateFactory.create(ProjectConfig.read(md));
+      ProjectState state = projectStateFactory.create(projectConfigFactory.read(md));
       return new ConfigInfoImpl(
           serverEnableSignedPush,
           state,
@@ -188,10 +203,10 @@ public class PutConfig implements RestModifyView<ProjectResource, ConfigInput> {
       ProjectConfig projectConfig,
       Map<String, Map<String, ConfigValue>> pluginConfigValues)
       throws BadRequestException {
-    for (Entry<String, Map<String, ConfigValue>> e : pluginConfigValues.entrySet()) {
+    for (Map.Entry<String, Map<String, ConfigValue>> e : pluginConfigValues.entrySet()) {
       String pluginName = e.getKey();
       PluginConfig cfg = projectConfig.getPluginConfig(pluginName);
-      for (Entry<String, ConfigValue> v : e.getValue().entrySet()) {
+      for (Map.Entry<String, ConfigValue> v : e.getValue().entrySet()) {
         ProjectConfigEntry projectConfigEntry = pluginConfigEntries.get(pluginName, v.getKey());
         if (projectConfigEntry != null) {
           if (!PARAMETER_NAME_PATTERN.matcher(v.getKey()).matches()) {
@@ -270,6 +285,25 @@ public class PutConfig implements RestModifyView<ProjectResource, ConfigInput> {
                   "The config parameter '%s' of plugin '%s' does not exist.",
                   v.getKey(), pluginName));
         }
+      }
+    }
+  }
+
+  private void updateCommentLinks(
+      ProjectConfig projectConfig, Map<String, CommentLinkInput> input) {
+    for (Map.Entry<String, CommentLinkInput> e : input.entrySet()) {
+      String name = e.getKey();
+      CommentLinkInput value = e.getValue();
+      if (value != null) {
+        // Add or update the commentlink section
+        Config cfg = new Config();
+        cfg.setString(COMMENTLINK, name, KEY_MATCH, value.match);
+        cfg.setString(COMMENTLINK, name, KEY_LINK, value.link);
+        cfg.setBoolean(COMMENTLINK, name, KEY_ENABLED, value.enabled == null || value.enabled);
+        projectConfig.addCommentLinkSection(ProjectConfig.buildCommentLink(cfg, name, false));
+      } else {
+        // Delete the commentlink section
+        projectConfig.removeCommentLinkSection(name);
       }
     }
   }

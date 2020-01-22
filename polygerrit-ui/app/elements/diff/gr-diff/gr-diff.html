@@ -15,26 +15,43 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../behaviors/gr-patch-set-behavior/gr-patch-set-behavior.html">
 <link rel="import" href="../../../styles/shared-styles.html">
 <link rel="import" href="../../shared/gr-button/gr-button.html">
 <link rel="import" href="../gr-diff-builder/gr-diff-builder.html">
-<link rel="import" href="../gr-diff-comment-thread/gr-diff-comment-thread.html">
 <link rel="import" href="../gr-diff-highlight/gr-diff-highlight.html">
 <link rel="import" href="../gr-diff-selection/gr-diff-selection.html">
 <link rel="import" href="../gr-syntax-themes/gr-syntax-theme.html">
+<link rel="import" href="../gr-ranged-comment-themes/gr-ranged-comment-theme.html">
 
 <script src="../../../scripts/hiddenscroll.js"></script>
 
 <dom-module id="gr-diff">
   <template>
     <style include="shared-styles">
-      :host(.no-left) .sideBySide ::content .left,
-      :host(.no-left) .sideBySide ::content .left + td,
-      :host(.no-left) .sideBySide ::content .right:not([data-value]),
-      :host(.no-left) .sideBySide ::content .right:not([data-value]) + td {
+      :host(.no-left) .sideBySide .left,
+      :host(.no-left) .sideBySide .left + td,
+      :host(.no-left) .sideBySide .right:not([data-value]),
+      :host(.no-left) .sideBySide .right:not([data-value]) + td {
         display: none;
+      }
+      ::slotted(*) .thread-group {
+        display: block;
+        max-width: var(--content-width, 80ch);
+        white-space: normal;
+      }
+      :host {
+        font-family: var(--monospace-font-family, ''), 'Roboto Mono';
+        font-size: var(--font-size, var(--font-size-code, 12px));
+        line-height: var(--line-height-code, 1.334);
+      }
+
+      .thread-group {
+        display: block;
+        max-width: var(--content-width, 80ch);
+        white-space: normal;
       }
       .diffContainer {
         display: flex;
@@ -42,7 +59,7 @@ limitations under the License.
         @apply --diff-container-styles;
       }
       .diffContainer.hiddenscroll {
-        margin-bottom: .8em;
+        margin-bottom: var(--spacing-m);
       }
       table {
         border-collapse: collapse;
@@ -56,7 +73,7 @@ limitations under the License.
         text-align: center;
       }
       .image-diff img {
-        box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
+        box-shadow: var(--elevation-level-1);
         max-width: 50em;
       }
       .image-diff .right.lineNum {
@@ -76,9 +93,11 @@ limitations under the License.
         background-color: var(--diff-selection-background-color);
         color: var(--primary-text-color);
       }
-      .blank,
       .content {
         background-color: var(--view-background-color);
+      }
+      .blank {
+        background-color: var(--diff-blank-background-color);
       }
       .image-diff .content {
         background-color: var(--table-header-background-color);
@@ -92,8 +111,6 @@ limitations under the License.
       }
       .lineNum,
       .content {
-        /* Set font size based the user's diff preference. */
-        font-size: var(--font-size, var(--font-size-normal));
         vertical-align: top;
         white-space: pre;
       }
@@ -105,7 +122,7 @@ limitations under the License.
         user-select: none;
 
         color: var(--deemphasized-text-color);
-        padding: 0 .5em;
+        padding: 0 var(--spacing-m);
         text-align: right;
       }
       .canComment .lineNum {
@@ -119,6 +136,8 @@ limitations under the License.
         width: var(--content-width, 80ch);
       }
       .content.add .intraline,
+      /* If there are no intraline info, consider everything changed */
+      .content.add.no-intraline-info,
       .delta.total .content.add {
         background-color: var(--dark-add-highlight-color);
       }
@@ -126,12 +145,16 @@ limitations under the License.
         background-color: var(--light-add-highlight-color);
       }
       .content.remove .intraline,
+      /* If there are no intraline info, consider everything changed */
+      .content.remove.no-intraline-info,
       .delta.total .content.remove {
         background-color: var(--dark-remove-highlight-color);
       }
       .content.remove {
         background-color: var(--light-remove-highlight-color);
       }
+
+      /* dueToRebase */
       .dueToRebase .content.add .intraline,
       .delta.total.dueToRebase .content.add {
         background-color: var(--dark-rebased-add-highlight-color);
@@ -146,20 +169,32 @@ limitations under the License.
       .dueToRebase .content.remove {
         background-color: var(--light-remove-add-highlight-color);
       }
+
+      /* ignoredWhitespaceOnly */
+      .ignoredWhitespaceOnly .content.add .intraline,
+      .delta.total.ignoredWhitespaceOnly .content.add,
+      .ignoredWhitespaceOnly .content.add,
+      .ignoredWhitespaceOnly .content.remove .intraline,
+      .delta.total.ignoredWhitespaceOnly .content.remove,
+      .ignoredWhitespaceOnly .content.remove {
+        background: none;
+      }
+
       .content .contentText:empty:after {
         /* Newline, to ensure empty lines are one line-height tall. */
         content: '\A';
       }
       .contextControl {
-        background-color: var(--diff-context-control-color);
+        background-color: var(--diff-context-control-background-color);
         border: 1px solid var(--diff-context-control-border-color);
+        color: var(--diff-context-control-color);
       }
       .contextControl gr-button {
         display: inline-block;
         text-decoration: none;
         --gr-button: {
-          color: var(--deemphasized-text-color);
-          padding: .2em;
+          color: var(--diff-context-control-color);
+          padding: var(--spacing-xs);
         }
       }
       .contextControl td:not(.lineNum) {
@@ -187,21 +222,19 @@ limitations under the License.
       .content .trailing-whitespace,
       .trailing-whitespace .intraline,
       .content .trailing-whitespace .intraline {
-        border-radius: .4em;
+        border-radius: var(--border-radius, 4px);
         background-color: var(--diff-trailing-whitespace-indicator);
       }
       #diffHeader {
         background-color: var(--table-header-background-color);
         border-bottom: 1px solid var(--border-color);
         color: var(--link-color);
-        font-family: var(--monospace-font-family);
-        font-size: var(--font-size, var(--font-size-normal));
-        padding: 0.5em 0 0.5em 4em;
+        padding: var(--spacing-m) 0 var(--spacing-m) 48px;
       }
       #loadingError,
       #sizeWarning {
         display: none;
-        margin: 1em auto;
+        margin: var(--spacing-l) auto;
         max-width: 60em;
         text-align: center;
       }
@@ -209,7 +242,7 @@ limitations under the License.
         color: var(--error-text-color);
       }
       #sizeWarning gr-button {
-        margin: 1em;
+        margin: var(--spacing-l);
       }
       #loadingError.showError,
       #sizeWarning.warn {
@@ -223,9 +256,7 @@ limitations under the License.
       }
       td.blame {
         display: none;
-        font-family: var(--font-family);
-        font-size: var(--font-size, var(--font-size-normal));
-        padding: 0 .5em;
+        padding: 0 var(--spacing-m);
         white-space: pre;
       }
       :host(.showBlame) col.blame {
@@ -242,15 +273,12 @@ limitations under the License.
       }
       td.blame .sha {
         font-family: var(--monospace-font-family);
+        color: var(--link-color);
+        cursor: pointer;
       }
       .full-width td.blame {
         overflow: hidden;
         width: 200px;
-      }
-      /** Since the line limit position is determined by charachter size, blank
-       lines also need to have the same font size as everything else */
-      .full-width .blank {
-        font-size: var(--font-size, var(--font-size-normal));
       }
       /** Support the line length indicator **/
       .full-width td.content,
@@ -267,8 +295,66 @@ limitations under the License.
       .newlineWarning.hidden {
         display: none;
       }
+      .lineNum.COVERED {
+         background-color: var(--coverage-covered, #e0f2f1);
+      }
+      .lineNum.NOT_COVERED {
+        background-color: var(--coverage-not-covered, #ffd1a4);
+      }
+      .lineNum.PARTIALLY_COVERED {
+        background: linear-gradient(to right bottom, var(--coverage-not-covered, #ffd1a4) 0%,
+                                                     var(--coverage-not-covered, #ffd1a4) 50%,
+                                                     var(--coverage-covered, #e0f2f1) 50%,
+                                                     var(--coverage-covered, #e0f2f1) 100%);
+      }
+
+      /** BEGIN: Select and copy for Polymer 2 */
+      /** Below was copied and modified from the original css in gr-diff-selection.html */
+      .content,
+      .contextControl,
+      .blame {
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+      }
+
+      .selected-left:not(.selected-comment) .side-by-side .left + .content .contentText,
+      .selected-right:not(.selected-comment) .side-by-side .right + .content .contentText,
+      .selected-left:not(.selected-comment) .unified .left.lineNum ~ .content:not(.both) .contentText,
+      .selected-right:not(.selected-comment) .unified .right.lineNum ~ .content .contentText,
+      .selected-left.selected-comment .side-by-side .left + .content .message,
+      .selected-right.selected-comment .side-by-side .right + .content .message :not(.collapsedContent),
+      .selected-comment .unified .message :not(.collapsedContent),
+      .selected-blame .blame {
+        -webkit-user-select: text;
+        -moz-user-select: text;
+        -ms-user-select: text;
+        user-select: text;
+      }
+
+      /** Make comments selectable when selected */
+      .selected-left.selected-comment ::slotted(gr-comment-thread[comment-side=left]),
+      .selected-right.selected-comment ::slotted(gr-comment-thread[comment-side=right]) {
+        -webkit-user-select: text;
+        -moz-user-select: text;
+        -ms-user-select: text;
+        user-select: text;
+      }
+      /** END: Select and copy for Polymer 2 */
+
+      .whitespace-change-only-message {
+        background-color: var(--diff-context-control-background-color);
+        border: 1px solid var(--diff-context-control-border-color);
+        text-align: center;
+      }
     </style>
-    <style include="gr-syntax-theme"></style>
+    <style include="gr-syntax-theme">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
+    <style include="gr-ranged-comment-theme">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <div id="diffHeader" hidden$="[[_computeDiffHeaderHidden(_diffHeaderItems)]]">
       <template
           is="dom-repeat"
@@ -282,27 +368,32 @@ limitations under the License.
         <gr-diff-highlight
             id="highlights"
             logged-in="[[loggedIn]]"
-            comments="{{comments}}">
+            comment-ranges="{{_commentRanges}}">
           <gr-diff-builder
               id="diffBuilder"
-              comments="[[comments]]"
+              comment-ranges="[[_commentRanges]]"
+              coverage-ranges="[[coverageRanges]]"
               project-name="[[projectName]]"
               diff="[[diff]]"
-              diff-path="[[path]]"
+              path="[[path]]"
               change-num="[[changeNum]]"
               patch-num="[[patchRange.patchNum]]"
               view-mode="[[viewMode]]"
-              line-wrapping="[[lineWrapping]]"
               is-image-diff="[[isImageDiff]]"
               base-image="[[baseImage]]"
-              revision-image="[[revisionImage]]"
-              parent-index="[[_parentIndex]]"
-              create-comment-fn="[[_createThreadGroupFn]]"
-              line-of-interest="[[lineOfInterest]]">
+              layers="[[layers]]"
+              revision-image="[[revisionImage]]">
             <table
                 id="diffTable"
                 class$="[[_diffTableClass]]"
                 role="presentation"></table>
+
+            <template is="dom-if" if="[[showNoChangeMessage(loading, prefs, _diffLength)]]">
+              <div class="whitespace-change-only-message">
+                This file only contains whitespace changes.
+                Modify the whitespace setting to see the changes.
+              </div>
+            </template>
           </gr-diff-builder>
         </gr-diff-highlight>
       </gr-diff-selection>
@@ -318,10 +409,10 @@ limitations under the License.
         Prevented render because "Whole file" is enabled and this diff is very
         large (about [[_diffLength]] lines).
       </p>
-      <gr-button on-tap="_handleLimitedBypass">
+      <gr-button on-click="_handleLimitedBypass">
         Render with limited context
       </gr-button>
-      <gr-button on-tap="_handleFullBypass">
+      <gr-button on-click="_handleFullBypass">
         Render anyway (may be slow)
       </gr-button>
     </div>

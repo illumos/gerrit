@@ -14,6 +14,8 @@
 
 package com.google.gerrit.server.api.plugins;
 
+import static com.google.gerrit.server.api.ApiUtil.asRestApiException;
+
 import com.google.gerrit.extensions.api.plugins.PluginApi;
 import com.google.gerrit.extensions.common.Input;
 import com.google.gerrit.extensions.common.PluginInfo;
@@ -53,7 +55,11 @@ public class PluginApiImpl implements PluginApi {
 
   @Override
   public PluginInfo get() throws RestApiException {
-    return getStatus.apply(resource);
+    try {
+      return getStatus.apply(resource).value();
+    } catch (Exception e) {
+      throw asRestApiException("Cannot get status", e);
+    }
   }
 
   @Override
@@ -63,7 +69,11 @@ public class PluginApiImpl implements PluginApi {
 
   @Override
   public void disable() throws RestApiException {
-    disable.apply(resource, new Input());
+    try {
+      disable.apply(resource, new Input());
+    } catch (Exception e) {
+      throw asRestApiException("Cannot disable plugin", e);
+    }
   }
 
   @Override

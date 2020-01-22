@@ -14,76 +14,81 @@
 
 package com.google.gerrit.server.restapi.change;
 
+import com.google.gerrit.entities.Change;
 import com.google.gerrit.extensions.api.changes.AddReviewerInput;
 import com.google.gerrit.extensions.api.changes.AddReviewerResult;
+import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.restapi.BadRequestException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.server.ReviewDb;
+import com.google.gerrit.extensions.restapi.RestCollectionModifyView;
 import com.google.gerrit.server.change.ChangeResource;
+import com.google.gerrit.server.change.NotifyResolver;
 import com.google.gerrit.server.change.ReviewerAdder;
 import com.google.gerrit.server.change.ReviewerAdder.ReviewerAddition;
 import com.google.gerrit.server.change.ReviewerResource;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.update.BatchUpdate;
-import com.google.gerrit.server.update.RetryHelper;
-import com.google.gerrit.server.update.RetryingRestCollectionModifyView;
 import com.google.gerrit.server.update.UpdateException;
 import com.google.gerrit.server.util.time.TimeUtil;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 
 @Singleton
 public class PostReviewers
-    extends RetryingRestCollectionModifyView<
-        ChangeResource, ReviewerResource, AddReviewerInput, AddReviewerResult> {
-
-  private final Provider<ReviewDb> dbProvider;
+    implements RestCollectionModifyView<ChangeResource, ReviewerResource, AddReviewerInput> {
+  private final BatchUpdate.Factory updateFactory;
   private final ChangeData.Factory changeDataFactory;
+  private final NotifyResolver notifyResolver;
   private final ReviewerAdder reviewerAdder;
 
   @Inject
   PostReviewers(
-      Provider<ReviewDb> db,
+      BatchUpdate.Factory updateFactory,
       ChangeData.Factory changeDataFactory,
-      RetryHelper retryHelper,
+      NotifyResolver notifyResolver,
       ReviewerAdder reviewerAdder) {
-    super(retryHelper);
-    this.dbProvider = db;
+    this.updateFactory = updateFactory;
     this.changeDataFactory = changeDataFactory;
+    this.notifyResolver = notifyResolver;
     this.reviewerAdder = reviewerAdder;
   }
 
   @Override
-  protected AddReviewerResult applyImpl(
-      BatchUpdate.Factory updateFactory, ChangeResource rsrc, AddReviewerInput input)
-      throws IOException, OrmException, RestApiException, UpdateException,
-          PermissionBackendException, ConfigInvalidException {
+  public Response<AddReviewerResult> apply(ChangeResource rsrc, AddReviewerInput input)
+      throws IOException, RestApiException, UpdateException, PermissionBackendException,
+          ConfigInvalidException {
     if (input.reviewer == null) {
       throw new BadRequestException("missing reviewer field");
     }
 
-    ReviewerAddition addition =
-        reviewerAdder.prepare(dbProvider.get(), rsrc.getNotes(), rsrc.getUser(), input, true);
+    ReviewerAddition addition = reviewerAdder.prepare(rsrc.getNotes(), rsrc.getUser(), input, true);
     if (addition.op == null) {
-      return addition.result;
+      return Response.ok(addition.result);
     }
     try (BatchUpdate bu =
-        updateFactory.create(
-            dbProvider.get(), rsrc.getProject(), rsrc.getUser(), TimeUtil.nowTs())) {
+        updateFactory.create(rsrc.getProject(), rsrc.getUser(), TimeUtil.nowTs())) {
+      bu.setNotify(resolveNotify(rsrc, input));
       Change.Id id = rsrc.getChange().getId();
       bu.addOp(id, addition.op);
       bu.execute();
     }
 
     // Re-read change to take into account results of the update.
-    addition.gatherResults(
-        changeDataFactory.create(dbProvider.get(), rsrc.getProject(), rsrc.getId()));
-    return addition.result;
+    addition.gatherResults(changeDataFactory.create(rsrc.getProject(), rsrc.getId()));
+    return Response.ok(addition.result);
+  }
+
+  private NotifyResolver.Result resolveNotify(ChangeResource rsrc, AddReviewerInput input)
+      throws BadRequestException, ConfigInvalidException, IOException {
+    NotifyHandling notifyHandling = input.notify;
+    if (notifyHandling == null) {
+      notifyHandling =
+          rsrc.getChange().isWorkInProgress() ? NotifyHandling.NONE : NotifyHandling.ALL;
+    }
+    return notifyResolver.resolve(notifyHandling, input.notifyDetails);
   }
 }

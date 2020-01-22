@@ -15,13 +15,13 @@
 package com.google.gerrit.server.submit;
 
 import com.google.common.flogger.FluentLogger;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Change.Status;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.exceptions.StorageException;
+import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.git.CodeReviewCommit;
 import com.google.gerrit.server.git.CodeReviewCommit.CodeReviewRevWalk;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Provider;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -37,6 +37,7 @@ import org.eclipse.jgit.revwalk.RevFlag;
 public class RebaseSorter {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
+  private final CurrentUser caller;
   private final CodeReviewRevWalk rw;
   private final RevFlag canMergeFlag;
   private final RevCommit initialTip;
@@ -45,12 +46,14 @@ public class RebaseSorter {
   private final Set<CodeReviewCommit> incoming;
 
   public RebaseSorter(
+      CurrentUser caller,
       CodeReviewRevWalk rw,
       RevCommit initialTip,
       Set<RevCommit> alreadyAccepted,
       RevFlag canMergeFlag,
       Provider<InternalChangeQuery> queryProvider,
       Set<CodeReviewCommit> incoming) {
+    this.caller = caller;
     this.rw = rw;
     this.canMergeFlag = canMergeFlag;
     this.initialTip = initialTip;
@@ -59,8 +62,7 @@ public class RebaseSorter {
     this.incoming = incoming;
   }
 
-  public List<CodeReviewCommit> sort(Collection<CodeReviewCommit> toSort)
-      throws IOException, OrmException {
+  public List<CodeReviewCommit> sort(Collection<CodeReviewCommit> toSort) throws IOException {
     final List<CodeReviewCommit> sorted = new ArrayList<>();
     final Set<CodeReviewCommit> sort = new HashSet<>(toSort);
     while (!sort.isEmpty()) {
@@ -85,7 +87,7 @@ public class RebaseSorter {
             n.setStatusCode(CommitMergeStatus.MISSING_DEPENDENCY);
             n.setStatusMessage(
                 CommitMergeStatus.createMissingDependencyMessage(
-                    queryProvider, n.name(), c.name()));
+                    caller, queryProvider, n.name(), c.name()));
           }
           // Stop RevWalk because c is either a merged commit or a missing
           // dependency. Not need to walk further.
@@ -106,7 +108,7 @@ public class RebaseSorter {
     return sorted;
   }
 
-  private boolean isAlreadyMerged(CodeReviewCommit commit, Branch.NameKey dest) throws IOException {
+  private boolean isAlreadyMerged(CodeReviewCommit commit, BranchNameKey dest) throws IOException {
     try (CodeReviewRevWalk mirw = CodeReviewCommit.newRevWalk(rw.getObjectReader())) {
       mirw.reset();
       mirw.markStart(commit);
@@ -122,15 +124,14 @@ public class RebaseSorter {
       // check if the commit associated change is merged in the same branch
       List<ChangeData> changes = queryProvider.get().byCommit(commit);
       for (ChangeData change : changes) {
-        if (change.change().getStatus() == Status.MERGED
-            && change.change().getDest().equals(dest)) {
+        if (change.change().isMerged() && change.change().getDest().equals(dest)) {
           logger.atFine().log(
               "Dependency %s associated with merged change %s.", commit.getName(), change.getId());
           return true;
         }
       }
       return false;
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       throw new IOException(e);
     }
   }

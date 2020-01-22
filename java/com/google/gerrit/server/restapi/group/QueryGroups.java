@@ -17,9 +17,11 @@ package com.google.gerrit.server.restapi.group;
 import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
 import com.google.gerrit.extensions.client.ListGroupsOption;
+import com.google.gerrit.extensions.client.ListOption;
 import com.google.gerrit.extensions.common.GroupInfo;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.extensions.restapi.TopLevelResource;
 import com.google.gerrit.index.query.QueryParseException;
@@ -29,7 +31,6 @@ import com.google.gerrit.server.group.InternalGroupDescription;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.query.group.GroupQueryBuilder;
 import com.google.gerrit.server.query.group.GroupQueryProcessor;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import java.util.ArrayList;
@@ -47,12 +48,9 @@ public class QueryGroups implements RestReadView<TopLevelResource> {
   private int start;
   private EnumSet<ListGroupsOption> options = EnumSet.noneOf(ListGroupsOption.class);
 
-  // TODO(ekempin): --query in ListGroups is marked as deprecated, once it is
-  // removed we want to rename --query2 to --query here.
-  /** --query (-q) is already used by {@link ListGroups} */
   @Option(
-      name = "--query2",
-      aliases = {"-q2"},
+      name = "--query",
+      aliases = {"-q"},
       usage = "group query")
   public void setQuery(String query) {
     this.query = query;
@@ -83,7 +81,7 @@ public class QueryGroups implements RestReadView<TopLevelResource> {
 
   @Option(name = "-O", usage = "Output option flags, in hex")
   public void setOptionFlagsHex(String hex) {
-    options.addAll(ListGroupsOption.fromBits(Integer.parseInt(hex, 16)));
+    options.addAll(ListOption.fromBits(ListGroupsOption.class, Integer.parseInt(hex, 16)));
   }
 
   @Inject
@@ -97,9 +95,8 @@ public class QueryGroups implements RestReadView<TopLevelResource> {
   }
 
   @Override
-  public List<GroupInfo> apply(TopLevelResource resource)
-      throws BadRequestException, MethodNotAllowedException, OrmException,
-          PermissionBackendException {
+  public Response<List<GroupInfo>> apply(TopLevelResource resource)
+      throws BadRequestException, MethodNotAllowedException, PermissionBackendException {
     if (Strings.isNullOrEmpty(query)) {
       throw new BadRequestException("missing query field");
     }
@@ -130,7 +127,7 @@ public class QueryGroups implements RestReadView<TopLevelResource> {
       if (!groupInfos.isEmpty() && result.more()) {
         groupInfos.get(groupInfos.size() - 1)._moreGroups = true;
       }
-      return groupInfos;
+      return Response.ok(groupInfos);
     } catch (QueryParseException e) {
       throw new BadRequestException(e.getMessage());
     }

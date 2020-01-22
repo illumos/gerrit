@@ -15,10 +15,10 @@
 package com.google.gerrit.server.project;
 
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
@@ -27,6 +27,7 @@ import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
+import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -63,15 +64,12 @@ public class CreateRefControl {
    * @throws ResourceConflictException if the project state does not permit the operation
    */
   public void checkCreateRef(
-      Provider<? extends CurrentUser> user,
-      Repository repo,
-      Branch.NameKey branch,
-      RevObject object)
+      Provider<? extends CurrentUser> user, Repository repo, BranchNameKey branch, RevObject object)
       throws AuthException, PermissionBackendException, NoSuchProjectException, IOException,
           ResourceConflictException {
-    ProjectState ps = projectCache.checkedGet(branch.getParentKey());
+    ProjectState ps = projectCache.checkedGet(branch.project());
     if (ps == null) {
-      throw new NoSuchProjectException(branch.getParentKey());
+      throw new NoSuchProjectException(branch.project());
     }
     ps.checkStatePermitsWrite();
 
@@ -84,8 +82,7 @@ public class CreateRefControl {
       try (RevWalk rw = new RevWalk(repo)) {
         rw.parseBody(tag);
       } catch (IOException e) {
-        logger.atSevere().withCause(e).log(
-            "RevWalk(%s) parsing %s:", branch.getParentKey(), tag.name());
+        logger.atSevere().withCause(e).log("RevWalk(%s) parsing %s:", branch.project(), tag.name());
         throw e;
       }
 
@@ -121,7 +118,7 @@ public class CreateRefControl {
    */
   private void checkCreateCommit(
       Repository repo, RevCommit commit, Project.NameKey project, PermissionBackend.ForRef forRef)
-      throws AuthException, PermissionBackendException {
+      throws AuthException, PermissionBackendException, IOException {
     try {
       // If the user has update (push) permission, they can create the ref regardless
       // of whether they are pushing any new objects along with the create.
@@ -130,7 +127,11 @@ public class CreateRefControl {
     } catch (AuthException denied) {
       // Fall through to check reachability.
     }
-    if (reachable.fromHeadsOrTags(project, repo, commit)) {
+    if (reachable.fromRefs(
+        project,
+        repo,
+        commit,
+        repo.getRefDatabase().getRefsByPrefix(Constants.R_HEADS, Constants.R_TAGS))) {
       // If the user has no push permissions, check whether the object is
       // merged into a branch or tag readable by this user. If so, they are
       // not effectively "pushing" more objects, so they can create the ref
@@ -138,9 +139,15 @@ public class CreateRefControl {
       return;
     }
 
-    throw new AuthException(
+    AuthException e =
+        new AuthException(
+            String.format(
+                "%s for creating new commit object not permitted",
+                RefPermission.UPDATE.describeForException()));
+    e.setAdvice(
         String.format(
-            "%s for creating new commit object not permitted",
+            "use a SHA1 visible to you, or get %s permission on the ref",
             RefPermission.UPDATE.describeForException()));
+    throw e;
   }
 }

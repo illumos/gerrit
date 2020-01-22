@@ -14,16 +14,15 @@
 
 package com.google.gerrit.server.account;
 
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.ServerInitiated;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.gerrit.server.validators.AccountActivationValidationListener;
 import com.google.gerrit.server.validators.ValidationException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -33,6 +32,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 
+/** Toggler for account active state. */
 @Singleton
 public class SetInactiveFlag {
   private final PluginSetContext<AccountActivationValidationListener>
@@ -48,7 +48,7 @@ public class SetInactiveFlag {
   }
 
   public Response<?> deactivate(Account.Id accountId)
-      throws RestApiException, IOException, ConfigInvalidException, OrmException {
+      throws RestApiException, IOException, ConfigInvalidException {
     AtomicBoolean alreadyInactive = new AtomicBoolean(false);
     AtomicReference<Optional<RestApiException>> exception = new AtomicReference<>(Optional.empty());
     accountsUpdateProvider
@@ -57,7 +57,7 @@ public class SetInactiveFlag {
             "Deactivate Account via API",
             accountId,
             (a, u) -> {
-              if (!a.getAccount().isActive()) {
+              if (!a.account().isActive()) {
                 alreadyInactive.set(true);
               } else {
                 try {
@@ -81,7 +81,7 @@ public class SetInactiveFlag {
   }
 
   public Response<String> activate(Account.Id accountId)
-      throws RestApiException, IOException, ConfigInvalidException, OrmException {
+      throws RestApiException, IOException, ConfigInvalidException {
     AtomicBoolean alreadyActive = new AtomicBoolean(false);
     AtomicReference<Optional<RestApiException>> exception = new AtomicReference<>(Optional.empty());
     accountsUpdateProvider
@@ -90,7 +90,7 @@ public class SetInactiveFlag {
             "Activate Account via API",
             accountId,
             (a, u) -> {
-              if (a.getAccount().isActive()) {
+              if (a.account().isActive()) {
                 alreadyActive.set(true);
               } else {
                 try {
@@ -107,6 +107,6 @@ public class SetInactiveFlag {
     if (exception.get().isPresent()) {
       throw exception.get().get();
     }
-    return alreadyActive.get() ? Response.ok("") : Response.created("");
+    return alreadyActive.get() ? Response.ok() : Response.created();
   }
 }

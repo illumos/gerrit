@@ -69,93 +69,111 @@
     'CUSTOM_EXTENSION',
   ]);
 
-  Polymer({
-    is: 'gr-main-header',
+  /**
+   * @appliesMixin Gerrit.AdminNavMixin
+   * @appliesMixin Gerrit.BaseUrlMixin
+   * @appliesMixin Gerrit.DocsUrlMixin
+   * @appliesMixin Gerrit.FireMixin
+   * @extends Polymer.Element
+   */
+  class GrMainHeader extends Polymer.mixinBehaviors( [
+    Gerrit.AdminNavBehavior,
+    Gerrit.BaseUrlBehavior,
+    Gerrit.DocsUrlBehavior,
+    Gerrit.FireBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-main-header'; }
 
-    hostAttributes: {
-      role: 'banner',
-    },
-
-    properties: {
-      searchQuery: {
-        type: String,
-        notify: true,
-      },
-      loggedIn: {
-        type: Boolean,
-        reflectToAttribute: true,
-      },
-      loading: {
-        type: Boolean,
-        reflectToAttribute: true,
-      },
-
-      /** @type {?Object} */
-      _account: Object,
-      _adminLinks: {
-        type: Array,
-        value() { return []; },
-      },
-      _defaultLinks: {
-        type: Array,
-        value() {
-          return DEFAULT_LINKS;
+    static get properties() {
+      return {
+        searchQuery: {
+          type: String,
+          notify: true,
         },
-      },
-      _docBaseUrl: {
-        type: String,
-        value: null,
-      },
-      _links: {
-        type: Array,
-        computed: '_computeLinks(_defaultLinks, _userLinks, _adminLinks, ' +
+        loggedIn: {
+          type: Boolean,
+          reflectToAttribute: true,
+        },
+        loading: {
+          type: Boolean,
+          reflectToAttribute: true,
+        },
+
+        /** @type {?Object} */
+        _account: Object,
+        _adminLinks: {
+          type: Array,
+          value() { return []; },
+        },
+        _defaultLinks: {
+          type: Array,
+          value() {
+            return DEFAULT_LINKS;
+          },
+        },
+        _docBaseUrl: {
+          type: String,
+          value: null,
+        },
+        _links: {
+          type: Array,
+          computed: '_computeLinks(_defaultLinks, _userLinks, _adminLinks, ' +
             '_topMenus, _docBaseUrl)',
-      },
-      _loginURL: {
-        type: String,
-        value: '/login',
-      },
-      _userLinks: {
-        type: Array,
-        value() { return []; },
-      },
-      _topMenus: {
-        type: Array,
-        value() { return []; },
-      },
-      _registerText: {
-        type: String,
-        value: 'Sign up',
-      },
-      _registerURL: {
-        type: String,
-        value: null,
-      },
-    },
+        },
+        _loginURL: {
+          type: String,
+          value: '/login',
+        },
+        _userLinks: {
+          type: Array,
+          value() { return []; },
+        },
+        _topMenus: {
+          type: Array,
+          value() { return []; },
+        },
+        _registerText: {
+          type: String,
+          value: 'Sign up',
+        },
+        _registerURL: {
+          type: String,
+          value: null,
+        },
+      };
+    }
 
-    behaviors: [
-      Gerrit.AdminNavBehavior,
-      Gerrit.BaseUrlBehavior,
-      Gerrit.DocsUrlBehavior,
-    ],
+    static get observers() {
+      return [
+        '_accountLoaded(_account)',
+      ];
+    }
 
-    observers: [
-      '_accountLoaded(_account)',
-    ],
+    /** @override */
+    ready() {
+      super.ready();
+      this._ensureAttribute('role', 'banner');
+    }
 
+    /** @override */
     attached() {
+      super.attached();
       this._loadAccount();
       this._loadConfig();
       this.listen(window, 'location-change', '_handleLocationChange');
-    },
+    }
 
+    /** @override */
     detached() {
+      super.detached();
       this.unlisten(window, 'location-change', '_handleLocationChange');
-    },
+    }
 
     reload() {
       this._loadAccount();
-    },
+    }
 
     _handleLocationChange(e) {
       const baseUrl = this.getBaseUrl();
@@ -172,13 +190,24 @@
             window.location.search +
             window.location.hash);
       }
-    },
+    }
 
     _computeRelativeURL(path) {
       return '//' + window.location.host + this.getBaseUrl() + path;
-    },
+    }
 
     _computeLinks(defaultLinks, userLinks, adminLinks, topMenus, docBaseUrl) {
+      // Polymer 2: check for undefined
+      if ([
+        defaultLinks,
+        userLinks,
+        adminLinks,
+        topMenus,
+        docBaseUrl,
+      ].some(arg => arg === undefined)) {
+        return undefined;
+      }
+
       const links = defaultLinks.map(menu => {
         return {
           title: menu.title,
@@ -206,10 +235,10 @@
       const topMenuLinks = [];
       links.forEach(link => { topMenuLinks[link.title] = link.links; });
       for (const m of topMenus) {
-        const items = m.items.map(this._fixCustomMenuItem).filter(link => {
+        const items = m.items.map(this._fixCustomMenuItem).filter(link =>
           // Ignore GWT project links
-          return !link.url.includes('${projectName}');
-        });
+          !link.url.includes('${projectName}')
+        );
         if (m.name in topMenuLinks) {
           items.forEach(link => { topMenuLinks[m.name].push(link); });
         } else {
@@ -220,7 +249,7 @@
         }
       }
       return links;
-    },
+    }
 
     _getDocLinks(docBaseUrl, docLinks) {
       if (!docBaseUrl || !docLinks) {
@@ -237,7 +266,7 @@
           target: '_blank',
         };
       });
-    },
+    }
 
     _loadAccount() {
       this.loading = true;
@@ -261,7 +290,7 @@
               this._adminLinks = res.links;
             });
       });
-    },
+    }
 
     _loadConfig() {
       this.$.restAPI.getConfig()
@@ -270,16 +299,16 @@
             return this.getDocsBaseUrl(config, this.$.restAPI);
           })
           .then(docBaseUrl => { this._docBaseUrl = docBaseUrl; });
-    },
+    }
 
     _accountLoaded(account) {
       if (!account) { return; }
 
       this.$.restAPI.getPreferences().then(prefs => {
-        this._userLinks =
-            prefs.my.map(this._fixCustomMenuItem).filter(this._isSupportedLink);
+        this._userLinks = prefs && prefs.my ?
+          prefs.my.map(this._fixCustomMenuItem) : [];
       });
-    },
+    }
 
     _retrieveRegisterURL(config) {
       if (AUTH_TYPES_WITH_REGISTER_URL.has(config.auth.auth_type)) {
@@ -288,11 +317,11 @@
           this._registerText = config.auth.register_text;
         }
       }
-    },
+    }
 
     _computeIsInvisible(registerURL) {
       return registerURL ? '' : 'invisible';
-    },
+    }
 
     _fixCustomMenuItem(linkObj) {
       // Normalize all urls to PolyGerrit style.
@@ -310,15 +339,26 @@
       delete linkObj.target;
 
       return linkObj;
-    },
-
-    _isSupportedLink(linkObj) {
-      // Groups are not yet supported.
-      return !linkObj.url.startsWith('/groups');
-    },
+    }
 
     _generateSettingsLink() {
       return this.getBaseUrl() + '/settings/';
-    },
-  });
+    }
+
+    _onMobileSearchTap(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.fire('mobile-search', null, {bubbles: false});
+    }
+
+    _computeLinkGroupClass(linkGroup) {
+      if (linkGroup && linkGroup.class) {
+        return linkGroup.class;
+      }
+
+      return '';
+    }
+  }
+
+  customElements.define(GrMainHeader.is, GrMainHeader);
 })();

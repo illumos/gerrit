@@ -20,9 +20,10 @@ import com.google.gerrit.index.Schema;
 import com.google.gerrit.index.SchemaDefinitions;
 import com.google.gerrit.server.query.change.ChangeData;
 
+/** Definition of change index versions (schemata). See {@link SchemaDefinitions}. */
 public class ChangeSchemaDefinitions extends SchemaDefinitions<ChangeData> {
   @Deprecated
-  static final Schema<ChangeData> V39 =
+  static final Schema<ChangeData> V55 =
       schema(
           ChangeField.ADDED,
           ChangeField.APPROVAL,
@@ -36,11 +37,16 @@ public class ChangeSchemaDefinitions extends SchemaDefinitions<ChangeData> {
           ChangeField.COMMIT_MESSAGE,
           ChangeField.DELETED,
           ChangeField.DELTA,
+          ChangeField.DIRECTORY,
           ChangeField.DRAFTBY,
           ChangeField.EDITBY,
+          ChangeField.EXACT_AUTHOR,
           ChangeField.EXACT_COMMIT,
+          ChangeField.EXACT_COMMITTER,
           ChangeField.EXACT_TOPIC,
+          ChangeField.EXTENSION,
           ChangeField.FILE_PART,
+          ChangeField.FOOTER,
           ChangeField.FUZZY_TOPIC,
           ChangeField.GROUP,
           ChangeField.HASHTAG,
@@ -49,59 +55,65 @@ public class ChangeSchemaDefinitions extends SchemaDefinitions<ChangeData> {
           ChangeField.LABEL,
           ChangeField.LEGACY_ID,
           ChangeField.MERGEABLE,
+          ChangeField.ONLY_EXTENSIONS,
           ChangeField.OWNER,
           ChangeField.PATCH_SET,
           ChangeField.PATH,
+          ChangeField.PENDING_REVIEWER,
+          ChangeField.PENDING_REVIEWER_BY_EMAIL,
+          ChangeField.PRIVATE,
           ChangeField.PROJECT,
           ChangeField.PROJECTS,
           ChangeField.REF,
           ChangeField.REF_STATE,
           ChangeField.REF_STATE_PATTERN,
+          ChangeField.REVERT_OF,
           ChangeField.REVIEWEDBY,
           ChangeField.REVIEWER,
+          ChangeField.REVIEWER_BY_EMAIL,
           ChangeField.STAR,
           ChangeField.STARBY,
+          ChangeField.STARTED,
           ChangeField.STATUS,
           ChangeField.STORED_SUBMIT_RECORD_LENIENT,
           ChangeField.STORED_SUBMIT_RECORD_STRICT,
           ChangeField.SUBMISSIONID,
           ChangeField.SUBMIT_RECORD,
+          ChangeField.TOTAL_COMMENT_COUNT,
           ChangeField.TR,
           ChangeField.UNRESOLVED_COMMENT_COUNT,
-          ChangeField.UPDATED);
+          ChangeField.UPDATED,
+          ChangeField.WIP);
 
-  @Deprecated static final Schema<ChangeData> V40 = schema(V39, ChangeField.PRIVATE);
-  @Deprecated static final Schema<ChangeData> V41 = schema(V40, ChangeField.REVIEWER_BY_EMAIL);
-  @Deprecated static final Schema<ChangeData> V42 = schema(V41, ChangeField.WIP);
+  // The computation of the 'extension' field is changed, hence reindexing is required.
+  @Deprecated static final Schema<ChangeData> V56 = schema(V55);
 
+  // New numeric types: use dimensional points using the k-d tree geo-spatial data structure
+  // to offer fast single- and multi-dimensional numeric range. As the consequense, integer
+  // document id type is replaced with string document id type.
   @Deprecated
-  static final Schema<ChangeData> V43 =
-      schema(V42, ChangeField.EXACT_AUTHOR, ChangeField.EXACT_COMMITTER);
+  static final Schema<ChangeData> V57 =
+      new Schema.Builder<ChangeData>()
+          .add(V56)
+          .remove(ChangeField.LEGACY_ID)
+          .add(ChangeField.LEGACY_ID_STR)
+          .legacyNumericFields(false)
+          .build();
 
-  @Deprecated
-  static final Schema<ChangeData> V44 =
-      schema(
-          V43,
-          ChangeField.STARTED,
-          ChangeField.PENDING_REVIEWER,
-          ChangeField.PENDING_REVIEWER_BY_EMAIL);
+  // Add new field CHERRY_PICK_OF
+  static final Schema<ChangeData> V58 =
+      new Schema.Builder<ChangeData>()
+          .add(V57)
+          .add(ChangeField.CHERRY_PICK_OF_CHANGE)
+          .add(ChangeField.CHERRY_PICK_OF_PATCHSET)
+          .build();
 
-  @Deprecated static final Schema<ChangeData> V45 = schema(V44, ChangeField.REVERT_OF);
-
-  @Deprecated static final Schema<ChangeData> V46 = schema(V45);
-
-  // Removal of draft change workflow requires reindexing
-  @Deprecated static final Schema<ChangeData> V47 = schema(V46);
-
-  // Rename of star label 'mute' to 'reviewed' requires reindexing
-  @Deprecated static final Schema<ChangeData> V48 = schema(V47);
-
-  @Deprecated static final Schema<ChangeData> V49 = schema(V48);
-
-  // Bump Lucene version requires reindexing
-  static final Schema<ChangeData> V50 = schema(V49);
-
+  /**
+   * Name of the change index to be used when contacting index backends or loading configurations.
+   */
   public static final String NAME = "changes";
+
+  /** Singleton instance of the schema definitions. This is one per JVM. */
   public static final ChangeSchemaDefinitions INSTANCE = new ChangeSchemaDefinitions();
 
   private ChangeSchemaDefinitions() {

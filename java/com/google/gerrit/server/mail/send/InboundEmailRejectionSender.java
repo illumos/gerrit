@@ -16,7 +16,7 @@ package com.google.gerrit.server.mail.send;
 
 import static java.util.Objects.requireNonNull;
 
-import com.google.gerrit.common.errors.EmailException;
+import com.google.gerrit.exceptions.EmailException;
 import com.google.gerrit.extensions.api.changes.RecipientType;
 import com.google.gerrit.mail.Address;
 import com.google.gerrit.mail.MailHeader;
@@ -32,7 +32,8 @@ public class InboundEmailRejectionSender extends OutgoingEmail {
     PARSING_ERROR,
     INACTIVE_ACCOUNT,
     UNKNOWN_ACCOUNT,
-    INTERNAL_EXCEPTION;
+    INTERNAL_EXCEPTION,
+    COMMENT_REJECTED
   }
 
   public interface Factory {
@@ -45,8 +46,11 @@ public class InboundEmailRejectionSender extends OutgoingEmail {
 
   @Inject
   public InboundEmailRejectionSender(
-      EmailArguments ea, @Assisted Address to, @Assisted String threadId, @Assisted Error reason) {
-    super(ea, "error");
+      EmailArguments args,
+      @Assisted Address to,
+      @Assisted String threadId,
+      @Assisted Error reason) {
+    super(args, "error");
     this.to = requireNonNull(to);
     this.threadId = requireNonNull(threadId);
     this.reason = requireNonNull(reason);

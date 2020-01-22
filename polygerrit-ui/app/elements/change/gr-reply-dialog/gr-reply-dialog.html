@@ -15,12 +15,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 <link rel="import" href="../../../behaviors/base-url-behavior/base-url-behavior.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../behaviors/gr-patch-set-behavior/gr-patch-set-behavior.html">
 <link rel="import" href="../../../behaviors/keyboard-shortcut-behavior/keyboard-shortcut-behavior.html">
 <link rel="import" href="../../../behaviors/rest-client-behavior/rest-client-behavior.html">
-<link rel="import" href="../../../bower_components/iron-autogrow-textarea/iron-autogrow-textarea.html">
+<link rel="import" href="/bower_components/iron-autogrow-textarea/iron-autogrow-textarea.html">
 <link rel="import" href="../../core/gr-reporting/gr-reporting.html">
 <link rel="import" href="../../plugins/gr-endpoint-decorator/gr-endpoint-decorator.html">
 <link rel="import" href="../../shared/gr-account-chip/gr-account-chip.html">
@@ -31,9 +32,12 @@ limitations under the License.
 <link rel="import" href="../../shared/gr-overlay/gr-overlay.html">
 <link rel="import" href="../../shared/gr-rest-api-interface/gr-rest-api-interface.html">
 <link rel="import" href="../../shared/gr-storage/gr-storage.html">
-<link rel="import" href="../gr-account-list/gr-account-list.html">
+<link rel="import" href="../../shared/gr-account-list/gr-account-list.html">
 <link rel="import" href="../gr-label-scores/gr-label-scores.html">
 <link rel="import" href="../../../styles/shared-styles.html">
+<link rel="import" href="../../change/gr-comment-list/gr-comment-list.html">
+<script src="../../../scripts/gr-display-name-utils/gr-display-name-utils.js"></script>
+<script src="../../../scripts/gr-reviewer-suggestions-provider/gr-reviewer-suggestions-provider.js"></script>
 
 <dom-module id="gr-reply-dialog">
   <template>
@@ -57,7 +61,7 @@ limitations under the License.
       section {
         border-top: 1px solid var(--border-color);
         flex-shrink: 0;
-        padding: .5em 1.5em;
+        padding: var(--spacing-m) var(--spacing-xl);
         width: 100%;
       }
       .actions {
@@ -70,7 +74,7 @@ limitations under the License.
         z-index: 1;
       }
       .actions .right gr-button {
-        margin-left: 1em;
+        margin-left: var(--spacing-l);
       }
       .peopleContainer,
       .labelsContainer {
@@ -82,13 +86,13 @@ limitations under the License.
       }
       .peopleList {
         display: flex;
-        padding-top: .1em;
+        padding-top: var(--spacing-xxs);
       }
       .peopleListLabel {
         color: var(--deemphasized-text-color);
-        margin-top: .2em;
+        margin-top: var(--spacing-xs);
         min-width: 7em;
-        padding-right: .5em;
+        padding-right: var(--spacing-m);
       }
       gr-account-list {
         display: flex;
@@ -97,11 +101,11 @@ limitations under the License.
         min-height: 1.8em;
       }
       #reviewerConfirmationOverlay {
-        padding: 1em;
+        padding: var(--spacing-l);
         text-align: center;
       }
       .reviewerConfirmationButtons {
-        margin-top: 1em;
+        margin-top: var(--spacing-l);
       }
       .groupName {
         font-weight: var(--font-weight-bold);
@@ -124,14 +128,14 @@ limitations under the License.
       }
       .previewContainer gr-formatted-text {
         background: var(--table-header-background-color);
-        padding: 1em;
+        padding: var(--spacing-l);
       }
       .draftsContainer h3 {
-        margin-top: .25em;
+        margin-top: var(--spacing-xs);
       }
       #checkingStatusLabel,
       #notLatestLabel {
-        margin-left: 1em;
+        margin-left: var(--spacing-l);
       }
       #checkingStatusLabel {
         color: var(--deemphasized-text-color);
@@ -149,8 +153,8 @@ limitations under the License.
       }
       #pluginMessage {
         color: var(--deemphasized-text-color);
-        margin-left: 1em;
-        margin-bottom: .5em;
+        margin-left: var(--spacing-l);
+        margin-bottom: var(--spacing-m);
       }
       #pluginMessage:empty {
         display: none;
@@ -164,28 +168,26 @@ limitations under the License.
               id="reviewers"
               accounts="{{_reviewers}}"
               removable-values="[[change.removable_reviewers]]"
-              change="[[change]]"
               filter="[[filterReviewerSuggestion]]"
               pending-confirmation="{{_reviewerPendingConfirmation}}"
               placeholder="Add reviewer..."
-              on-account-text-changed="_handleAccountTextEntry">
+              on-account-text-changed="_handleAccountTextEntry"
+              suggestions-provider="[[_getReviewerSuggestionsProvider(change)]]">
           </gr-account-list>
         </div>
-        <template is="dom-if" if="[[serverConfig.note_db_enabled]]">
-          <div class="peopleList">
-            <div class="peopleListLabel">CC</div>
-            <gr-account-list
-                id="ccs"
-                accounts="{{_ccs}}"
-                change="[[change]]"
-                filter="[[filterCCSuggestion]]"
-                pending-confirmation="{{_ccPendingConfirmation}}"
-                allow-any-input
-                placeholder="Add CC..."
-                on-account-text-changed="_handleAccountTextEntry">
-            </gr-account-list>
-          </div>
-        </template>
+        <div class="peopleList">
+          <div class="peopleListLabel">CC</div>
+          <gr-account-list
+              id="ccs"
+              accounts="{{_ccs}}"
+              filter="[[filterCCSuggestion]]"
+              pending-confirmation="{{_ccPendingConfirmation}}"
+              allow-any-input
+              placeholder="Add CC..."
+              on-account-text-changed="_handleAccountTextEntry"
+              suggestions-provider="[[_getCcSuggestionsProvider(change)]]">
+          </gr-account-list>
+        </div>
         <gr-overlay
             id="reviewerConfirmationOverlay"
             on-iron-overlay-canceled="_cancelPendingReviewer">
@@ -203,8 +205,8 @@ limitations under the License.
             Are you sure you want to add them all?
           </div>
           <div class="reviewerConfirmationButtons">
-            <gr-button on-tap="_confirmPendingReviewer">Yes</gr-button>
-            <gr-button on-tap="_cancelPendingReviewer">No</gr-button>
+            <gr-button on-click="_confirmPendingReviewer">Yes</gr-button>
+            <gr-button on-click="_cancelPendingReviewer">No</gr-button>
           </div>
         </gr-overlay>
       </section>
@@ -267,16 +269,6 @@ limitations under the License.
       </section>
       <section class="actions">
         <div class="left">
-          <template is="dom-if" if="[[canBeStarted]]">
-            <gr-button
-                link
-                secondary
-                disabled="[[_isState(knownLatestState, 'not-latest')]]"
-                class="action save"
-                has-tooltip
-                title="[[_saveTooltip]]"
-                on-tap="_saveTapHandler">Save</gr-button>
-          </template>
           <span
               id="checkingStatusLabel"
               hidden$="[[!_isState(knownLatestState, 'checking')]]">
@@ -286,7 +278,7 @@ limitations under the License.
               id="notLatestLabel"
               hidden$="[[!_isState(knownLatestState, 'not-latest')]]">
             [[_computePatchSetWarning(patchNum, _labelsChanged)]]
-            <gr-button link on-tap="_reload">Reload</gr-button>
+            <gr-button link on-click="_reload">Reload</gr-button>
           </span>
         </div>
         <div class="right">
@@ -294,7 +286,19 @@ limitations under the License.
               link
               id="cancelButton"
               class="action cancel"
-              on-tap="_cancelTapHandler">Cancel</gr-button>
+              on-click="_cancelTapHandler">Cancel</gr-button>
+          <template is="dom-if" if="[[canBeStarted]]">
+            <!-- Use 'Send' here as the change may only about reviewers / ccs
+              and when this button is visible, the next button will always
+              be 'Start review' -->
+            <gr-button
+                link
+                disabled="[[_isState(knownLatestState, 'not-latest')]]"
+                class="action save"
+                has-tooltip
+                title="[[_saveTooltip]]"
+                on-click="_saveClickHandler">Send</gr-button>
+          </template>
           <gr-button
               id="sendButton"
               link
@@ -303,7 +307,7 @@ limitations under the License.
               class="action send"
               has-tooltip
               title$="[[_computeSendButtonTooltip(canBeStarted)]]"
-              on-tap="_sendTapHandler">[[_sendButtonLabel]]</gr-button>
+              on-click="_sendTapHandler">[[_sendButtonLabel]]</gr-button>
         </div>
       </section>
     </div>

@@ -33,6 +33,8 @@ limitations under the License.
     //        also be provided.
     //    - `edit`, optional, Boolean: whether or not to load the file list with
     //        edit controls.
+    //    - `messageHash`, optional, String: the hash of the change message to
+    //        scroll to.
     //
     // - Gerrit.Nav.View.SEARCH:
     //    - `query`, optional, String: the literal search query. If provided,
@@ -113,6 +115,7 @@ limitations under the License.
         query: 'assignee:${user} (-is:wip OR owner:self OR assignee:self) ' +
             'is:open -is:ignored',
         hideIfEmpty: true,
+        suffixForDashboard: 'limit:25',
       },
       {
         // WIP open changes owned by viewing user. This section is omitted when
@@ -121,6 +124,7 @@ limitations under the License.
         query: 'is:open owner:${user} is:wip',
         selfOnly: true,
         hideIfEmpty: true,
+        suffixForDashboard: 'limit:25',
       },
       {
         // Non-WIP open changes owned by viewed user. Filter out changes ignored
@@ -128,6 +132,7 @@ limitations under the License.
         name: 'Outgoing reviews',
         query: 'is:open owner:${user} -is:wip -is:ignored',
         isOutgoing: true,
+        suffixForDashboard: 'limit:25',
       },
       {
         // Non-WIP open changes not owned by the viewed user, that the viewed user
@@ -136,12 +141,14 @@ limitations under the License.
         name: 'Incoming reviews',
         query: 'is:open -owner:${user} -is:wip -is:ignored ' +
             '(reviewer:${user} OR assignee:${user})',
+        suffixForDashboard: 'limit:25',
       },
       {
         // Open changes the viewed user is CCed on. Changes ignored by the viewing
         // user are filtered out.
         name: 'CCed on',
         query: 'is:open -is:ignored cc:${user}',
+        suffixForDashboard: 'limit:10',
       },
       {
         name: 'Recently closed',
@@ -364,9 +371,11 @@ limitations under the License.
        * @param {number|string=} opt_basePatchNum The string 'PARENT' can be
        *     used for none.
        * @param {boolean=} opt_isEdit
+       * @param {string=} opt_messageHash
        * @return {string}
        */
-      getUrlForChange(change, opt_patchNum, opt_basePatchNum, opt_isEdit) {
+      getUrlForChange(change, opt_patchNum, opt_basePatchNum, opt_isEdit,
+          opt_messageHash) {
         if (opt_basePatchNum === PARENT_PATCHNUM) {
           opt_basePatchNum = undefined;
         }
@@ -380,6 +389,7 @@ limitations under the License.
           basePatchNum: opt_basePatchNum,
           edit: opt_isEdit,
           host: change.internalHost || undefined,
+          messageHash: opt_messageHash,
         });
       },
 

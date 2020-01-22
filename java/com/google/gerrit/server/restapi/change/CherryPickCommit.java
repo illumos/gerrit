@@ -15,14 +15,16 @@
 package com.google.gerrit.server.restapi.change;
 
 import com.google.common.base.Strings;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.changes.CherryPickInput;
 import com.google.gerrit.extensions.common.CherryPickChangeInfo;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.change.ChangeJson;
 import com.google.gerrit.server.permissions.PermissionBackend;
@@ -33,21 +35,15 @@ import com.google.gerrit.server.project.ContributorAgreementsChecker;
 import com.google.gerrit.server.project.InvalidChangeOperationException;
 import com.google.gerrit.server.project.NoSuchProjectException;
 import com.google.gerrit.server.submit.IntegrationException;
-import com.google.gerrit.server.update.BatchUpdate;
-import com.google.gerrit.server.update.RetryHelper;
-import com.google.gerrit.server.update.RetryingRestModifyView;
 import com.google.gerrit.server.update.UpdateException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import org.eclipse.jgit.errors.ConfigInvalidException;
-import org.eclipse.jgit.revwalk.RevCommit;
 
 @Singleton
-public class CherryPickCommit
-    extends RetryingRestModifyView<CommitResource, CherryPickInput, CherryPickChangeInfo> {
+public class CherryPickCommit implements RestModifyView<CommitResource, CherryPickInput> {
   private final PermissionBackend permissionBackend;
   private final Provider<CurrentUser> user;
   private final CherryPickChange cherryPickChange;
@@ -56,13 +52,11 @@ public class CherryPickCommit
 
   @Inject
   CherryPickCommit(
-      RetryHelper retryHelper,
+      PermissionBackend permissionBackend,
       Provider<CurrentUser> user,
       CherryPickChange cherryPickChange,
       ChangeJson.Factory json,
-      PermissionBackend permissionBackend,
       ContributorAgreementsChecker contributorAgreements) {
-    super(retryHelper);
     this.permissionBackend = permissionBackend;
     this.user = user;
     this.cherryPickChange = cherryPickChange;
@@ -71,13 +65,9 @@ public class CherryPickCommit
   }
 
   @Override
-  public CherryPickChangeInfo applyImpl(
-      BatchUpdate.Factory updateFactory, CommitResource rsrc, CherryPickInput input)
-      throws OrmException, IOException, UpdateException, RestApiException,
-          PermissionBackendException, ConfigInvalidException, NoSuchProjectException {
-    RevCommit commit = rsrc.getCommit();
-    String message = Strings.nullToEmpty(input.message).trim();
-    input.message = message.isEmpty() ? commit.getFullMessage() : message;
+  public Response<CherryPickChangeInfo> apply(CommitResource rsrc, CherryPickInput input)
+      throws IOException, UpdateException, RestApiException, PermissionBackendException,
+          ConfigInvalidException, NoSuchProjectException {
     String destination = Strings.nullToEmpty(input.destination).trim();
     input.parent = input.parent == null ? 1 : input.parent;
     Project.NameKey projectName = rsrc.getProjectState().getNameKey();
@@ -98,18 +88,17 @@ public class CherryPickCommit
     try {
       CherryPickChange.Result cherryPickResult =
           cherryPickChange.cherryPick(
-              updateFactory,
               null,
               projectName,
-              commit,
+              rsrc.getCommit(),
               input,
-              new Branch.NameKey(rsrc.getProjectState().getNameKey(), refName));
+              BranchNameKey.create(rsrc.getProjectState().getNameKey(), refName));
       CherryPickChangeInfo changeInfo =
           json.noOptions()
               .format(projectName, cherryPickResult.changeId(), CherryPickChangeInfo::new);
       changeInfo.containsGitConflicts =
           !cherryPickResult.filesWithGitConflicts().isEmpty() ? true : null;
-      return changeInfo;
+      return Response.ok(changeInfo);
     } catch (InvalidChangeOperationException e) {
       throw new BadRequestException(e.getMessage());
     } catch (IntegrationException e) {

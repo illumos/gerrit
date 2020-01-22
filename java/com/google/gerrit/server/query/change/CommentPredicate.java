@@ -14,12 +14,13 @@
 
 package com.google.gerrit.server.query.change;
 
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryParseException;
 import com.google.gerrit.server.index.change.ChangeField;
 import com.google.gerrit.server.index.change.ChangeIndex;
 import com.google.gerrit.server.index.change.IndexedChangeQuery;
-import com.google.gwtorm.server.OrmException;
 
 public class CommentPredicate extends ChangeIndexPredicate {
   protected final ChangeIndex index;
@@ -30,16 +31,22 @@ public class CommentPredicate extends ChangeIndexPredicate {
   }
 
   @Override
-  public boolean match(ChangeData object) throws OrmException {
+  public boolean match(ChangeData object) {
     try {
-      Predicate<ChangeData> p = Predicate.and(new LegacyChangeIdPredicate(object.getId()), this);
+      Change.Id id = object.getId();
+      Predicate<ChangeData> p =
+          Predicate.and(
+              index.getSchema().useLegacyNumericFields()
+                  ? new LegacyChangeIdPredicate(id)
+                  : new LegacyChangeIdStrPredicate(id),
+              this);
       for (ChangeData cData : index.getSource(p, IndexedChangeQuery.oneResult()).read()) {
-        if (cData.getId().equals(object.getId())) {
+        if (cData.getId().equals(id)) {
           return true;
         }
       }
     } catch (QueryParseException e) {
-      throw new OrmException(e);
+      throw new StorageException(e);
     }
 
     return false;

@@ -17,23 +17,21 @@ package com.google.gerrit.server.submit;
 import static com.google.common.base.MoreObjects.firstNonNull;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.gerrit.server.notedb.ReviewerStateInternal.REVIEWER;
+import static java.util.Comparator.comparing;
 import static java.util.Objects.requireNonNull;
 
-import com.google.common.base.Function;
-import com.google.common.collect.Iterables;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.data.SubmitRecord;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.ChangeMessage;
-import com.google.gerrit.reviewdb.client.LabelId;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.PatchSetApproval;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
-import com.google.gerrit.reviewdb.server.ReviewDb;
-import com.google.gerrit.reviewdb.server.ReviewDbUtil;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.ChangeMessage;
+import com.google.gerrit.entities.LabelId;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.PatchSetApproval;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.IdentifiedUser;
@@ -50,7 +48,6 @@ import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
 import com.google.gerrit.server.update.Context;
 import com.google.gerrit.server.update.RepoContext;
-import com.google.gwtorm.server.OrmException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -91,12 +88,12 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
     return toMerge;
   }
 
-  protected final Branch.NameKey getDest() {
+  protected final BranchNameKey getDest() {
     return toMerge.change().getDest();
   }
 
   protected final Project.NameKey getProject() {
-    return getDest().getParentKey();
+    return getDest().project();
   }
 
   @Override
@@ -134,18 +131,19 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
     // Needed by postUpdate, at which point mergeTip will have advanced further,
     // so it's easier to just snapshot the command.
     command =
-        new ReceiveCommand(firstNonNull(tipBefore, ObjectId.zeroId()), tipAfter, getDest().get());
+        new ReceiveCommand(
+            firstNonNull(tipBefore, ObjectId.zeroId()), tipAfter, getDest().branch());
     ctx.addRefUpdate(command);
     args.submoduleOp.addBranchTip(getDest(), tipAfter);
   }
 
   private void checkProjectConfig(RepoContext ctx, CodeReviewCommit commit)
       throws IntegrationException {
-    String refName = getDest().get();
+    String refName = getDest().branch();
     if (RefNames.REFS_CONFIG.equals(refName)) {
       logger.atFine().log("Loading new configuration from %s", RefNames.REFS_CONFIG);
       try {
-        ProjectConfig cfg = new ProjectConfig(getProject());
+        ProjectConfig cfg = args.projectConfigFactory.create(getProject());
         cfg.load(ctx.getRevWalk(), commit);
       } catch (Exception e) {
         throw new IntegrationException(
@@ -183,8 +181,7 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
         continue; // Bogus ref, can't be merged into tip so we don't care.
       }
     }
-    commits.sort(
-        ReviewDbUtil.intKeyOrdering().reverse().onResultOf(CodeReviewCommit::getPatchsetId));
+    commits.sort(comparing((CodeReviewCommit c) -> c.getPatchsetId().get()).reversed());
     CodeReviewCommit result = MergeUtil.findAnyMergedInto(rw, commits, tip);
     if (result == null) {
       return null;
@@ -218,7 +215,7 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
         "%s#updateChange for change %s", getClass().getSimpleName(), toMerge.change().getId());
     toMerge.setNotes(ctx.getNotes()); // Update change and notes from ctx.
 
-    if (ctx.getChange().getStatus() == Change.Status.MERGED) {
+    if (ctx.getChange().isMerged()) {
       // Either another thread won a race, or we are retrying a whole topic submission after one
       // repo failed with lock failure.
       if (alreadyMergedCommit == null) {
@@ -251,10 +248,10 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
         // during the submit strategy.
         mergedPatchSet =
             requireNonNull(
-                args.psUtil.get(ctx.getDb(), ctx.getNotes(), oldPsId),
+                args.psUtil.get(ctx.getNotes(), oldPsId),
                 () -> String.format("missing old patch set %s", oldPsId));
       } else {
-        PatchSet.Id n = newPatchSet.getId();
+        PatchSet.Id n = newPatchSet.id();
         checkState(
             !n.equals(oldPsId) && n.equals(newPsId),
             "current patch was %s and is now %s, but updateChangeImpl returned"
@@ -286,7 +283,7 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
             : alreadyMergedCommit;
     try {
       setMerged(ctx, message(ctx, commit, s));
-    } catch (OrmException err) {
+    } catch (StorageException err) {
       String msg = "Error updating change status for " + id;
       logger.atSevere().withCause(err).log(msg);
       args.commitStatus.logProblem(id, msg);
@@ -297,16 +294,25 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
     return true;
   }
 
-  private PatchSet getOrCreateAlreadyMergedPatchSet(ChangeContext ctx)
-      throws IOException, OrmException {
+  /**
+   * Returns the updated change after this op has been executed.
+   *
+   * @return the updated change after this op has been executed, {@link Optional#empty()} if the op
+   *     was not executed yet, or if the execution has failed
+   */
+  public Optional<Change> getUpdatedChange() {
+    return Optional.ofNullable(updatedChange);
+  }
+
+  private PatchSet getOrCreateAlreadyMergedPatchSet(ChangeContext ctx) throws IOException {
     PatchSet.Id psId = alreadyMergedCommit.getPatchsetId();
     logger.atFine().log("Fixing up already-merged patch set %s", psId);
-    PatchSet prevPs = args.psUtil.current(ctx.getDb(), ctx.getNotes());
+    PatchSet prevPs = args.psUtil.current(ctx.getNotes());
     ctx.getRevWalk().parseBody(alreadyMergedCommit);
     ctx.getChange()
         .setCurrentPatchSet(
             psId, alreadyMergedCommit.getShortMessage(), ctx.getChange().getOriginalSubject());
-    PatchSet existing = args.psUtil.get(ctx.getDb(), ctx.getNotes(), psId);
+    PatchSet existing = args.psUtil.get(ctx.getNotes(), psId);
     if (existing != null) {
       logger.atFine().log("Patch set row exists, only updating change");
       return existing;
@@ -315,20 +321,12 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
     // a patch set ref. Fix up the database. Note that this uses the current
     // user as the uploader, which is as good a guess as any.
     List<String> groups =
-        prevPs != null ? prevPs.getGroups() : GroupCollector.getDefaultGroups(alreadyMergedCommit);
+        prevPs != null ? prevPs.groups() : GroupCollector.getDefaultGroups(alreadyMergedCommit);
     return args.psUtil.insert(
-        ctx.getDb(),
-        ctx.getRevWalk(),
-        ctx.getUpdate(psId),
-        psId,
-        alreadyMergedCommit,
-        groups,
-        null,
-        null);
+        ctx.getRevWalk(), ctx.getUpdate(psId), psId, alreadyMergedCommit, groups, null, null);
   }
 
-  private void setApproval(ChangeContext ctx, IdentifiedUser user)
-      throws OrmException, IOException {
+  private void setApproval(ChangeContext ctx, IdentifiedUser user) throws IOException {
     Change.Id id = ctx.getChange().getId();
     List<SubmitRecord> records = args.commitStatus.getSubmitRecords(id);
     PatchSet.Id oldPsId = toMerge.getPatchsetId();
@@ -344,24 +342,25 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
     // If the submit strategy created a new revision (rebase, cherry-pick), copy
     // approvals as well.
     if (!newPsId.equals(oldPsId)) {
-      saveApprovals(normalized, ctx, newPsUpdate, true);
-      submitter = convertPatchSet(newPsId).apply(submitter);
+      saveApprovals(normalized, newPsUpdate, true);
+      submitter = submitter.copyWithPatchSet(newPsId);
     }
   }
 
   private LabelNormalizer.Result approve(ChangeContext ctx, ChangeUpdate update)
-      throws OrmException, IOException {
+      throws IOException {
     PatchSet.Id psId = update.getPatchSetId();
     Map<PatchSetApproval.Key, PatchSetApproval> byKey = new HashMap<>();
     for (PatchSetApproval psa :
         args.approvalsUtil.byPatchSet(
-            ctx.getDb(), ctx.getNotes(), psId, ctx.getRevWalk(), ctx.getRepoView().getConfig())) {
-      byKey.put(psa.getKey(), psa);
+            ctx.getNotes(), psId, ctx.getRevWalk(), ctx.getRepoView().getConfig())) {
+      byKey.put(psa.key(), psa);
     }
 
     submitter =
-        ApprovalsUtil.newApproval(psId, ctx.getUser(), LabelId.legacySubmit(), 1, ctx.getWhen());
-    byKey.put(submitter.getKey(), submitter);
+        ApprovalsUtil.newApproval(psId, ctx.getUser(), LabelId.legacySubmit(), 1, ctx.getWhen())
+            .build();
+    byKey.put(submitter.key(), submitter);
 
     // Flatten out existing approvals for this patch set based upon the current
     // permissions. Once the change is closed the approvals are not updated at
@@ -370,25 +369,18 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
     // permissions get modified in the future, historical records stay accurate.
     LabelNormalizer.Result normalized =
         args.labelNormalizer.normalize(ctx.getNotes(), byKey.values());
-    update.putApproval(submitter.getLabel(), submitter.getValue());
-    saveApprovals(normalized, ctx, update, false);
+    update.putApproval(submitter.label(), submitter.value());
+    saveApprovals(normalized, update, false);
     return normalized;
   }
 
   private void saveApprovals(
-      LabelNormalizer.Result normalized,
-      ChangeContext ctx,
-      ChangeUpdate update,
-      boolean includeUnchanged)
-      throws OrmException {
-    PatchSet.Id psId = update.getPatchSetId();
-    ctx.getDb().patchSetApprovals().upsert(convertPatchSet(normalized.getNormalized(), psId));
-    ctx.getDb().patchSetApprovals().upsert(zero(convertPatchSet(normalized.deleted(), psId)));
+      LabelNormalizer.Result normalized, ChangeUpdate update, boolean includeUnchanged) {
     for (PatchSetApproval psa : normalized.updated()) {
-      update.putApprovalFor(psa.getAccountId(), psa.getLabel(), psa.getValue());
+      update.putApprovalFor(psa.accountId(), psa.label(), psa.value());
     }
     for (PatchSetApproval psa : normalized.deleted()) {
-      update.removeApprovalFor(psa.getAccountId(), psa.getLabel());
+      update.removeApprovalFor(psa.accountId(), psa.label());
     }
 
     // TODO(dborowitz): Don't use a label in NoteDb; just check when status
@@ -396,48 +388,22 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
     for (PatchSetApproval psa : normalized.unchanged()) {
       if (includeUnchanged || psa.isLegacySubmit()) {
         logger.atFine().log("Adding submit label %s", psa);
-        update.putApprovalFor(psa.getAccountId(), psa.getLabel(), psa.getValue());
+        update.putApprovalFor(psa.accountId(), psa.label(), psa.value());
       }
     }
-  }
-
-  private static Function<PatchSetApproval, PatchSetApproval> convertPatchSet(
-      final PatchSet.Id psId) {
-    return psa -> {
-      if (psa.getPatchSetId().equals(psId)) {
-        return psa;
-      }
-      return new PatchSetApproval(psId, psa);
-    };
-  }
-
-  private static Iterable<PatchSetApproval> convertPatchSet(
-      Iterable<PatchSetApproval> approvals, PatchSet.Id psId) {
-    return Iterables.transform(approvals, convertPatchSet(psId));
-  }
-
-  private static Iterable<PatchSetApproval> zero(Iterable<PatchSetApproval> approvals) {
-    return Iterables.transform(
-        approvals,
-        a -> {
-          PatchSetApproval copy = new PatchSetApproval(a.getPatchSetId(), a);
-          copy.setValue((short) 0);
-          return copy;
-        });
   }
 
   private String getByAccountName() {
     requireNonNull(submitter, "getByAccountName called before submitter populated");
     Optional<Account> account =
-        args.accountCache.get(submitter.getAccountId()).map(AccountState::getAccount);
-    if (account.isPresent() && account.get().getFullName() != null) {
-      return " by " + account.get().getFullName();
+        args.accountCache.get(submitter.accountId()).map(AccountState::account);
+    if (account.isPresent() && account.get().fullName() != null) {
+      return " by " + account.get().fullName();
     }
     return "";
   }
 
-  private ChangeMessage message(ChangeContext ctx, CodeReviewCommit commit, CommitMergeStatus s)
-      throws OrmException {
+  private ChangeMessage message(ChangeContext ctx, CodeReviewCommit commit, CommitMergeStatus s) {
     requireNonNull(s, "CommitMergeStatus may not be null");
     String txt = s.getDescription();
     if (s == CommitMergeStatus.CLEAN_MERGE) {
@@ -483,18 +449,17 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
         psId, ctx.getUser(), ctx.getWhen(), body, ChangeMessagesUtil.TAG_MERGED);
   }
 
-  private void setMerged(ChangeContext ctx, ChangeMessage msg) throws OrmException {
+  private void setMerged(ChangeContext ctx, ChangeMessage msg) {
     Change c = ctx.getChange();
-    ReviewDb db = ctx.getDb();
     logger.atFine().log("Setting change %s merged", c.getId());
     c.setStatus(Change.Status.MERGED);
-    c.setSubmissionId(args.submissionId.toStringForStorage());
+    c.setSubmissionId(args.submissionId.toString());
 
     // TODO(dborowitz): We need to be able to change the author of the message,
     // which is not the user from the update context. addMergedMessage was able
     // to do this in the past.
     if (msg != null) {
-      args.cmUtil.addChangeMessage(db, ctx.getUpdate(msg.getPatchSetId()), msg);
+      args.cmUtil.addChangeMessage(ctx.getUpdate(msg.getPatchSetId()), msg);
     }
   }
 
@@ -519,7 +484,7 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
           getProject(), command.getRefName(), command.getOldId(), command.getNewId());
       // TODO(dborowitz): Move to BatchUpdate? Would also allow us to run once
       // per project even if multiple changes to refs/meta/config are submitted.
-      if (RefNames.REFS_CONFIG.equals(getDest().get())) {
+      if (RefNames.REFS_CONFIG.equals(getDest().branch())) {
         args.projectCache.evict(getProject());
         ProjectState p = args.projectCache.get(getProject());
         try (Repository git = args.repoManager.openRepository(getProject())) {
@@ -534,12 +499,7 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
     // have failed fast in one of the other steps.
     try {
       args.mergedSenderFactory
-          .create(
-              ctx.getProject(),
-              getId(),
-              submitter.getAccountId(),
-              args.submitInput.notify,
-              args.accountsToNotify)
+          .create(ctx.getProject(), getId(), submitter.accountId(), ctx.getNotify(getId()))
           .sendAsync();
     } catch (Exception e) {
       logger.atSevere().withCause(e).log("Cannot email merged notification for %s", getId());
@@ -548,7 +508,7 @@ abstract class SubmitStrategyOp implements BatchUpdateOp {
       args.changeMerged.fire(
           updatedChange,
           mergedPatchSet,
-          args.accountCache.get(submitter.getAccountId()).orElse(null),
+          args.accountCache.get(submitter.accountId()).orElse(null),
           args.mergeTip.getCurrentTip().name(),
           ctx.getWhen());
     }

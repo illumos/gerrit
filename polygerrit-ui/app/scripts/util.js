@@ -41,5 +41,122 @@
     }
     return '';
   };
+
+  /**
+   * Make the promise cancelable.
+   *
+   * Returns a promise with a `cancel()` method wrapped around `promise`.
+   * Calling `cancel()` will reject the returned promise with
+   * {isCancelled: true} synchronously. If the inner promise for a cancelled
+   * promise resolves or rejects this is ignored.
+   */
+  util.makeCancelable = promise => {
+    // True if the promise is either resolved or reject (possibly cancelled)
+    let isDone = false;
+
+    let rejectPromise;
+
+    const wrappedPromise = new Promise((resolve, reject) => {
+      rejectPromise = reject;
+      promise.then(val => {
+        if (!isDone) resolve(val);
+        isDone = true;
+      }, error => {
+        if (!isDone) reject(error);
+        isDone = true;
+      });
+    });
+
+    wrappedPromise.cancel = () => {
+      if (isDone) return;
+      rejectPromise({isCanceled: true});
+      isDone = true;
+    };
+    return wrappedPromise;
+  };
+
+  /**
+   * Get computed style value.
+   *
+   * If ShadyCSS is provided, use ShadyCSS api.
+   * If `getComputedStyleValue` is provided on the elment, use it.
+   * Otherwise fallback to native method (in polymer 2).
+   *
+   */
+  util.getComputedStyleValue = (name, el) => {
+    let style;
+    if (window.ShadyCSS) {
+      style = ShadyCSS.getComputedStyleValue(el, name);
+    } else if (el.getComputedStyleValue) {
+      style = el.getComputedStyleValue(name);
+    } else {
+      style = getComputedStyle(el).getPropertyValue(name);
+    }
+    return style;
+  };
+
+  /**
+   * Query selector on a dom element.
+   *
+   * This is shadow DOM compatible, but only works when selector is within
+   * one shadow host, won't work if your selector is crossing
+   * multiple shadow hosts.
+   *
+   */
+  util.querySelector = (el, selector) => {
+    let nodes = [el];
+    let result = null;
+    while (nodes.length) {
+      const node = nodes.pop();
+
+      // Skip if it's an invalid node.
+      if (!node || !node.querySelector) continue;
+
+      // Try find it with native querySelector directly
+      result = node.querySelector(selector);
+
+      if (result) {
+        break;
+      }
+
+      // Add all nodes with shadowRoot and loop through
+      const allShadowNodes = [...node.querySelectorAll('*')]
+          .filter(child => !!child.shadowRoot)
+          .map(child => child.shadowRoot);
+      nodes = nodes.concat(allShadowNodes);
+    }
+    return result;
+  };
+
+  /**
+   * Query selector all dom elements matching with certain selector.
+   *
+   * This is shadow DOM compatible, but only works when selector is within
+   * one shadow host, won't work if your selector is crossing
+   * multiple shadow hosts.
+   *
+   * Note: this can be very expensive, only use when have to.
+   */
+  util.querySelectorAll = (el, selector) => {
+    let nodes = [el];
+    const results = new Set();
+    while (nodes.length) {
+      const node = nodes.pop();
+
+      if (!node || !node.querySelectorAll) continue;
+
+      // Try find all from regular children
+      [...node.querySelectorAll(selector)]
+          .forEach(el => results.add(el));
+
+      // Add all nodes with shadowRoot and loop through
+      const allShadowNodes = [...node.querySelectorAll('*')]
+          .filter(child => !!child.shadowRoot)
+          .map(child => child.shadowRoot);
+      nodes = nodes.concat(allShadowNodes);
+    }
+    return [...results];
+  };
+
   window.util = util;
 })(window);

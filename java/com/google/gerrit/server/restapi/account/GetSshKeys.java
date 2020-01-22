@@ -18,6 +18,7 @@ import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
 import com.google.gerrit.extensions.common.SshKeyInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
@@ -27,7 +28,6 @@ import com.google.gerrit.server.account.VersionedAuthorizedKeys;
 import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -36,6 +36,11 @@ import java.util.List;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.errors.RepositoryNotFoundException;
 
+/**
+ * REST endpoint to list the SSH keys of an account.
+ *
+ * <p>This REST endpoint handles {@code GET /accounts/<account-identifier>/sshkeys/} requests.
+ */
 @Singleton
 public class GetSshKeys implements RestReadView<AccountResource> {
 
@@ -54,13 +59,13 @@ public class GetSshKeys implements RestReadView<AccountResource> {
   }
 
   @Override
-  public List<SshKeyInfo> apply(AccountResource rsrc)
-      throws AuthException, OrmException, RepositoryNotFoundException, IOException,
-          ConfigInvalidException, PermissionBackendException {
+  public Response<List<SshKeyInfo>> apply(AccountResource rsrc)
+      throws AuthException, RepositoryNotFoundException, IOException, ConfigInvalidException,
+          PermissionBackendException {
     if (!self.get().hasSameAccountId(rsrc.getUser())) {
       permissionBackend.currentUser().check(GlobalPermission.MODIFY_ACCOUNT);
     }
-    return apply(rsrc.getUser());
+    return Response.ok(apply(rsrc.getUser()));
   }
 
   public List<SshKeyInfo> apply(IdentifiedUser user)

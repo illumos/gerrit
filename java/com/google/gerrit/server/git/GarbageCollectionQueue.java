@@ -15,12 +15,13 @@
 package com.google.gerrit.server.git;
 
 import com.google.common.collect.Sets;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Project;
 import com.google.inject.Singleton;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Set;
 
+/** A thread-safe list of projects scheduled for GC. */
 @Singleton
 public class GarbageCollectionQueue {
   private final Set<Project.NameKey> projectsScheduledForGc = new HashSet<>();

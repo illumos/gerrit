@@ -14,37 +14,32 @@
 
 package com.google.gerrit.server.restapi.change;
 
+import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.extensions.api.changes.IncludedInInfo;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestReadView;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.change.IncludedIn;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
 
 @Singleton
 public class ChangeIncludedIn implements RestReadView<ChangeResource> {
-  private Provider<ReviewDb> db;
   private PatchSetUtil psUtil;
   private IncludedIn includedIn;
 
   @Inject
-  ChangeIncludedIn(Provider<ReviewDb> db, PatchSetUtil psUtil, IncludedIn includedIn) {
-    this.db = db;
+  ChangeIncludedIn(PatchSetUtil psUtil, IncludedIn includedIn) {
     this.psUtil = psUtil;
     this.includedIn = includedIn;
   }
 
   @Override
-  public IncludedInInfo apply(ChangeResource rsrc)
-      throws RestApiException, OrmException, IOException {
-    PatchSet ps = psUtil.current(db.get(), rsrc.getNotes());
-    return includedIn.apply(rsrc.getProject(), ps.getRevision().get());
+  public Response<IncludedInInfo> apply(ChangeResource rsrc) throws RestApiException, IOException {
+    PatchSet ps = psUtil.current(rsrc.getNotes());
+    return Response.ok(includedIn.apply(rsrc.getProject(), ps.commitId().name()));
   }
 }

@@ -15,12 +15,12 @@
 package com.google.gerrit.server.util.time;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.gerrit.common.UsedAt;
+import com.google.gerrit.common.UsedAt.Project;
+import com.google.gerrit.server.util.git.DelegateSystemReader;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.function.LongSupplier;
-import org.eclipse.jgit.lib.Config;
-import org.eclipse.jgit.storage.file.FileBasedConfig;
-import org.eclipse.jgit.util.FS;
 import org.eclipse.jgit.util.SystemReader;
 
 /** Static utility methods for dealing with dates and times. */
@@ -43,6 +43,17 @@ public class TimeUtil {
     return new Timestamp(nowMs());
   }
 
+  /**
+   * Returns the magic timestamp representing no specific time.
+   *
+   * <p>This "null object" is helpful in contexts where using {@code null} directly is not possible.
+   */
+  @UsedAt(Project.PLUGIN_CHECKS)
+  public static Timestamp never() {
+    // Always create a new object as timestamps are mutable.
+    return new Timestamp(0);
+  }
+
   public static Timestamp truncateToSecond(Timestamp t) {
     return new Timestamp((t.getTime() / 1000) * 1000);
   }
@@ -63,46 +74,14 @@ public class TimeUtil {
     SystemReader.setInstance(null);
   }
 
-  private static class GerritSystemReader extends SystemReader {
-    SystemReader delegate;
-
-    GerritSystemReader(SystemReader delegate) {
-      this.delegate = delegate;
-    }
-
-    @Override
-    public String getHostname() {
-      return delegate.getHostname();
-    }
-
-    @Override
-    public String getenv(String variable) {
-      return delegate.getenv(variable);
-    }
-
-    @Override
-    public String getProperty(String key) {
-      return delegate.getProperty(key);
-    }
-
-    @Override
-    public FileBasedConfig openUserConfig(Config parent, FS fs) {
-      return delegate.openUserConfig(parent, fs);
-    }
-
-    @Override
-    public FileBasedConfig openSystemConfig(Config parent, FS fs) {
-      return delegate.openSystemConfig(parent, fs);
+  static class GerritSystemReader extends DelegateSystemReader {
+    GerritSystemReader(SystemReader reader) {
+      super(reader);
     }
 
     @Override
     public long getCurrentTime() {
       return currentMillisSupplier.getAsLong();
-    }
-
-    @Override
-    public int getTimezone(long when) {
-      return delegate.getTimezone(when);
     }
   }
 

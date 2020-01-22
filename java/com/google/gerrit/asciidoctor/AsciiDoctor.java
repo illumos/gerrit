@@ -19,7 +19,6 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import com.google.common.io.ByteStreams;
 import java.io.BufferedReader;
 import java.io.File;
-import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -127,7 +126,7 @@ public class AsciiDoctor {
       int equalsIndex = attribute.indexOf('=');
       if (equalsIndex > -1) {
         String name = attribute.substring(0, equalsIndex);
-        String value = attribute.substring(equalsIndex + 1, attribute.length());
+        String value = attribute.substring(equalsIndex + 1);
 
         attributeValues.put(name, value);
       } else {
@@ -168,14 +167,7 @@ public class AsciiDoctor {
       try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(Paths.get(zipFile)))) {
         renderFiles(inputFiles, zip);
 
-        File[] cssFiles =
-            tmpdir.listFiles(
-                new FilenameFilter() {
-                  @Override
-                  public boolean accept(File dir, String name) {
-                    return name.endsWith(".css");
-                  }
-                });
+        File[] cssFiles = tmpdir.listFiles((dir, name) -> name.endsWith(".css"));
         for (File css : cssFiles) {
           zipFile(css, css.getName(), zip);
         }

@@ -15,6 +15,7 @@
 package com.google.gerrit.server.account;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.gerrit.server.account.externalids.ExternalId.SCHEME_USERNAME;
 
 import com.google.common.base.Strings;
@@ -25,12 +26,12 @@ import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.data.AccessSection;
 import com.google.gerrit.common.data.GlobalCapability;
 import com.google.gerrit.common.data.Permission;
-import com.google.gerrit.common.errors.NoSuchGroupException;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.exceptions.NoSuchGroupException;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.client.AccountFieldName;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
 import com.google.gerrit.server.IdentifiedUser;
-import com.google.gerrit.server.Sequences;
 import com.google.gerrit.server.ServerInitiated;
 import com.google.gerrit.server.account.AccountsUpdate.AccountUpdater;
 import com.google.gerrit.server.account.externalids.DuplicateExternalIdKeyException;
@@ -40,9 +41,9 @@ import com.google.gerrit.server.auth.NoSuchUserException;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.group.db.GroupsUpdate;
 import com.google.gerrit.server.group.db.InternalGroupUpdate;
+import com.google.gerrit.server.notedb.Sequences;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.ssh.SshKeyCache;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -150,7 +151,7 @@ public class AccountManager {
       }
 
       // Account exists
-      Optional<Account> act = updateAccountActiveStatus(who, accountState.get().getAccount());
+      Optional<Account> act = updateAccountActiveStatus(who, accountState.get().account());
       if (!act.isPresent()) {
         // The account was deleted since we checked for it last time. This should never happen
         // since we don't support deletion of accounts.
@@ -163,7 +164,7 @@ public class AccountManager {
       // return the identity to the caller.
       update(who, extId);
       return new AuthResult(extId.accountId(), who.getExternalIdKey(), false);
-    } catch (OrmException | ConfigInvalidException e) {
+    } catch (StorageException | ConfigInvalidException e) {
       throw new AccountException("Authentication error", e);
     }
   }
@@ -195,18 +196,18 @@ public class AccountManager {
 
     if (authRequest.isActive()) {
       try {
-        setInactiveFlag.activate(account.getId());
+        setInactiveFlag.activate(account.id());
       } catch (Exception e) {
-        throw new AccountException("Unable to activate account " + account.getId(), e);
+        throw new AccountException("Unable to activate account " + account.id(), e);
       }
     } else {
       try {
-        setInactiveFlag.deactivate(account.getId());
+        setInactiveFlag.deactivate(account.id());
       } catch (Exception e) {
-        throw new AccountException("Unable to deactivate account " + account.getId(), e);
+        throw new AccountException("Unable to deactivate account " + account.id(), e);
       }
     }
-    return byIdCache.get(account.getId()).map(AccountState::getAccount);
+    return byIdCache.get(account.id()).map(AccountState::account);
   }
 
   private boolean shouldUpdateActiveStatus(AuthRequest authRequest) {
@@ -214,7 +215,7 @@ public class AccountManager {
   }
 
   private void update(AuthRequest who, ExternalId extId)
-      throws OrmException, IOException, ConfigInvalidException, AccountException {
+      throws IOException, ConfigInvalidException, AccountException {
     IdentifiedUser user = userFactory.create(extId.accountId());
     List<Consumer<InternalAccountUpdate.Builder>> accountUpdates = new ArrayList<>();
 
@@ -229,19 +230,19 @@ public class AccountManager {
       checkEmailNotUsed(extId.accountId(), extIdWithNewEmail);
       accountUpdates.add(u -> u.replaceExternalId(extId, extIdWithNewEmail));
 
-      if (oldEmail != null && oldEmail.equals(user.getAccount().getPreferredEmail())) {
+      if (oldEmail != null && oldEmail.equals(user.getAccount().preferredEmail())) {
         accountUpdates.add(u -> u.setPreferredEmail(newEmail));
       }
     }
 
     if (!Strings.isNullOrEmpty(who.getDisplayName())
-        && !Objects.equals(user.getAccount().getFullName(), who.getDisplayName())) {
+        && !Objects.equals(user.getAccount().fullName(), who.getDisplayName())) {
       if (realm.allowsEdit(AccountFieldName.FULL_NAME)) {
         accountUpdates.add(a -> a.setFullName(who.getDisplayName()));
       } else {
         logger.atWarning().log(
             "Not changing already set display name '%s' to '%s'",
-            user.getAccount().getFullName(), who.getDisplayName());
+            user.getAccount().fullName(), who.getDisplayName());
       }
     }
 
@@ -265,13 +266,13 @@ public class AccountManager {
               user.getAccountId(),
               AccountUpdater.joinConsumers(accountUpdates))
           .orElseThrow(
-              () -> new OrmException("Account " + user.getAccountId() + " has been deleted"));
+              () -> new StorageException("Account " + user.getAccountId() + " has been deleted"));
     }
   }
 
   private AuthResult create(AuthRequest who)
-      throws OrmException, AccountException, IOException, ConfigInvalidException {
-    Account.Id newId = new Account.Id(sequences.nextAccountId());
+      throws AccountException, IOException, ConfigInvalidException {
+    Account.Id newId = Account.id(sequences.nextAccountId());
     logger.atFine().log("Assigning new Id %s to account", newId);
 
     ExternalId extId =
@@ -335,7 +336,7 @@ public class AccountManager {
       addGroupMember(adminGroupUuid, user);
     }
 
-    realm.onCreateAccount(who, accountState.getAccount());
+    realm.onCreateAccount(who, accountState.account());
     return new AuthResult(newId, extId.key(), true);
   }
 
@@ -379,7 +380,7 @@ public class AccountManager {
   }
 
   private void addGroupMember(AccountGroup.UUID groupUuid, IdentifiedUser user)
-      throws OrmException, IOException, ConfigInvalidException, AccountException {
+      throws IOException, ConfigInvalidException, AccountException {
     // The user initiated this request by logging in. -> Attribute all modifications to that user.
     GroupsUpdate groupsUpdate = groupsUpdateFactory.create(user);
     InternalGroupUpdate groupUpdate =
@@ -404,7 +405,7 @@ public class AccountManager {
    *     this time.
    */
   public AuthResult link(Account.Id to, AuthRequest who)
-      throws AccountException, OrmException, IOException, ConfigInvalidException {
+      throws AccountException, IOException, ConfigInvalidException {
     Optional<ExternalId> optionalExtId = externalIds.get(who.getExternalIdKey());
     if (optionalExtId.isPresent()) {
       ExternalId extId = optionalExtId.get();
@@ -424,7 +425,7 @@ public class AccountManager {
               to,
               (a, u) -> {
                 u.addExternalId(newExtId);
-                if (who.getEmailAddress() != null && a.getAccount().getPreferredEmail() == null) {
+                if (who.getEmailAddress() != null && a.account().preferredEmail() == null) {
                   u.setPreferredEmail(who.getEmailAddress());
                 }
               });
@@ -441,20 +442,21 @@ public class AccountManager {
    * @param to account to link the identity onto.
    * @param who the additional identity.
    * @return the result of linking the identity to the user.
-   * @throws OrmException
    * @throws AccountException the identity belongs to a different account, or it cannot be linked at
    *     this time.
    */
   public AuthResult updateLink(Account.Id to, AuthRequest who)
-      throws OrmException, AccountException, IOException, ConfigInvalidException {
+      throws AccountException, IOException, ConfigInvalidException {
     accountsUpdateProvider
         .get()
         .update(
             "Delete External IDs on Update Link",
             to,
             (a, u) -> {
-              Collection<ExternalId> filteredExtIdsByScheme =
-                  a.getExternalIds(who.getExternalIdKey().scheme());
+              Set<ExternalId> filteredExtIdsByScheme =
+                  a.externalIds().stream()
+                      .filter(e -> e.key().isScheme(who.getExternalIdKey().scheme()))
+                      .collect(toImmutableSet());
               if (filteredExtIdsByScheme.isEmpty()) {
                 return;
               }
@@ -478,7 +480,7 @@ public class AccountManager {
    *     found
    */
   public void unlink(Account.Id from, ExternalId.Key extIdKey)
-      throws AccountException, OrmException, IOException, ConfigInvalidException {
+      throws AccountException, IOException, ConfigInvalidException {
     unlink(from, ImmutableList.of(extIdKey));
   }
 
@@ -491,7 +493,7 @@ public class AccountManager {
    *     identity was not found
    */
   public void unlink(Account.Id from, Collection<ExternalId.Key> extIdKeys)
-      throws AccountException, OrmException, IOException, ConfigInvalidException {
+      throws AccountException, IOException, ConfigInvalidException {
     if (extIdKeys.isEmpty()) {
       return;
     }
@@ -516,9 +518,9 @@ public class AccountManager {
             from,
             (a, u) -> {
               u.deleteExternalIds(extIds);
-              if (a.getAccount().getPreferredEmail() != null
+              if (a.account().preferredEmail() != null
                   && extIds.stream()
-                      .anyMatch(e -> a.getAccount().getPreferredEmail().equals(e.email()))) {
+                      .anyMatch(e -> a.account().preferredEmail().equals(e.email()))) {
                 u.setPreferredEmail(null);
               }
             });

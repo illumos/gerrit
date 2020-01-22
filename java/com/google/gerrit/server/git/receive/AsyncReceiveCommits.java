@@ -14,11 +14,15 @@
 
 package com.google.gerrit.server.git.receive;
 
+import static com.google.gerrit.server.quota.QuotaGroupDefinitions.REPOSITORY_SIZE_GROUP;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.common.UsedAt;
 import com.google.gerrit.common.data.Capable;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.metrics.Counter0;
@@ -28,24 +32,25 @@ import com.google.gerrit.metrics.Field;
 import com.google.gerrit.metrics.Histogram1;
 import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.metrics.Timer1;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.IdentifiedUser;
-import com.google.gerrit.server.UsedAt;
+import com.google.gerrit.server.PublishCommentsOp;
 import com.google.gerrit.server.config.ConfigUtil;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.ReceiveCommitsExecutor;
-import com.google.gerrit.server.git.DefaultAdvertiseRefsHook;
 import com.google.gerrit.server.git.MultiProgressMonitor;
+import com.google.gerrit.server.git.PermissionAwareRepositoryManager;
 import com.google.gerrit.server.git.ProjectRunnable;
 import com.google.gerrit.server.git.TransferConfig;
+import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.permissions.PermissionBackend;
-import com.google.gerrit.server.permissions.PermissionBackend.RefFilterOptions;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.permissions.ProjectPermission;
 import com.google.gerrit.server.project.ContributorAgreementsChecker;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
+import com.google.gerrit.server.quota.QuotaBackend;
+import com.google.gerrit.server.quota.QuotaException;
+import com.google.gerrit.server.quota.QuotaResponse;
 import com.google.gerrit.server.util.MagicBranch;
 import com.google.gerrit.server.util.RequestScopePropagator;
 import com.google.inject.Inject;
@@ -58,7 +63,6 @@ import com.google.inject.assistedinject.FactoryModuleBuilder;
 import com.google.inject.name.Named;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
@@ -66,8 +70,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.Repository;
-import org.eclipse.jgit.transport.AdvertiseRefsHook;
-import org.eclipse.jgit.transport.AdvertiseRefsHookChain;
 import org.eclipse.jgit.transport.PreReceiveHook;
 import org.eclipse.jgit.transport.ReceiveCommand;
 import org.eclipse.jgit.transport.ReceiveCommand.Result;
@@ -96,11 +98,13 @@ public class AsyncReceiveCommits implements PreReceiveHook {
   public static class Module extends PrivateModule {
     @Override
     public void configure() {
+      install(new FactoryModuleBuilder().build(LazyPostReceiveHookChain.Factory.class));
       install(new FactoryModuleBuilder().build(AsyncReceiveCommits.Factory.class));
       expose(AsyncReceiveCommits.Factory.class);
       // Don't expose the binding for ReceiveCommits.Factory. All callers should
       // be using AsyncReceiveCommits.Factory instead.
       install(new FactoryModuleBuilder().build(ReceiveCommits.Factory.class));
+      install(new FactoryModuleBuilder().build(PublishCommentsOp.Factory.class));
       install(new FactoryModuleBuilder().build(BranchCommitValidator.Factory.class));
     }
 
@@ -115,17 +119,25 @@ public class AsyncReceiveCommits implements PreReceiveHook {
 
   private class Worker implements ProjectRunnable {
     final MultiProgressMonitor progress;
+    final String name;
 
     private final Collection<ReceiveCommand> commands;
 
-    private Worker(Collection<ReceiveCommand> commands) {
+    private Worker(Collection<ReceiveCommand> commands, String name) {
       this.commands = commands;
+      this.name = name;
       progress = new MultiProgressMonitor(new MessageSenderOutputStream(), "Processing changes");
     }
 
     @Override
     public void run() {
-      receiveCommits.processCommands(commands, progress);
+      String oldName = Thread.currentThread().getName();
+      Thread.currentThread().setName(oldName + "-for-" + name);
+      try {
+        receiveCommits.processCommands(commands, progress);
+      } finally {
+        Thread.currentThread().setName(oldName);
+      }
     }
 
     @Override
@@ -175,29 +187,53 @@ public class AsyncReceiveCommits implements PreReceiveHook {
     }
   }
 
+  private enum PushType {
+    CREATE_REPLACE,
+    NORMAL,
+    AUTOCLOSE,
+  }
+
   @Singleton
   private static class Metrics {
-    private final Histogram1<ResultChangeIds.Key> changes;
-    private final Timer1<String> latencyPerChange;
+    private final Histogram1<PushType> changes;
+    private final Timer1<PushType> latencyPerChange;
+    private final Timer1<PushType> latencyPerPush;
     private final Counter0 timeouts;
 
     @Inject
     Metrics(MetricMaker metricMaker) {
+      // For the changes metric the push type field is never set to PushType.NORMAL, hence it is not
+      // mentioned in the field description.
       changes =
           metricMaker.newHistogram(
-              "receivecommits/changes",
+              "receivecommits/changes_per_push",
               new Description("number of changes uploaded in a single push.").setCumulative(),
-              Field.ofEnum(
-                  ResultChangeIds.Key.class,
-                  "type",
-                  "type of update (replace, create, autoclose)"));
+              Field.ofEnum(PushType.class, "type", Metadata.Builder::pushType)
+                  .description("type of push (create/replace, autoclose)")
+                  .build());
+
+      Field<PushType> pushTypeField =
+          Field.ofEnum(PushType.class, "type", Metadata.Builder::pushType)
+              .description("type of push (create/replace, autoclose, normal)")
+              .build();
+
       latencyPerChange =
           metricMaker.newTimer(
-              "receivecommits/latency",
-              new Description("average delay per updated change")
+              "receivecommits/latency_per_push_per_change",
+              new Description(
+                      "Processing delay per push divided by the number of changes in said push. "
+                          + "(Only includes pushes which contain changes.)")
                   .setUnit(Units.MILLISECONDS)
                   .setCumulative(),
-              Field.ofString("type", "type of update (create/replace, autoclose)"));
+              pushTypeField);
+
+      latencyPerPush =
+          metricMaker.newTimer(
+              "receivecommits/latency_per_push",
+              new Description("processing delay for a processing single push")
+                  .setUnit(Units.MILLISECONDS)
+                  .setCumulative(),
+              pushTypeField);
 
       timeouts =
           metricMaker.newCounter(
@@ -229,9 +265,10 @@ public class AsyncReceiveCommits implements PreReceiveHook {
       RequestScopePropagator scopePropagator,
       ReceiveConfig receiveConfig,
       TransferConfig transferConfig,
-      Provider<LazyPostReceiveHookChain> lazyPostReceive,
+      LazyPostReceiveHookChain.Factory lazyPostReceive,
       ContributorAgreementsChecker contributorAgreements,
       Metrics metrics,
+      QuotaBackend quotaBackend,
       @Named(TIMEOUT_NAME) long timeoutMillis,
       @Assisted ProjectState projectState,
       @Assisted IdentifiedUser user,
@@ -247,9 +284,12 @@ public class AsyncReceiveCommits implements PreReceiveHook {
     this.user = user;
     this.repo = repo;
     this.metrics = metrics;
-
+    // If the user lacks READ permission, some references may be filtered and hidden from view.
+    // Check objects mentioned inside the incoming pack file are reachable from visible refs.
     Project.NameKey projectName = projectState.getNameKey();
-    receivePack = new ReceivePack(repo);
+    this.perm = permissionBackend.user(user).project(projectName);
+
+    receivePack = new ReceivePack(PermissionAwareRepositoryManager.wrap(repo, perm));
     receivePack.setAllowCreates(true);
     receivePack.setAllowDeletes(true);
     receivePack.setAllowNonFastForwards(true);
@@ -260,11 +300,8 @@ public class AsyncReceiveCommits implements PreReceiveHook {
     receivePack.setRefFilter(new ReceiveRefFilter());
     receivePack.setAllowPushOptions(true);
     receivePack.setPreReceiveHook(this);
-    receivePack.setPostReceiveHook(lazyPostReceive.get());
+    receivePack.setPostReceiveHook(lazyPostReceive.create(user, projectName));
 
-    // If the user lacks READ permission, some references may be filtered and hidden from view.
-    // Check objects mentioned inside the incoming pack file are reachable from visible refs.
-    this.perm = permissionBackend.user(user).project(projectName);
     try {
       projectState.checkStatePermitsRead();
       this.perm.check(ProjectPermission.READ);
@@ -273,20 +310,26 @@ public class AsyncReceiveCommits implements PreReceiveHook {
           receiveConfig.checkReferencedObjectsAreReachable);
     }
 
-    List<AdvertiseRefsHook> advHooks = new ArrayList<>(4);
     allRefsWatcher = new AllRefsWatcher();
-    advHooks.add(allRefsWatcher);
-    advHooks.add(
-        new DefaultAdvertiseRefsHook(perm, RefFilterOptions.builder().setFilterMeta(true).build()));
-    advHooks.add(new ReceiveCommitsAdvertiseRefsHook(queryProvider, projectName));
-    advHooks.add(new HackPushNegotiateHook());
-    receivePack.setAdvertiseRefsHook(AdvertiseRefsHookChain.newChain(advHooks));
-
+    receivePack.setAdvertiseRefsHook(
+        ReceiveCommitsAdvertiseRefsHookChain.create(
+            allRefsWatcher, queryProvider, projectName, user.getAccountId()));
     resultChangeIds = new ResultChangeIds();
     receiveCommits =
         factory.create(
-            projectState, user, receivePack, allRefsWatcher, messageSender, resultChangeIds);
+            projectState, user, receivePack, repo, allRefsWatcher, messageSender, resultChangeIds);
     receiveCommits.init();
+    QuotaResponse.Aggregated availableTokens =
+        quotaBackend.user(user).project(projectName).availableTokens(REPOSITORY_SIZE_GROUP);
+    try {
+      availableTokens.throwOnError();
+    } catch (QuotaException e) {
+      logger.atWarning().withCause(e).log(
+          "Quota %s availableTokens request failed for project %s",
+          REPOSITORY_SIZE_GROUP, projectName);
+      throw new RuntimeException(e);
+    }
+    availableTokens.availableTokens().ifPresent(v -> receivePack.setMaxObjectSizeLimit(v));
   }
 
   /** Determine if the user can upload commits. */
@@ -318,7 +361,7 @@ public class AsyncReceiveCommits implements PreReceiveHook {
     }
 
     long startNanos = System.nanoTime();
-    Worker w = new Worker(commands);
+    Worker w = new Worker(commands, Thread.currentThread().getName());
     try {
       w.progress.waitFor(
           executor.submit(scopePropagator.wrap(w)), timeoutMillis, TimeUnit.MILLISECONDS);
@@ -341,20 +384,30 @@ public class AsyncReceiveCommits implements PreReceiveHook {
 
     long deltaNanos = System.nanoTime() - startNanos;
     int totalChanges = 0;
-    for (ResultChangeIds.Key key : ResultChangeIds.Key.values()) {
-      List<Change.Id> ids = resultChangeIds.get(key);
-      metrics.changes.record(key, ids.size());
-      totalChanges += ids.size();
+
+    PushType pushType;
+    if (resultChangeIds.isMagicPush()) {
+      pushType = PushType.CREATE_REPLACE;
+      List<Change.Id> created = resultChangeIds.get(ResultChangeIds.Key.CREATED);
+      List<Change.Id> replaced = resultChangeIds.get(ResultChangeIds.Key.REPLACED);
+      metrics.changes.record(pushType, created.size() + replaced.size());
+      totalChanges = replaced.size() + created.size();
+    } else {
+      List<Change.Id> autoclosed = resultChangeIds.get(ResultChangeIds.Key.AUTOCLOSED);
+      if (!autoclosed.isEmpty()) {
+        pushType = PushType.AUTOCLOSE;
+        metrics.changes.record(pushType, autoclosed.size());
+        totalChanges = autoclosed.size();
+      } else {
+        pushType = PushType.NORMAL;
+      }
     }
 
     if (totalChanges > 0) {
-      metrics.latencyPerChange.record(
-          resultChangeIds.get(ResultChangeIds.Key.AUTOCLOSED).isEmpty()
-              ? "CREATE_REPLACE"
-              : ResultChangeIds.Key.AUTOCLOSED.name(),
-          deltaNanos / totalChanges,
-          NANOSECONDS);
+      metrics.latencyPerChange.record(pushType, deltaNanos / totalChanges, NANOSECONDS);
     }
+
+    metrics.latencyPerPush.record(pushType, deltaNanos, NANOSECONDS);
   }
 
   /** Returns the Change.Ids that were processed in onPreReceive */

@@ -19,6 +19,7 @@ import com.google.common.collect.Lists;
 import com.google.gerrit.extensions.common.ProjectInfo;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.extensions.restapi.TopLevelResource;
 import com.google.gerrit.index.project.ProjectData;
@@ -29,8 +30,8 @@ import com.google.gerrit.index.query.QueryResult;
 import com.google.gerrit.server.project.ProjectJson;
 import com.google.gerrit.server.query.project.ProjectQueryBuilder;
 import com.google.gerrit.server.query.project.ProjectQueryProcessor;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
+import com.google.inject.Provider;
 import java.util.ArrayList;
 import java.util.List;
 import org.kohsuke.args4j.Option;
@@ -38,7 +39,7 @@ import org.kohsuke.args4j.Option;
 public class QueryProjects implements RestReadView<TopLevelResource> {
   private final ProjectIndexCollection indexes;
   private final ProjectQueryBuilder queryBuilder;
-  private final ProjectQueryProcessor queryProcessor;
+  private final Provider<ProjectQueryProcessor> queryProcessorProvider;
   private final ProjectJson json;
 
   private String query;
@@ -78,22 +79,21 @@ public class QueryProjects implements RestReadView<TopLevelResource> {
   protected QueryProjects(
       ProjectIndexCollection indexes,
       ProjectQueryBuilder queryBuilder,
-      ProjectQueryProcessor queryProcessor,
+      Provider<ProjectQueryProcessor> queryProcessorProvider,
       ProjectJson json) {
     this.indexes = indexes;
     this.queryBuilder = queryBuilder;
-    this.queryProcessor = queryProcessor;
+    this.queryProcessorProvider = queryProcessorProvider;
     this.json = json;
   }
 
   @Override
-  public List<ProjectInfo> apply(TopLevelResource resource)
-      throws BadRequestException, MethodNotAllowedException, OrmException {
-    return apply();
+  public Response<List<ProjectInfo>> apply(TopLevelResource resource)
+      throws BadRequestException, MethodNotAllowedException {
+    return Response.ok(apply());
   }
 
-  public List<ProjectInfo> apply()
-      throws BadRequestException, MethodNotAllowedException, OrmException {
+  public List<ProjectInfo> apply() throws BadRequestException, MethodNotAllowedException {
     if (Strings.isNullOrEmpty(query)) {
       throw new BadRequestException("missing query field");
     }
@@ -102,6 +102,8 @@ public class QueryProjects implements RestReadView<TopLevelResource> {
     if (searchIndex == null) {
       throw new MethodNotAllowedException("no project index");
     }
+
+    ProjectQueryProcessor queryProcessor = queryProcessorProvider.get();
 
     if (start != 0) {
       queryProcessor.setStart(start);

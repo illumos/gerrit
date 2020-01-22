@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-settings-view</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-settings-view.html">
 
@@ -68,7 +70,7 @@ limitations under the License.
 
     function stubAddAccountEmail(statusCode) {
       return sandbox.stub(element.$.restAPI, 'addAccountEmail',
-          () => { return Promise.resolve({status: statusCode}); });
+          () => Promise.resolve({status: statusCode}));
     }
 
     setup(done => {
@@ -485,9 +487,10 @@ limitations under the License.
 
       setup(() => {
         sandbox.stub(element.$.emailEditor, 'loadData');
-        sandbox.stub(element.$.restAPI, 'confirmEmail', () => {
-          return new Promise(resolve => { resolveConfirm = resolve; });
-        });
+        sandbox.stub(
+            element.$.restAPI,
+            'confirmEmail',
+            () => new Promise(resolve => { resolveConfirm = resolve; }));
         element.params = {emailToken: 'foo'};
         element.attached();
       });

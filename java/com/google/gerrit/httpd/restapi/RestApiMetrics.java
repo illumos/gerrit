@@ -15,16 +15,18 @@
 package com.google.gerrit.httpd.restapi;
 
 import com.google.common.base.Strings;
+import com.google.gerrit.common.Nullable;
 import com.google.gerrit.extensions.registration.PluginName;
 import com.google.gerrit.httpd.restapi.RestApiServlet.ViewData;
 import com.google.gerrit.metrics.Counter1;
-import com.google.gerrit.metrics.Counter2;
+import com.google.gerrit.metrics.Counter3;
 import com.google.gerrit.metrics.Description;
 import com.google.gerrit.metrics.Description.Units;
 import com.google.gerrit.metrics.Field;
 import com.google.gerrit.metrics.Histogram1;
 import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.metrics.Timer1;
+import com.google.gerrit.server.logging.Metadata;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 
@@ -35,25 +37,33 @@ public class RestApiMetrics {
   };
 
   final Counter1<String> count;
-  final Counter2<String, Integer> errorCount;
+  final Counter3<String, Integer, String> errorCount;
   final Timer1<String> serverLatency;
   final Histogram1<String> responseBytes;
 
   @Inject
   RestApiMetrics(MetricMaker metrics) {
-    Field<String> view = Field.ofString("view", "view implementation class");
+    Field<String> viewField =
+        Field.ofString("view", Metadata.Builder::className)
+            .description("view implementation class")
+            .build();
     count =
         metrics.newCounter(
             "http/server/rest_api/count",
             new Description("REST API calls by view").setRate(),
-            view);
+            viewField);
 
     errorCount =
         metrics.newCounter(
             "http/server/rest_api/error_count",
             new Description("REST API errors by view").setRate(),
-            view,
-            Field.ofInteger("error_code", "HTTP status code"));
+            viewField,
+            Field.ofInteger("error_code", Metadata.Builder::httpStatus)
+                .description("HTTP status code")
+                .build(),
+            Field.ofString("cause", Metadata.Builder::cause)
+                .description("The cause of the error.")
+                .build());
 
     serverLatency =
         metrics.newTimer(
@@ -61,7 +71,7 @@ public class RestApiMetrics {
             new Description("REST API call latency by view")
                 .setCumulative()
                 .setUnit(Units.MILLISECONDS),
-            view);
+            viewField);
 
     responseBytes =
         metrics.newHistogram(
@@ -69,20 +79,23 @@ public class RestApiMetrics {
             new Description("Size of response on network (may be gzip compressed)")
                 .setCumulative()
                 .setUnit(Units.BYTES),
-            view);
+            viewField);
   }
 
   String view(ViewData viewData) {
-    String impl = viewData.view.getClass().getName().replace('$', '.');
+    return view(viewData.view.getClass(), viewData.pluginName);
+  }
+
+  String view(Class<?> clazz, @Nullable String pluginName) {
+    String impl = clazz.getName().replace('$', '.');
     for (String p : PKGS) {
       if (impl.startsWith(p)) {
         impl = impl.substring(p.length());
         break;
       }
     }
-    if (!Strings.isNullOrEmpty(viewData.pluginName)
-        && !PluginName.GERRIT.equals(viewData.pluginName)) {
-      impl = viewData.pluginName + '-' + impl;
+    if (!Strings.isNullOrEmpty(pluginName) && !PluginName.GERRIT.equals(pluginName)) {
+      impl = pluginName + '-' + impl;
     }
     return impl;
   }

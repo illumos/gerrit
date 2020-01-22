@@ -15,14 +15,11 @@
 package com.google.gerrit.elasticsearch;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.ExpectedException;
 
 public class ElasticVersionTest {
-  @Rule public ExpectedException exception = ExpectedException.none();
-
   @Test
   public void supportedVersion() throws Exception {
     assertThat(ElasticVersion.forVersion("5.6.0")).isEqualTo(ElasticVersion.V5_6);
@@ -70,10 +67,14 @@ public class ElasticVersionTest {
 
   @Test
   public void unsupportedVersion() throws Exception {
-    exception.expect(ElasticVersion.UnsupportedVersion.class);
-    exception.expectMessage(
-        "Unsupported version: [4.0.0]. Supported versions: " + ElasticVersion.supportedVersions());
-    ElasticVersion.forVersion("4.0.0");
+    ElasticVersion.UnsupportedVersion thrown =
+        assertThrows(
+            ElasticVersion.UnsupportedVersion.class, () -> ElasticVersion.forVersion("4.0.0"));
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains(
+            "Unsupported version: [4.0.0]. Supported versions: "
+                + ElasticVersion.supportedVersions());
   }
 
   @Test

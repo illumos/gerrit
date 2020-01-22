@@ -17,17 +17,18 @@ package com.google.gerrit.server.auth.oauth;
 import static java.util.Objects.requireNonNull;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Converter;
 import com.google.common.base.Strings;
 import com.google.common.cache.Cache;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.auth.oauth.OAuthToken;
 import com.google.gerrit.extensions.auth.oauth.OAuthTokenEncrypter;
 import com.google.gerrit.extensions.registration.DynamicItem;
-import com.google.gerrit.reviewdb.client.Account;
+import com.google.gerrit.proto.Protos;
 import com.google.gerrit.server.cache.CacheModule;
 import com.google.gerrit.server.cache.proto.Cache.OAuthTokenProto;
 import com.google.gerrit.server.cache.serialize.CacheSerializer;
-import com.google.gerrit.server.cache.serialize.IntKeyCacheSerializer;
-import com.google.gerrit.server.cache.serialize.ProtoCacheSerializers;
+import com.google.gerrit.server.cache.serialize.IntegerCacheSerializer;
 import com.google.inject.Inject;
 import com.google.inject.Module;
 import com.google.inject.Singleton;
@@ -45,7 +46,9 @@ public class OAuthTokenCache {
       protected void configure() {
         persist(OAUTH_TOKENS, Account.Id.class, OAuthToken.class)
             .version(1)
-            .keySerializer(new IntKeyCacheSerializer<>(Account.Id::new))
+            .keySerializer(
+                CacheSerializer.convert(
+                    IntegerCacheSerializer.INSTANCE, Converter.from(Account.Id::get, Account::id)))
             .valueSerializer(new Serializer());
       }
     };
@@ -57,7 +60,7 @@ public class OAuthTokenCache {
   static class Serializer implements CacheSerializer<OAuthToken> {
     @Override
     public byte[] serialize(OAuthToken object) {
-      return ProtoCacheSerializers.toByteArray(
+      return Protos.toByteArray(
           OAuthTokenProto.newBuilder()
               .setToken(object.getToken())
               .setSecret(object.getSecret())
@@ -69,7 +72,7 @@ public class OAuthTokenCache {
 
     @Override
     public OAuthToken deserialize(byte[] in) {
-      OAuthTokenProto proto = ProtoCacheSerializers.parseUnchecked(OAuthTokenProto.parser(), in);
+      OAuthTokenProto proto = Protos.parseUnchecked(OAuthTokenProto.parser(), in);
       return new OAuthToken(
           proto.getToken(),
           proto.getSecret(),

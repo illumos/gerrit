@@ -23,23 +23,25 @@ import com.google.common.base.Strings;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.data.LabelType;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.ChangeMessage;
+import com.google.gerrit.entities.LabelId;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.PatchSetApproval;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.changes.MoveInput;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
+import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
+import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.extensions.webui.UiAction;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Change.Status;
-import com.google.gerrit.reviewdb.client.ChangeMessage;
-import com.google.gerrit.reviewdb.client.LabelId;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.PatchSetApproval;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.ChangeUtil;
@@ -47,6 +49,7 @@ import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.change.ChangeJson;
 import com.google.gerrit.server.change.ChangeResource;
+import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.notedb.ChangeUpdate;
 import com.google.gerrit.server.permissions.PermissionBackend;
@@ -57,29 +60,26 @@ import com.google.gerrit.server.query.change.InternalChangeQuery;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
-import com.google.gerrit.server.update.RetryHelper;
-import com.google.gerrit.server.update.RetryingRestModifyView;
 import com.google.gerrit.server.update.UpdateException;
 import com.google.gerrit.server.util.time.TimeUtil;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 
 @Singleton
-public class Move extends RetryingRestModifyView<ChangeResource, MoveInput, ChangeInfo>
-    implements UiAction<ChangeResource> {
+public class Move implements RestModifyView<ChangeResource, MoveInput>, UiAction<ChangeResource> {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
   private final PermissionBackend permissionBackend;
-  private final Provider<ReviewDb> dbProvider;
+  private final BatchUpdate.Factory updateFactory;
   private final ChangeJson.Factory json;
   private final GitRepositoryManager repoManager;
   private final Provider<InternalChangeQuery> queryProvider;
@@ -87,22 +87,22 @@ public class Move extends RetryingRestModifyView<ChangeResource, MoveInput, Chan
   private final PatchSetUtil psUtil;
   private final ApprovalsUtil approvalsUtil;
   private final ProjectCache projectCache;
+  private final boolean moveEnabled;
 
   @Inject
   Move(
       PermissionBackend permissionBackend,
-      Provider<ReviewDb> dbProvider,
+      BatchUpdate.Factory updateFactory,
       ChangeJson.Factory json,
       GitRepositoryManager repoManager,
       Provider<InternalChangeQuery> queryProvider,
       ChangeMessagesUtil cmUtil,
-      RetryHelper retryHelper,
       PatchSetUtil psUtil,
       ApprovalsUtil approvalsUtil,
-      ProjectCache projectCache) {
-    super(retryHelper);
+      ProjectCache projectCache,
+      @GerritServerConfig Config gerritConfig) {
     this.permissionBackend = permissionBackend;
-    this.dbProvider = dbProvider;
+    this.updateFactory = updateFactory;
     this.json = json;
     this.repoManager = repoManager;
     this.queryProvider = queryProvider;
@@ -110,13 +110,18 @@ public class Move extends RetryingRestModifyView<ChangeResource, MoveInput, Chan
     this.psUtil = psUtil;
     this.approvalsUtil = approvalsUtil;
     this.projectCache = projectCache;
+    this.moveEnabled = gerritConfig.getBoolean("change", null, "move", true);
   }
 
   @Override
-  protected ChangeInfo applyImpl(
-      BatchUpdate.Factory updateFactory, ChangeResource rsrc, MoveInput input)
-      throws RestApiException, OrmException, UpdateException, PermissionBackendException,
-          IOException {
+  public Response<ChangeInfo> apply(ChangeResource rsrc, MoveInput input)
+      throws RestApiException, UpdateException, PermissionBackendException, IOException {
+    if (!moveEnabled) {
+      // This will be removed with the above config once we reach consensus for the move change
+      // behavior. See: https://bugs.chromium.org/p/gerrit/issues/detail?id=9877
+      throw new MethodNotAllowedException("move changes endpoint is disabled");
+    }
+
     Change change = rsrc.getChange();
     Project.NameKey project = rsrc.getProject();
     IdentifiedUser caller = rsrc.getUser().asIdentifiedUser();
@@ -125,11 +130,11 @@ public class Move extends RetryingRestModifyView<ChangeResource, MoveInput, Chan
     }
     input.destinationBranch = RefNames.fullName(input.destinationBranch);
 
-    if (change.getStatus().isClosed()) {
+    if (!change.isNew()) {
       throw new ResourceConflictException("Change is " + ChangeUtil.status(change));
     }
 
-    Branch.NameKey newDest = new Branch.NameKey(project, input.destinationBranch);
+    BranchNameKey newDest = BranchNameKey.create(project, input.destinationBranch);
     if (change.getDest().equals(newDest)) {
       throw new ResourceConflictException("Change is already destined for the specified branch");
     }
@@ -139,27 +144,26 @@ public class Move extends RetryingRestModifyView<ChangeResource, MoveInput, Chan
 
     // Move requires abandoning this change, and creating a new change.
     try {
-      rsrc.permissions().database(dbProvider).check(ABANDON);
-      permissionBackend.user(caller).database(dbProvider).ref(newDest).check(CREATE_CHANGE);
+      rsrc.permissions().check(ABANDON);
+      permissionBackend.user(caller).ref(newDest).check(CREATE_CHANGE);
     } catch (AuthException denied) {
       throw new AuthException("move not permitted", denied);
     }
     projectCache.checkedGet(project).checkStatePermitsWrite();
 
     Op op = new Op(input);
-    try (BatchUpdate u =
-        updateFactory.create(dbProvider.get(), project, caller, TimeUtil.nowTs())) {
+    try (BatchUpdate u = updateFactory.create(project, caller, TimeUtil.nowTs())) {
       u.addOp(change.getId(), op);
       u.execute();
     }
-    return json.noOptions().format(op.getChange());
+    return Response.ok(json.noOptions().format(op.getChange()));
   }
 
   private class Op implements BatchUpdateOp {
     private final MoveInput input;
 
     private Change change;
-    private Branch.NameKey newDestKey;
+    private BranchNameKey newDestKey;
 
     Op(MoveInput input) {
       this.input = input;
@@ -171,16 +175,15 @@ public class Move extends RetryingRestModifyView<ChangeResource, MoveInput, Chan
     }
 
     @Override
-    public boolean updateChange(ChangeContext ctx)
-        throws OrmException, ResourceConflictException, IOException {
+    public boolean updateChange(ChangeContext ctx) throws ResourceConflictException, IOException {
       change = ctx.getChange();
-      if (change.getStatus() != Status.NEW) {
+      if (!change.isNew()) {
         throw new ResourceConflictException("Change is " + ChangeUtil.status(change));
       }
 
       Project.NameKey projectKey = change.getProject();
-      newDestKey = new Branch.NameKey(projectKey, input.destinationBranch);
-      Branch.NameKey changePrevDest = change.getDest();
+      newDestKey = BranchNameKey.create(projectKey, input.destinationBranch);
+      BranchNameKey changePrevDest = change.getDest();
       if (changePrevDest.equals(newDestKey)) {
         throw new ResourceConflictException("Change is already destined for the specified branch");
       }
@@ -189,9 +192,7 @@ public class Move extends RetryingRestModifyView<ChangeResource, MoveInput, Chan
       try (Repository repo = repoManager.openRepository(projectKey);
           RevWalk revWalk = new RevWalk(repo)) {
         RevCommit currPatchsetRevCommit =
-            revWalk.parseCommit(
-                ObjectId.fromString(
-                    psUtil.current(ctx.getDb(), ctx.getNotes()).getRevision().get()));
+            revWalk.parseCommit(psUtil.current(ctx.getNotes()).commitId());
         if (currPatchsetRevCommit.getParentCount() > 1) {
           throw new ResourceConflictException("Merge commit cannot be moved");
         }
@@ -213,7 +214,7 @@ public class Move extends RetryingRestModifyView<ChangeResource, MoveInput, Chan
       if (!asChanges(queryProvider.get().byBranchKey(newDestKey, changeKey)).isEmpty()) {
         throw new ResourceConflictException(
             "Destination "
-                + newDestKey.getShortName()
+                + newDestKey.shortName()
                 + " has a different change with same change key "
                 + changeKey);
       }
@@ -224,23 +225,23 @@ public class Move extends RetryingRestModifyView<ChangeResource, MoveInput, Chan
 
       PatchSet.Id psId = change.currentPatchSetId();
       ChangeUpdate update = ctx.getUpdate(psId);
-      update.setBranch(newDestKey.get());
+      update.setBranch(newDestKey.branch());
       change.setDest(newDestKey);
 
       updateApprovals(ctx, update, psId, projectKey);
 
       StringBuilder msgBuf = new StringBuilder();
       msgBuf.append("Change destination moved from ");
-      msgBuf.append(changePrevDest.getShortName());
+      msgBuf.append(changePrevDest.shortName());
       msgBuf.append(" to ");
-      msgBuf.append(newDestKey.getShortName());
+      msgBuf.append(newDestKey.shortName());
       if (!Strings.isNullOrEmpty(input.message)) {
         msgBuf.append("\n\n");
         msgBuf.append(input.message);
       }
       ChangeMessage cmsg =
           ChangeMessagesUtil.newMessage(ctx, msgBuf.toString(), ChangeMessagesUtil.TAG_MOVE);
-      cmUtil.addChangeMessage(ctx.getDb(), update, cmsg);
+      cmUtil.addChangeMessage(update, cmsg);
 
       return true;
     }
@@ -253,13 +254,13 @@ public class Move extends RetryingRestModifyView<ChangeResource, MoveInput, Chan
      */
     private void updateApprovals(
         ChangeContext ctx, ChangeUpdate update, PatchSet.Id psId, Project.NameKey project)
-        throws IOException, OrmException {
+        throws IOException {
       List<PatchSetApproval> approvals = new ArrayList<>();
       for (PatchSetApproval psa :
           approvalsUtil.byPatchSet(
-              ctx.getDb(), ctx.getNotes(), psId, ctx.getRevWalk(), ctx.getRepoView().getConfig())) {
+              ctx.getNotes(), psId, ctx.getRevWalk(), ctx.getRepoView().getConfig())) {
         ProjectState projectState = projectCache.checkedGet(project);
-        LabelType type = projectState.getLabelTypes(ctx.getNotes()).byLabel(psa.getLabelId());
+        LabelType type = projectState.getLabelTypes(ctx.getNotes()).byLabel(psa.labelId());
         // Only keep veto votes, defined as votes where:
         // 1- the label function allows minimum values to block submission.
         // 2- the vote holds the minimum value.
@@ -268,15 +269,14 @@ public class Move extends RetryingRestModifyView<ChangeResource, MoveInput, Chan
         }
 
         // Remove votes from NoteDb.
-        update.removeApprovalFor(psa.getAccountId(), psa.getLabel());
+        update.removeApprovalFor(psa.accountId(), psa.label());
         approvals.add(
-            new PatchSetApproval(
-                new PatchSetApproval.Key(psId, psa.getAccountId(), new LabelId(psa.getLabel())),
-                (short) 0,
-                ctx.getWhen()));
+            PatchSetApproval.builder()
+                .key(PatchSetApproval.key(psId, psa.accountId(), LabelId.create(psa.label())))
+                .value(0)
+                .granted(ctx.getWhen())
+                .build());
       }
-      // Remove votes from ReviewDb.
-      ctx.getDb().patchSetApprovals().upsert(approvals);
     }
   }
 
@@ -289,7 +289,7 @@ public class Move extends RetryingRestModifyView<ChangeResource, MoveInput, Chan
             .setVisible(false);
 
     Change change = rsrc.getChange();
-    if (!change.getStatus().isOpen()) {
+    if (!change.isNew()) {
       return description;
     }
 
@@ -307,7 +307,7 @@ public class Move extends RetryingRestModifyView<ChangeResource, MoveInput, Chan
       if (psUtil.isPatchSetLocked(rsrc.getNotes())) {
         return description;
       }
-    } catch (OrmException | IOException e) {
+    } catch (StorageException | IOException e) {
       logger.atSevere().withCause(e).log(
           "Failed to check if the current patch set of change %s is locked", change.getId());
       return description;
@@ -316,6 +316,6 @@ public class Move extends RetryingRestModifyView<ChangeResource, MoveInput, Chan
     return description.setVisible(
         and(
             permissionBackend.user(rsrc.getUser()).ref(change.getDest()).testCond(CREATE_CHANGE),
-            rsrc.permissions().database(dbProvider).testCond(ABANDON)));
+            rsrc.permissions().testCond(ABANDON)));
   }
 }

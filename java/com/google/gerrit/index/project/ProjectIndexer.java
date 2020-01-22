@@ -14,9 +14,9 @@
 
 package com.google.gerrit.index.project;
 
-import com.google.gerrit.reviewdb.client.Project;
-import java.io.IOException;
+import com.google.gerrit.entities.Project;
 
+/** Interface for indexing a Gerrit project. */
 public interface ProjectIndexer {
 
   /**
@@ -24,5 +24,5 @@ public interface ProjectIndexer {
    *
    * @param nameKey name key of project to index.
    */
-  void index(Project.NameKey nameKey) throws IOException;
+  void index(Project.NameKey nameKey);
 }

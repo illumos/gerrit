@@ -17,15 +17,15 @@ package com.google.gerrit.server.mail.send;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Iterables;
 import com.google.common.flogger.FluentLogger;
-import com.google.gerrit.common.errors.EmailException;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.exceptions.EmailException;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.changes.RecipientType;
 import com.google.gerrit.mail.Address;
 import com.google.gerrit.mail.MailHeader;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Branch;
 import com.google.gerrit.server.account.ProjectWatches.NotifyType;
 import com.google.gerrit.server.mail.send.ProjectWatch.Watchers;
-import com.google.gwtorm.server.OrmException;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -33,10 +33,10 @@ import java.util.Map;
 public abstract class NotificationEmail extends OutgoingEmail {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
-  protected Branch.NameKey branch;
+  protected BranchNameKey branch;
 
-  protected NotificationEmail(EmailArguments ea, String mc, Branch.NameKey branch) {
-    super(ea, mc);
+  protected NotificationEmail(EmailArguments args, String messageClass, BranchNameKey branch) {
+    super(args, messageClass);
     this.branch = branch;
   }
 
@@ -50,7 +50,7 @@ public abstract class NotificationEmail extends OutgoingEmail {
     // Set a reasonable list id so that filters can be used to sort messages
     setHeader(
         "List-Id",
-        "<gerrit-" + branch.getParentKey().get().replace('/', '-') + "." + getGerritHost() + ">");
+        "<gerrit-" + branch.project().get().replace('/', '-') + "." + getGerritHost() + ">");
     if (getSettingsUrl() != null) {
       setHeader("List-Unsubscribe", "<" + getSettingsUrl() + ">");
     }
@@ -68,7 +68,7 @@ public abstract class NotificationEmail extends OutgoingEmail {
       add(RecipientType.TO, matching.to);
       add(RecipientType.CC, matching.cc);
       add(RecipientType.BCC, matching.bcc);
-    } catch (OrmException err) {
+    } catch (StorageException err) {
       // Just don't CC everyone. Better to send a partial message to those
       // we already have queued up then to fail deliver entirely to people
       // who have a lower interest in the change.
@@ -77,8 +77,7 @@ public abstract class NotificationEmail extends OutgoingEmail {
   }
 
   /** Returns all watchers that are relevant */
-  protected abstract Watchers getWatchers(NotifyType type, boolean includeWatchersFromNotifyConfig)
-      throws OrmException;
+  protected abstract Watchers getWatchers(NotifyType type, boolean includeWatchersFromNotifyConfig);
 
   /** Add users or email addresses to the TO, CC, or BCC list. */
   protected void add(RecipientType type, Watchers.List list) {
@@ -105,7 +104,7 @@ public abstract class NotificationEmail extends OutgoingEmail {
   protected void setupSoyContext() {
     super.setupSoyContext();
 
-    String projectName = branch.getParentKey().get();
+    String projectName = branch.project().get();
     soyContext.put("projectName", projectName);
     // shortProjectName is the project name with the path abbreviated.
     soyContext.put("shortProjectName", getShortProjectName(projectName));
@@ -119,11 +118,11 @@ public abstract class NotificationEmail extends OutgoingEmail {
     soyContextEmailData.put("sshHost", getSshHost());
 
     Map<String, String> branchData = new HashMap<>();
-    branchData.put("shortName", branch.getShortName());
+    branchData.put("shortName", branch.shortName());
     soyContext.put("branch", branchData);
 
-    footers.add(MailHeader.PROJECT.withDelimiter() + branch.getParentKey().get());
-    footers.add(MailHeader.BRANCH.withDelimiter() + branch.getShortName());
+    footers.add(MailHeader.PROJECT.withDelimiter() + branch.project().get());
+    footers.add(MailHeader.BRANCH.withDelimiter() + branch.shortName());
   }
 
   @VisibleForTesting

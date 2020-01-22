@@ -15,13 +15,13 @@
 package com.google.gerrit.server.restapi.change;
 
 import com.google.common.base.Strings;
+import com.google.gerrit.entities.ChangeMessage;
+import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.extensions.common.DescriptionInput;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
+import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.extensions.webui.UiAction;
-import com.google.gerrit.reviewdb.client.ChangeMessage;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.change.RevisionResource;
@@ -31,46 +31,34 @@ import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
-import com.google.gerrit.server.update.RetryHelper;
-import com.google.gerrit.server.update.RetryingRestModifyView;
 import com.google.gerrit.server.update.UpdateException;
 import com.google.gerrit.server.util.time.TimeUtil;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
-import java.util.Collections;
 
 @Singleton
 public class PutDescription
-    extends RetryingRestModifyView<RevisionResource, DescriptionInput, Response<String>>
-    implements UiAction<RevisionResource> {
-  private final Provider<ReviewDb> dbProvider;
+    implements RestModifyView<RevisionResource, DescriptionInput>, UiAction<RevisionResource> {
+  private final BatchUpdate.Factory updateFactory;
   private final ChangeMessagesUtil cmUtil;
   private final PatchSetUtil psUtil;
 
   @Inject
   PutDescription(
-      Provider<ReviewDb> dbProvider,
-      ChangeMessagesUtil cmUtil,
-      RetryHelper retryHelper,
-      PatchSetUtil psUtil) {
-    super(retryHelper);
-    this.dbProvider = dbProvider;
+      BatchUpdate.Factory updateFactory, ChangeMessagesUtil cmUtil, PatchSetUtil psUtil) {
+    this.updateFactory = updateFactory;
     this.cmUtil = cmUtil;
     this.psUtil = psUtil;
   }
 
   @Override
-  protected Response<String> applyImpl(
-      BatchUpdate.Factory updateFactory, RevisionResource rsrc, DescriptionInput input)
+  public Response<String> apply(RevisionResource rsrc, DescriptionInput input)
       throws UpdateException, RestApiException, PermissionBackendException {
     rsrc.permissions().check(ChangePermission.EDIT_DESCRIPTION);
 
-    Op op = new Op(input != null ? input : new DescriptionInput(), rsrc.getPatchSet().getId());
+    Op op = new Op(input != null ? input : new DescriptionInput(), rsrc.getPatchSet().id());
     try (BatchUpdate u =
-        updateFactory.create(
-            dbProvider.get(), rsrc.getChange().getProject(), rsrc.getUser(), TimeUtil.nowTs())) {
+        updateFactory.create(rsrc.getChange().getProject(), rsrc.getUser(), TimeUtil.nowTs())) {
       u.addOp(rsrc.getChange().getId(), op);
       u.execute();
     }
@@ -92,32 +80,32 @@ public class PutDescription
     }
 
     @Override
-    public boolean updateChange(ChangeContext ctx) throws OrmException {
-      PatchSet ps = psUtil.get(ctx.getDb(), ctx.getNotes(), psId);
+    public boolean updateChange(ChangeContext ctx) {
       ChangeUpdate update = ctx.getUpdate(psId);
       newDescription = Strings.nullToEmpty(input.description);
-      oldDescription = Strings.nullToEmpty(ps.getDescription());
+      oldDescription = psUtil.get(ctx.getNotes(), psId).description().orElse("");
       if (oldDescription.equals(newDescription)) {
         return false;
       }
-      String summary;
-      if (oldDescription.isEmpty()) {
-        summary = "Description set to \"" + newDescription + "\"";
-      } else if (newDescription.isEmpty()) {
-        summary = "Description \"" + oldDescription + "\" removed";
-      } else {
-        summary = "Description changed to \"" + newDescription + "\"";
-      }
-
-      ps.setDescription(newDescription);
       update.setPsDescription(newDescription);
 
-      ctx.getDb().patchSets().update(Collections.singleton(ps));
-
+      String summary;
+      if (oldDescription.isEmpty()) {
+        summary =
+            String.format("Description of patch set %d set to \"%s\"", psId.get(), newDescription);
+      } else if (newDescription.isEmpty()) {
+        summary =
+            String.format(
+                "Description \"%s\" removed from patch set %d", oldDescription, psId.get());
+      } else {
+        summary =
+            String.format(
+                "Description of patch set %d changed to \"%s\"", psId.get(), newDescription);
+      }
       ChangeMessage cmsg =
           ChangeMessagesUtil.newMessage(
               psId, ctx.getUser(), ctx.getWhen(), summary, ChangeMessagesUtil.TAG_SET_DESCRIPTION);
-      cmUtil.addChangeMessage(ctx.getDb(), update, cmsg);
+      cmUtil.addChangeMessage(update, cmsg);
       return true;
     }
   }

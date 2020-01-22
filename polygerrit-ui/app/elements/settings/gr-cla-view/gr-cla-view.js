@@ -17,32 +17,42 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-cla-view',
+  /**
+   * @appliesMixin Gerrit.BaseUrlMixin
+   * @appliesMixin Gerrit.FireMixin
+   * @extends Polymer.Element
+   */
+  class GrClaView extends Polymer.mixinBehaviors( [
+    Gerrit.BaseUrlBehavior,
+    Gerrit.FireBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-cla-view'; }
 
-    properties: {
-      _groups: Object,
-      /** @type {?} */
-      _serverConfig: Object,
-      _agreementsText: String,
-      _agreementName: String,
-      _signedAgreements: Array,
-      _showAgreements: {
-        type: Boolean,
-        value: false,
-      },
-      _agreementsUrl: String,
-    },
+    static get properties() {
+      return {
+        _groups: Object,
+        /** @type {?} */
+        _serverConfig: Object,
+        _agreementsText: String,
+        _agreementName: String,
+        _signedAgreements: Array,
+        _showAgreements: {
+          type: Boolean,
+          value: false,
+        },
+        _agreementsUrl: String,
+      };
+    }
 
-    behaviors: [
-      Gerrit.BaseUrlBehavior,
-    ],
-
+    /** @override */
     attached() {
+      super.attached();
       this.loadData();
 
       this.fire('title-change', {title: 'New Contributor Agreement'});
-    },
+    }
 
     loadData() {
       const promises = [];
@@ -51,9 +61,7 @@
       }));
 
       promises.push(this.$.restAPI.getAccountGroups().then(groups => {
-        this._groups = groups.sort((a, b) => {
-          return a.name.localeCompare(b.name);
-        });
+        this._groups = groups.sort((a, b) => a.name.localeCompare(b.name));
       }));
 
       promises.push(this.$.restAPI.getAccountAgreements().then(agreements => {
@@ -61,11 +69,13 @@
       }));
 
       return Promise.all(promises);
-    },
+    }
 
     _getAgreementsUrl(configUrl) {
       let url;
-      if (!configUrl) { return ''; }
+      if (!configUrl) {
+        return '';
+      }
       if (configUrl.startsWith('http:') || configUrl.startsWith('https:')) {
         url = configUrl;
       } else {
@@ -73,14 +83,14 @@
       }
 
       return url;
-    },
+    }
 
     _handleShowAgreement(e) {
       this._agreementName = e.target.getAttribute('data-name');
       this._agreementsUrl =
           this._getAgreementsUrl(e.target.getAttribute('data-url'));
       this._showAgreements = true;
-    },
+    }
 
     _handleSaveAgreements(e) {
       this._createToast('Agreement saving...');
@@ -96,16 +106,16 @@
         this._agreementsText = '';
         this._showAgreements = false;
       });
-    },
+    }
 
     _createToast(message) {
-      this.dispatchEvent(new CustomEvent('show-alert',
-          {detail: {message}, bubbles: true}));
-    },
+      this.dispatchEvent(new CustomEvent(
+          'show-alert', {detail: {message}, bubbles: true, composed: true}));
+    }
 
     _computeShowAgreementsClass(agreements) {
       return agreements ? 'show' : '';
-    },
+    }
 
     _disableAgreements(item, groups, signedAgreements) {
       if (!groups) return false;
@@ -117,16 +127,16 @@
         }
       }
       return false;
-    },
+    }
 
     _hideAgreements(item, groups, signedAgreements) {
       return this._disableAgreements(item, groups, signedAgreements) ?
         '' : 'hide';
-    },
+    }
 
     _disableAgreementsText(text) {
       return text.toLowerCase() === 'i agree' ? false : true;
-    },
+    }
 
     // This checks for auto_verify_group,
     // if specified it returns 'hideAgreementsTextBox' which
@@ -134,15 +144,21 @@
     _computeHideAgreementClass(name, config) {
       if (!config) return '';
       for (const key in config) {
-        if (!config.hasOwnProperty(key)) { continue; }
+        if (!config.hasOwnProperty(key)) {
+          continue;
+        }
         for (const prop in config[key]) {
-          if (!config[key].hasOwnProperty(prop)) { continue; }
+          if (!config[key].hasOwnProperty(prop)) {
+            continue;
+          }
           if (name === config[key].name &&
               !config[key].auto_verify_group) {
             return 'hideAgreementsTextBox';
           }
         }
       }
-    },
-  });
+    }
+  }
+
+  customElements.define(GrClaView.is, GrClaView);
 })();

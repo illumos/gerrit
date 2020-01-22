@@ -18,14 +18,11 @@ import com.google.gerrit.extensions.api.projects.DashboardInfo;
 import com.google.gerrit.extensions.api.projects.SetDashboardInput;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
 import com.google.gerrit.extensions.restapi.Response;
-import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestModifyView;
-import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.DashboardResource;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
-import java.io.IOException;
 
 @Singleton
 public class SetDashboard implements RestModifyView<DashboardResource, SetDashboardInput> {
@@ -38,12 +35,12 @@ public class SetDashboard implements RestModifyView<DashboardResource, SetDashbo
 
   @Override
   public Response<DashboardInfo> apply(DashboardResource resource, SetDashboardInput input)
-      throws RestApiException, IOException, PermissionBackendException {
+      throws Exception {
     if (resource.isProjectDefault()) {
       return defaultSetter.get().apply(resource, input);
     }
 
-    // TODO: Implement creation/update of dashboards by API.
-    throw new MethodNotAllowedException();
+    // TODO: Implement update of dashboards by API.
+    throw new MethodNotAllowedException("cannot update non-default dashboard");
   }
 }

@@ -16,6 +16,7 @@ package com.google.gerrit.elasticsearch.bulk;
 
 import static java.util.stream.Collectors.toList;
 
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Streams;
 import com.google.gerrit.elasticsearch.builders.XContentBuilder;
@@ -27,24 +28,22 @@ public class UpdateRequest<V> extends BulkRequest {
 
   private final Schema<V> schema;
   private final V v;
+  private final ImmutableSet<String> skipFields;
 
-  public UpdateRequest(Schema<V> schema, V v) {
+  public UpdateRequest(Schema<V> schema, V v, ImmutableSet<String> skipFields) {
     this.schema = schema;
     this.v = v;
+    this.skipFields = skipFields;
   }
 
   @Override
   protected String getRequest() {
     try (XContentBuilder closeable = new XContentBuilder()) {
       XContentBuilder builder = closeable.startObject();
-      for (Values<V> values : schema.buildFields(v)) {
+      for (Values<V> values : schema.buildFields(v, skipFields)) {
         String name = values.getField().getName();
         if (values.getField().isRepeatable()) {
-          builder.field(
-              name,
-              Streams.stream(values.getValues())
-                  .filter(e -> shouldAddElement(e))
-                  .collect(toList()));
+          builder.field(name, Streams.stream(values.getValues()).collect(toList()));
         } else {
           Object element = Iterables.getOnlyElement(values.getValues(), "");
           if (shouldAddElement(element)) {

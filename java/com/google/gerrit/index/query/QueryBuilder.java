@@ -14,10 +14,12 @@
 
 package com.google.gerrit.index.query;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.gerrit.index.query.Predicate.and;
 import static com.google.gerrit.index.query.Predicate.not;
 import static com.google.gerrit.index.query.Predicate.or;
 import static com.google.gerrit.index.query.QueryParser.AND;
+import static com.google.gerrit.index.query.QueryParser.COLON;
 import static com.google.gerrit.index.query.QueryParser.DEFAULT_FIELD;
 import static com.google.gerrit.index.query.QueryParser.EXACT_PHRASE;
 import static com.google.gerrit.index.query.QueryParser.FIELD_NAME;
@@ -25,7 +27,14 @@ import static com.google.gerrit.index.query.QueryParser.NOT;
 import static com.google.gerrit.index.query.QueryParser.OR;
 import static com.google.gerrit.index.query.QueryParser.SINGLE_WORD;
 
+import com.google.common.base.Ascii;
+import com.google.common.base.CharMatcher;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableMap;
+import com.google.gerrit.common.Nullable;
+import com.google.gerrit.extensions.registration.DynamicMap;
+import com.google.gerrit.extensions.registration.Extension;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -34,7 +43,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import org.antlr.runtime.tree.Tree;
@@ -68,45 +77,60 @@ import org.antlr.runtime.tree.Tree;
  * <p>Subclasses may also declare a handler for values which appear without operator by overriding
  * {@link #defaultField(String)}.
  *
+ * <p>Instances are non-singletons and should only be used once, in order to rescan the {@code
+ * DynamicMap} of plugin-provided operators on each query invocation.
+ *
  * @param <T> type of object the predicates can evaluate in memory.
  */
-public abstract class QueryBuilder<T> {
+public abstract class QueryBuilder<T, Q extends QueryBuilder<T, Q>> {
   /** Converts a value string passed to an operator into a {@link Predicate}. */
-  public interface OperatorFactory<T, Q extends QueryBuilder<T>> {
+  public interface OperatorFactory<T, Q extends QueryBuilder<T, Q>> {
     Predicate<T> create(Q builder, String value) throws QueryParseException;
   }
 
   /**
    * Defines the operators known by a QueryBuilder.
    *
-   * <p>This class is thread-safe and may be reused or cached.
+   * <p>Operators are discovered by scanning for methods annotated with {@link Operator}. Operator
+   * methods must be public, non-abstract, return a {@code Predicate}, and take a single string as
+   * an argument.
    *
-   * @param <T> type of object the predicates can evaluate in memory.
+   * <p>This class is deeply immutable.
+   *
+   * @param <T> type of object the predicates can evaluate.
    * @param <Q> type of the query builder subclass.
    */
-  public static class Definition<T, Q extends QueryBuilder<T>> {
-    private final Map<String, OperatorFactory<T, Q>> opFactories = new HashMap<>();
+  public static class Definition<T, Q extends QueryBuilder<T, Q>> {
+    private final ImmutableMap<String, OperatorFactory<T, Q>> opFactories;
 
-    public Definition(Class<Q> clazz) {
-      // Guess at the supported operators by scanning methods.
-      //
+    public Definition(Class<? extends Q> clazz) {
+      ImmutableMap.Builder<String, OperatorFactory<T, Q>> b = ImmutableMap.builder();
       Class<?> c = clazz;
       while (c != QueryBuilder.class) {
         for (Method method : c.getDeclaredMethods()) {
-          if (method.getAnnotation(Operator.class) != null
-              && Predicate.class.isAssignableFrom(method.getReturnType())
-              && method.getParameterTypes().length == 1
-              && method.getParameterTypes()[0] == String.class
-              && (method.getModifiers() & Modifier.ABSTRACT) == 0
-              && (method.getModifiers() & Modifier.PUBLIC) == Modifier.PUBLIC) {
-            final String name = method.getName().toLowerCase();
-            if (!opFactories.containsKey(name)) {
-              opFactories.put(name, new ReflectionFactory<T, Q>(name, method));
-            }
+          if (method.getAnnotation(Operator.class) == null) {
+            continue;
           }
+          checkArgument(
+              CharMatcher.ascii().matchesAllOf(method.getName()),
+              "method name must be ASCII: %s",
+              method.getName());
+          checkArgument(
+              Predicate.class.isAssignableFrom(method.getReturnType())
+                  && method.getParameterTypes().length == 1
+                  && method.getParameterTypes()[0] == String.class
+                  && Modifier.isPublic(method.getModifiers())
+                  && !Modifier.isAbstract(method.getModifiers()),
+              "method must be of the form \"@%s public Predicate<T> %s(String value)\": %s",
+              Operator.class.getSimpleName(),
+              method.getName(),
+              method);
+          String name = Ascii.toLowerCase(method.getName());
+          b.put(name, new ReflectionFactory<>(name, method));
         }
         c = c.getSuperclass();
       }
+      opFactories = b.build();
     }
   }
 
@@ -161,14 +185,27 @@ public abstract class QueryBuilder<T> {
     return null;
   }
 
-  protected final Definition<T, ? extends QueryBuilder<T>> builderDef;
+  protected final Definition<T, Q> builderDef;
+  private final ImmutableMap<String, OperatorFactory<T, Q>> opFactories;
+  protected Map<String, String> opAliases = Collections.emptyMap();
 
-  protected final Map<String, OperatorFactory<?, ?>> opFactories;
-
-  @SuppressWarnings({"unchecked", "rawtypes"})
-  protected QueryBuilder(Definition<T, ? extends QueryBuilder<T>> def) {
+  protected QueryBuilder(
+      Definition<T, Q> def,
+      @Nullable DynamicMap<? extends OperatorFactory<T, Q>> dynamicOpFactories) {
     builderDef = def;
-    opFactories = (Map) def.opFactories;
+
+    if (dynamicOpFactories != null) {
+      ImmutableMap.Builder<String, OperatorFactory<T, Q>> opFactoriesBuilder =
+          ImmutableMap.builder();
+      opFactoriesBuilder.putAll(def.opFactories);
+      for (Extension<? extends OperatorFactory<T, Q>> e : dynamicOpFactories) {
+        String name = e.getExportName() + "_" + e.getPluginName();
+        opFactoriesBuilder.put(name, e.getProvider().get());
+      }
+      opFactories = opFactoriesBuilder.build();
+    } else {
+      opFactories = def.opFactories;
+    }
   }
 
   /**
@@ -185,6 +222,10 @@ public abstract class QueryBuilder<T> {
       throw new QueryParseException("query is empty");
     }
     return toPredicate(QueryParser.parse(query));
+  }
+
+  public void setOperatorAliases(Map<String, String> opAliases) {
+    this.opAliases = opAliases;
   }
 
   /**
@@ -214,69 +255,59 @@ public abstract class QueryBuilder<T> {
         return not(toPredicate(onlyChildOf(r)));
 
       case DEFAULT_FIELD:
-        return defaultField(onlyChildOf(r));
+        return defaultField(concatenateChildText(r));
 
       case FIELD_NAME:
-        return operator(r.getText(), onlyChildOf(r));
+        return operator(r.getText(), concatenateChildText(r));
 
       default:
         throw error("Unsupported operator: " + r);
     }
   }
 
-  private Predicate<T> operator(String name, Tree val) throws QueryParseException {
-    switch (val.getType()) {
-        // Expand multiple values, "foo:(a b c)", as though they were written
-        // out with the longer form, "foo:a foo:b foo:c".
-        //
-      case AND:
-      case OR:
-        {
-          List<Predicate<T>> p = new ArrayList<>(val.getChildCount());
-          for (int i = 0; i < val.getChildCount(); i++) {
-            final Tree c = val.getChild(i);
-            if (c.getType() != DEFAULT_FIELD) {
-              throw error("Nested operator not expected: " + c);
-            }
-            p.add(operator(name, onlyChildOf(c)));
-          }
-          return val.getType() == AND ? and(p) : or(p);
-        }
+  private static String concatenateChildText(Tree r) throws QueryParseException {
+    if (r.getChildCount() == 0) {
+      throw error("Expected children under: " + r);
+    }
+    if (r.getChildCount() == 1) {
+      return getFieldValue(r.getChild(0));
+    }
+    StringBuilder sb = new StringBuilder();
+    for (int i = 0; i < r.getChildCount(); i++) {
+      sb.append(getFieldValue(r.getChild(i)));
+    }
+    return sb.toString();
+  }
 
+  private static String getFieldValue(Tree r) throws QueryParseException {
+    if (r.getChildCount() != 0) {
+      throw error("Expected no children under: " + r);
+    }
+    switch (r.getType()) {
       case SINGLE_WORD:
+      case COLON:
       case EXACT_PHRASE:
-        if (val.getChildCount() != 0) {
-          throw error("Expected no children under: " + val);
-        }
-        return operator(name, val.getText());
-
+        return r.getText();
       default:
-        throw error("Unsupported node in operator " + name + ": " + val);
+        throw error(
+            String.format(
+                "Unsupported %s node in operator %s: %s",
+                QueryParser.tokenNames[r.getType()], r.getParent(), r));
     }
   }
 
   @SuppressWarnings("unchecked")
   private Predicate<T> operator(String name, String value) throws QueryParseException {
+    String opName = MoreObjects.firstNonNull(opAliases.get(name), name);
     @SuppressWarnings("rawtypes")
-    OperatorFactory f = opFactories.get(name);
+    OperatorFactory f = opFactories.get(opName);
+    if (f == null && !opName.equals(name)) {
+      f = opFactories.get(name);
+    }
     if (f == null) {
       throw error("Unsupported operator " + name + ":" + value);
     }
     return f.create(this, value);
-  }
-
-  private Predicate<T> defaultField(Tree r) throws QueryParseException {
-    switch (r.getType()) {
-      case SINGLE_WORD:
-      case EXACT_PHRASE:
-        if (r.getChildCount() != 0) {
-          throw error("Expected no children under: " + r);
-        }
-        return defaultField(r.getText());
-
-      default:
-        throw error("Unsupported node: " + r);
-    }
   }
 
   /**
@@ -322,7 +353,7 @@ public abstract class QueryBuilder<T> {
   @Target(ElementType.METHOD)
   protected @interface Operator {}
 
-  private static class ReflectionFactory<T, Q extends QueryBuilder<T>>
+  private static class ReflectionFactory<T, Q extends QueryBuilder<T, Q>>
       implements OperatorFactory<T, Q> {
     private final String name;
     private final Method method;

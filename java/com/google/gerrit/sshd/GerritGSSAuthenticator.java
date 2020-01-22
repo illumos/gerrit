@@ -14,7 +14,7 @@
 
 package com.google.gerrit.sshd;
 
-import com.google.gerrit.reviewdb.client.Account;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.IdentifiedUser.GenericFactory;
 import com.google.gerrit.server.account.AccountCache;
@@ -66,7 +66,7 @@ class GerritGSSAuthenticator extends GSSAuthenticator {
     }
 
     Optional<Account> account =
-        accounts.getByUsername(username).map(AccountState::getAccount).filter(Account::isActive);
+        accounts.getByUsername(username).map(AccountState::account).filter(Account::isActive);
     if (!account.isPresent()) {
       return false;
     }
@@ -77,6 +77,6 @@ class GerritGSSAuthenticator extends GSSAuthenticator {
         sshScope,
         sshLog,
         sd,
-        SshUtil.createUser(sd, userFactory, account.get().getId()));
+        SshUtil.createUser(sd, userFactory, account.get().id()));
   }
 }

@@ -20,8 +20,8 @@ import static java.util.Objects.requireNonNull;
 import com.google.common.collect.ImmutableSet;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.data.GroupDescription;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.account.GroupBackend;
@@ -51,7 +51,7 @@ public class AuditLogFormatter {
   }
 
   private static Optional<Account> getAccount(AccountCache accountCache, Account.Id accountId) {
-    return accountCache.get(accountId).map(AccountState::getAccount);
+    return accountCache.get(accountId).map(AccountState::account);
   }
 
   private static Optional<GroupDescription.Basic> getGroup(
@@ -72,7 +72,7 @@ public class AuditLogFormatter {
   }
 
   private static Optional<Account> getAccount(ImmutableSet<Account> accounts, Account.Id id) {
-    return accounts.stream().filter(account -> account.getId().equals(id)).findAny();
+    return accounts.stream().filter(account -> account.id().equals(id)).findAny();
   }
 
   public static AuditLogFormatter createPartiallyWorkingFallBack() {
@@ -119,7 +119,7 @@ public class AuditLogFormatter {
    * @return a {@code PersonIdent} which can be used for the author of a commit
    */
   public PersonIdent getParsableAuthorIdent(Account account, PersonIdent personIdent) {
-    return getParsableAuthorIdent(account.getName(), account.getId(), personIdent);
+    return getParsableAuthorIdent(account.getName(), account.id(), personIdent);
   }
 
   /**

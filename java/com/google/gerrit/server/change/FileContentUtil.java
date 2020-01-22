@@ -21,10 +21,10 @@ import com.google.common.hash.Hasher;
 import com.google.common.hash.Hashing;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.data.PatchScript.FileMode;
+import com.google.gerrit.entities.Patch;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.BinaryResult;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
-import com.google.gerrit.reviewdb.client.Patch;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.mime.FileTypeRegistry;
 import com.google.gerrit.server.project.ProjectState;
@@ -100,7 +100,7 @@ public class FileContentUtil {
 
   public BinaryResult getContent(
       Repository repo, ProjectState project, ObjectId revstr, String path)
-      throws IOException, ResourceNotFoundException {
+      throws IOException, ResourceNotFoundException, BadRequestException {
     try (RevWalk rw = new RevWalk(repo)) {
       RevCommit commit = rw.parseCommit(revstr);
       try (TreeWalk tw = TreeWalk.forPath(rw.getObjectReader(), path, commit.getTree())) {
@@ -112,6 +112,10 @@ public class FileContentUtil {
         ObjectId id = tw.getObjectId(0);
         if (mode == org.eclipse.jgit.lib.FileMode.GITLINK) {
           return BinaryResult.create(id.name()).setContentType(X_GIT_GITLINK).base64();
+        }
+
+        if (mode == org.eclipse.jgit.lib.FileMode.TREE) {
+          throw new BadRequestException("cannot retrieve content of directories");
         }
 
         ObjectLoader obj = repo.open(id, OBJ_BLOB);

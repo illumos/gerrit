@@ -18,7 +18,7 @@ limitations under the License.
 <link rel="import" href="../../../behaviors/base-url-behavior/base-url-behavior.html">
 <link rel="import" href="../../../behaviors/gr-path-list-behavior/gr-path-list-behavior.html">
 <link rel="import" href="../../../behaviors/gr-url-encoding-behavior/gr-url-encoding-behavior.html">
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 <link rel="import" href="../../core/gr-navigation/gr-navigation.html">
 <link rel="import" href="../../shared/gr-formatted-text/gr-formatted-text.html">
 <link rel="import" href="../../../styles/shared-styles.html">
@@ -43,10 +43,10 @@ limitations under the License.
       }
       .container {
         display: flex;
-        margin: .5em 0;
+        margin: var(--spacing-m) 0;
       }
       .lineNum {
-        margin-right: .5em;
+        margin-right: var(--spacing-m);
         min-width: 10em;
         text-align: right;
       }
@@ -57,7 +57,7 @@ limitations under the License.
       @media screen and (max-width: 50em) {
         .container {
           flex-direction: column;
-          margin: 0 0 .5em .5em;
+          margin: 0 0 var(--spacing-m) var(--spacing-m);
         }
         .lineNum {
           min-width: initial;

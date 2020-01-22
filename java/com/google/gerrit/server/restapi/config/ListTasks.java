@@ -17,9 +17,10 @@ package com.google.gerrit.server.restapi.config;
 import static java.util.Comparator.comparing;
 import static java.util.stream.Collectors.toList;
 
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.restapi.AuthException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.config.ConfigResource;
 import com.google.gerrit.server.git.WorkQueue;
@@ -62,7 +63,7 @@ public class ListTasks implements RestReadView<ConfigResource> {
   }
 
   @Override
-  public List<TaskInfo> apply(ConfigResource resource)
+  public Response<List<TaskInfo>> apply(ConfigResource resource)
       throws AuthException, PermissionBackendException {
     CurrentUser user = self.get();
     if (!user.isIdentifiedUser()) {
@@ -72,7 +73,7 @@ public class ListTasks implements RestReadView<ConfigResource> {
     List<TaskInfo> allTasks = getTasks();
     try {
       permissionBackend.user(user).check(GlobalPermission.VIEW_QUEUE);
-      return allTasks;
+      return Response.ok(allTasks);
     } catch (AuthException e) {
       // Fall through to filter tasks.
     }
@@ -83,7 +84,7 @@ public class ListTasks implements RestReadView<ConfigResource> {
       if (task.projectName != null) {
         Boolean visible = visibilityCache.get(task.projectName);
         if (visible == null) {
-          Project.NameKey nameKey = new Project.NameKey(task.projectName);
+          Project.NameKey nameKey = Project.nameKey(task.projectName);
           ProjectState state = projectCache.get(nameKey);
           if (state == null || !state.statePermitsRead()) {
             visible = false;
@@ -102,7 +103,7 @@ public class ListTasks implements RestReadView<ConfigResource> {
         }
       }
     }
-    return visibleTasks;
+    return Response.ok(visibleTasks);
   }
 
   private List<TaskInfo> getTasks() {

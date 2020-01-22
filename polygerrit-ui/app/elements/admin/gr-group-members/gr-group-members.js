@@ -23,56 +23,67 @@
 
   const URL_REGEX = '^(?:[a-z]+:)?//';
 
-  Polymer({
-    is: 'gr-group-members',
+  /**
+   * @appliesMixin Gerrit.BaseUrlMixin
+   * @appliesMixin Gerrit.FireMixin
+   * @appliesMixin Gerrit.URLEncodingMixin
+   * @extends Polymer.Element
+   */
+  class GrGroupMembers extends Polymer.mixinBehaviors( [
+    Gerrit.BaseUrlBehavior,
+    Gerrit.FireBehavior,
+    Gerrit.URLEncodingBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-group-members'; }
 
-    properties: {
-      groupId: Number,
-      _groupMemberSearchId: String,
-      _groupMemberSearchName: String,
-      _includedGroupSearchId: String,
-      _includedGroupSearchName: String,
-      _loading: {
-        type: Boolean,
-        value: true,
-      },
-      _groupName: String,
-      _groupMembers: Object,
-      _includedGroups: Object,
-      _itemName: String,
-      _itemType: String,
-      _queryMembers: {
-        type: Function,
-        value() {
-          return this._getAccountSuggestions.bind(this);
+    static get properties() {
+      return {
+        groupId: Number,
+        _groupMemberSearchId: String,
+        _groupMemberSearchName: String,
+        _includedGroupSearchId: String,
+        _includedGroupSearchName: String,
+        _loading: {
+          type: Boolean,
+          value: true,
         },
-      },
-      _queryIncludedGroup: {
-        type: Function,
-        value() {
-          return this._getGroupSuggestions.bind(this);
+        _groupName: String,
+        _groupMembers: Object,
+        _includedGroups: Object,
+        _itemName: String,
+        _itemType: String,
+        _queryMembers: {
+          type: Function,
+          value() {
+            return this._getAccountSuggestions.bind(this);
+          },
         },
-      },
-      _groupOwner: {
-        type: Boolean,
-        value: false,
-      },
-      _isAdmin: {
-        type: Boolean,
-        value: false,
-      },
-    },
+        _queryIncludedGroup: {
+          type: Function,
+          value() {
+            return this._getGroupSuggestions.bind(this);
+          },
+        },
+        _groupOwner: {
+          type: Boolean,
+          value: false,
+        },
+        _isAdmin: {
+          type: Boolean,
+          value: false,
+        },
+      };
+    }
 
-    behaviors: [
-      Gerrit.BaseUrlBehavior,
-      Gerrit.URLEncodingBehavior,
-    ],
-
+    /** @override */
     attached() {
+      super.attached();
       this._loadGroupDetails();
 
       this.fire('title-change', {title: 'Members'});
-    },
+    }
 
     _loadGroupDetails() {
       if (!this.groupId) { return; }
@@ -112,15 +123,15 @@
               this._loading = false;
             });
           });
-    },
+    }
 
     _computeLoadingClass(loading) {
       return loading ? 'loading' : '';
-    },
+    }
 
     _isLoading() {
       return this._loading || this._loading === undefined;
-    },
+    }
 
     _computeGroupUrl(url) {
       if (!url) { return; }
@@ -135,7 +146,7 @@
         return this.getBaseUrl() + url.slice(1);
       }
       return this.getBaseUrl() + url;
-    },
+    }
 
     _handleSavingGroupMember() {
       return this.$.restAPI.saveGroupMembers(this._groupName,
@@ -149,7 +160,7 @@
         this._groupMemberSearchName = '';
         this._groupMemberSearchId = '';
       });
-    },
+    }
 
     _handleDeleteConfirm() {
       this.$.overlay.close();
@@ -176,11 +187,11 @@
               }
             });
       }
-    },
+    }
 
     _handleConfirmDialogCancel() {
       this.$.overlay.close();
-    },
+    }
 
     _handleDeleteMember(e) {
       const id = e.model.get('item._account_id');
@@ -195,7 +206,7 @@
       this._itemId = id;
       this._itemType = 'member';
       this.$.overlay.open();
-    },
+    }
 
     _handleSavingIncludedGroups() {
       return this.$.restAPI.saveIncludedGroup(this._groupName,
@@ -204,6 +215,7 @@
               this.dispatchEvent(new CustomEvent('show-alert', {
                 detail: {message: SAVING_ERROR_TEXT},
                 bubbles: true,
+                composed: true,
               }));
               return err;
             }
@@ -220,7 +232,7 @@
             this._includedGroupSearchName = '';
             this._includedGroupSearchId = '';
           });
-    },
+    }
 
     _handleDeleteIncludedGroup(e) {
       const id = decodeURIComponent(e.model.get('item.id')).replace(/\+/g, ' ');
@@ -231,7 +243,7 @@
       this._itemId = id;
       this._itemType = 'includedGroup';
       this.$.overlay.open();
-    },
+    }
 
     _getAccountSuggestions(input) {
       if (input.length === 0) { return Promise.resolve([]); }
@@ -255,7 +267,7 @@
         }
         return accountSuggestions;
       });
-    },
+    }
 
     _getGroupSuggestions(input) {
       return this.$.restAPI.getSuggestedGroups(input)
@@ -270,10 +282,12 @@
             }
             return groups;
           });
-    },
+    }
 
     _computeHideItemClass(owner, admin) {
       return admin || owner ? '' : 'canModify';
-    },
-  });
+    }
+  }
+
+  customElements.define(GrGroupMembers.is, GrGroupMembers);
 })();

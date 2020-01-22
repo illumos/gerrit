@@ -14,13 +14,11 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 -->
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
-<link rel="import" href="../../core/gr-reporting/gr-reporting.html">
-<link rel="import" href="../gr-diff-comment-thread/gr-diff-comment-thread.html">
-<link rel="import" href="../gr-diff-comment-thread-group/gr-diff-comment-thread-group.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
+<link rel="import" href="../gr-coverage-layer/gr-coverage-layer.html">
 <link rel="import" href="../gr-diff-processor/gr-diff-processor.html">
 <link rel="import" href="../gr-ranged-comment-layer/gr-ranged-comment-layer.html">
-<link rel="import" href="../gr-syntax-layer/gr-syntax-layer.html">
 
 <dom-module id="gr-diff-builder">
   <template>
@@ -29,16 +27,20 @@ limitations under the License.
     </div>
     <gr-ranged-comment-layer
         id="rangeLayer"
-        comments="[[comments]]"></gr-ranged-comment-layer>
-    <gr-syntax-layer
-        id="syntaxLayer"
-        diff="[[diff]]"></gr-syntax-layer>
+        comment-ranges="[[commentRanges]]"></gr-ranged-comment-layer>
+    <gr-coverage-layer
+        id="coverageLayerLeft"
+        coverage-ranges="[[_leftCoverageRanges]]"
+        side="left"></gr-coverage-layer>
+    <gr-coverage-layer
+        id="coverageLayerRight"
+        coverage-ranges="[[_rightCoverageRanges]]"
+        side="right"></gr-coverage-layer>
     <gr-diff-processor
         id="processor"
         groups="{{_groups}}"></gr-diff-processor>
-    <gr-reporting id="reporting"></gr-reporting>
-    <gr-js-api-interface id="jsAPI"></gr-js-api-interface>
   </template>
+  <script src="../../../scripts/util.js"></script>
   <script src="../gr-diff/gr-diff-line.js"></script>
   <script src="../gr-diff/gr-diff-group.js"></script>
   <script src="../gr-diff-highlight/gr-annotation.js"></script>
@@ -51,33 +53,10 @@ limitations under the License.
     (function() {
       'use strict';
 
-      const Defs = {};
-
-      /**
-       * @typedef {{
-       *  number: number,
-       *  leftSide: {boolean}
-       * }}
-       */
-      Defs.LineOfInterest;
-
       const DiffViewMode = {
         SIDE_BY_SIDE: 'SIDE_BY_SIDE',
         UNIFIED: 'UNIFIED_DIFF',
       };
-
-      const TimingLabel = {
-        TOTAL: 'Diff Total Render',
-        CONTENT: 'Diff Content Render',
-        SYNTAX: 'Diff Syntax Render',
-      };
-
-      // If any line of the diff is more than the character limit, then disable
-      // syntax highlighting for the entire file.
-      const SYNTAX_MAX_LINE_LENGTH = 500;
-
-      // Disable syntax highlighting if the overall diff is too large.
-      const SYNTAX_MAX_DIFF_LENGTH = 20000;
 
       const TRAILING_WHITESPACE_PATTERN = /\s+$/;
 
@@ -91,45 +70,62 @@ limitations under the License.
          */
 
         /**
-         * Fired when the diff is rendered.
-         *
-         * @event render
-         */
-
-        /**
-         * Fired when the diff finishes rendering text content, but not
-         * necessarily syntax highlights.
+         * Fired when the diff finishes rendering text content.
          *
          * @event render-content
          */
 
         properties: {
           diff: Object,
-          diffPath: String,
           changeNum: String,
           patchNum: String,
           viewMode: String,
-          comments: Object,
           isImageDiff: Boolean,
           baseImage: Object,
           revisionImage: Object,
-          projectName: String,
           parentIndex: Number,
-          /**
-           * @type {Defs.LineOfInterest|null}
-           */
-          lineOfInterest: Object,
-
-          /**
-           * @type {function(number, booleam, !string)}
-           */
-          createCommentFn: Function,
+          path: String,
+          projectName: String,
 
           _builder: Object,
           _groups: Array,
           _layers: Array,
           _showTabs: Boolean,
+          /** @type {!Array<!Gerrit.HoveredRange>} */
+          commentRanges: {
+            type: Array,
+            value: () => [],
+          },
+          /** @type {!Array<!Gerrit.CoverageRange>} */
+          coverageRanges: {
+            type: Array,
+            value: () => [],
+          },
+          _leftCoverageRanges: {
+            type: Array,
+            computed: '_computeLeftCoverageRanges(coverageRanges)',
+          },
+          _rightCoverageRanges: {
+            type: Array,
+            computed: '_computeRightCoverageRanges(coverageRanges)',
+          },
+          /**
+           * The promise last returned from `render()` while the asynchronous
+           * rendering is running - `null` otherwise. Provides a `cancel()`
+           * method that rejects it with `{isCancelled: true}`.
+           *
+           * @type {?Object}
+           */
+          _cancelableRenderPromise: Object,
+          layers: {
+            type: Array,
+            value: [],
+          },
         },
+
+        behaviors: [
+          Gerrit.FireBehavior,
+        ],
 
         get diffElement() {
           return this.queryEffectiveChildren('#diffTable');
@@ -139,73 +135,70 @@ limitations under the License.
           '_groupsChanged(_groups.splices)',
         ],
 
-        attached() {
-          // Setup annotation layers.
-          const layers = [
-            this._createTrailingWhitespaceLayer(),
-            this.$.syntaxLayer,
-            this._createIntralineLayer(),
-            this._createTabIndicatorLayer(),
-            this.$.rangeLayer,
-          ];
-
-          // Get layers from plugins (if any).
-          for (const pluginLayer of this.$.jsAPI.getDiffLayers(
-              this.diffPath, this.changeNum, this.patchNum)) {
-            layers.push(pluginLayer);
-          }
-
-          this._layers = layers;
-
-          this.async(() => {
-            this._preRenderThread();
-          });
+        _computeLeftCoverageRanges(coverageRanges) {
+          return coverageRanges.filter(range => range && range.side === 'left');
         },
 
-        render(comments, prefs) {
-          this.$.syntaxLayer.enabled = prefs.syntax_highlighting;
+        _computeRightCoverageRanges(coverageRanges) {
+          return coverageRanges.filter(range => range && range.side === 'right');
+        },
+
+        render(keyLocations, prefs) {
+          // Setting up annotation layers must happen after plugins are
+          // installed, and |render| satisfies the requirement, however,
+          // |attached| doesn't because in the diff view page, the element is
+          // attached before plugins are installed.
+          this._setupAnnotationLayers();
+
           this._showTabs = !!prefs.show_tabs;
           this._showTrailingWhitespace = !!prefs.show_whitespace_errors;
 
-          // Stop the processor and syntax layer (if they're running).
+          // Stop the processor if it's running.
           this.cancel();
 
-          this._builder = this._getDiffBuilder(this.diff, comments, prefs);
+          this._builder = this._getDiffBuilder(this.diff, prefs);
 
           this.$.processor.context = prefs.context;
-          this.$.processor.keyLocations = this._getKeyLocations(comments,
-              this.lineOfInterest);
+          this.$.processor.keyLocations = keyLocations;
 
           this._clearDiffContent();
           this._builder.addColumns(this.diffElement, prefs.font_size);
 
-          const reporting = this.$.reporting;
           const isBinary = !!(this.isImageDiff || this.diff.binary);
 
-          reporting.time(TimingLabel.TOTAL);
-          reporting.time(TimingLabel.CONTENT);
-          this.dispatchEvent(new CustomEvent('render-start', {bubbles: true}));
-          return this.$.processor.process(this.diff.content, isBinary)
-              .then(() => {
-                if (this.isImageDiff) {
-                  this._builder.renderDiff();
-                }
-                this.dispatchEvent(new CustomEvent('render-content',
-                    {bubbles: true}));
+          this.dispatchEvent(new CustomEvent(
+              'render-start', {bubbles: true, composed: true}));
+          this._cancelableRenderPromise = util.makeCancelable(
+              this.$.processor.process(this.diff.content, isBinary)
+                  .then(() => {
+                    if (this.isImageDiff) {
+                      this._builder.renderDiff();
+                    }
+                    this.dispatchEvent(new CustomEvent('render-content',
+                        {bubbles: true, composed: true}));
+                  }));
+          return this._cancelableRenderPromise
+              .finally(() => { this._cancelableRenderPromise = null; })
+              // Mocca testing does not like uncaught rejections, so we catch
+              // the cancels which are expected and should not throw errors in
+              // tests.
+              .catch(e => { if (!e.isCanceled) return Promise.reject(e); });
+        },
 
-                if (this._diffTooLargeForSyntax()) {
-                  this.$.syntaxLayer.enabled = false;
-                }
+        _setupAnnotationLayers() {
+          const layers = [
+            this._createTrailingWhitespaceLayer(),
+            this._createIntralineLayer(),
+            this._createTabIndicatorLayer(),
+            this.$.rangeLayer,
+            this.$.coverageLayerLeft,
+            this.$.coverageLayerRight,
+          ];
 
-                reporting.timeEnd(TimingLabel.CONTENT);
-                reporting.time(TimingLabel.SYNTAX);
-                return this.$.syntaxLayer.process().then(() => {
-                  reporting.timeEnd(TimingLabel.SYNTAX);
-                  reporting.timeEnd(TimingLabel.TOTAL);
-                  this.dispatchEvent(
-                      new CustomEvent('render', {bubbles: true}));
-                });
-              });
+          if (this.layers) {
+            layers.push(...this.layers);
+          }
+          this._layers = layers;
         },
 
         getLineElByChild(node) {
@@ -269,7 +262,7 @@ limitations under the License.
           const contextIndex = groups.findIndex(group =>
             group.element === sectionEl
           );
-          groups.splice(...[contextIndex, 1].concat(newGroups));
+          groups.splice(contextIndex, 1, ...newGroups);
 
           for (const newGroup of newGroups) {
             this._builder.emitGroup(newGroup, sectionEl);
@@ -281,7 +274,10 @@ limitations under the License.
 
         cancel() {
           this.$.processor.cancel();
-          this.$.syntaxLayer.cancel();
+          if (this._cancelableRenderPromise) {
+            this._cancelableRenderPromise.cancel();
+            this._cancelableRenderPromise = null;
+          }
         },
 
         _handlePreferenceError(pref) {
@@ -290,11 +286,11 @@ limitations under the License.
           this.dispatchEvent(new CustomEvent('show-alert', {
             detail: {
               message,
-            }, bubbles: true}));
+            }, bubbles: true, composed: true}));
           throw Error(`Invalid preference value: ${pref}`);
         },
 
-        _getDiffBuilder(diff, comments, prefs) {
+        _getDiffBuilder(diff, prefs) {
           if (isNaN(prefs.tab_size) || prefs.tab_size <= 0) {
             this._handlePreferenceError('tab size');
             return;
@@ -306,20 +302,18 @@ limitations under the License.
           }
 
           let builder = null;
-          const createFn = this.createCommentFn;
           if (this.isImageDiff) {
-            builder = new GrDiffBuilderImage(diff, comments, createFn, prefs,
-                this.diffElement, this.baseImage, this.revisionImage);
+            builder = new GrDiffBuilderImage(diff, prefs, this.diffElement,
+                this.baseImage, this.revisionImage);
           } else if (diff.binary) {
             // If the diff is binary, but not an image.
-            return new GrDiffBuilderBinary(diff, comments, prefs,
-                this.diffElement);
+            return new GrDiffBuilderBinary(diff, prefs, this.diffElement);
           } else if (this.viewMode === DiffViewMode.SIDE_BY_SIDE) {
-            builder = new GrDiffBuilderSideBySide(diff, comments, createFn,
-                prefs, this.diffElement, this._layers);
+            builder = new GrDiffBuilderSideBySide(diff, prefs, this.diffElement,
+                this._layers);
           } else if (this.viewMode === DiffViewMode.UNIFIED) {
-            builder = new GrDiffBuilderUnified(diff, comments, createFn, prefs,
-                this.diffElement, this._layers);
+            builder = new GrDiffBuilderUnified(diff, prefs, this.diffElement,
+                this._layers);
           }
           if (!builder) {
             throw Error('Unsupported diff view mode: ' + this.viewMode);
@@ -329,33 +323,6 @@ limitations under the License.
 
         _clearDiffContent() {
           this.diffElement.innerHTML = null;
-        },
-
-        /**
-         * @param {!Object} comments
-         * @param {Defs.LineOfInterest|null} lineOfInterest
-         */
-        _getKeyLocations(comments, lineOfInterest) {
-          const result = {
-            left: {},
-            right: {},
-          };
-          for (const side in comments) {
-            if (side !== GrDiffBuilder.Side.LEFT &&
-                side !== GrDiffBuilder.Side.RIGHT) {
-              continue;
-            }
-            for (const c of comments[side]) {
-              result[side][c.line || GrDiffLine.FILE] = true;
-            }
-          }
-
-          if (lineOfInterest) {
-            const side = lineOfInterest.leftSide ? 'left' : 'right';
-            result[side][lineOfInterest.number] = true;
-          }
-
-          return result;
         },
 
         _groupsChanged(changeRecord) {
@@ -375,7 +342,7 @@ limitations under the License.
             // Take a DIV.contentText element and a line object with intraline
             // differences to highlight and apply them to the element as
             // annotations.
-            annotate(el, line) {
+            annotate(contentEl, lineNumberEl, line) {
               const HL_CLASS = 'style-scope gr-diff intraline';
               for (const highlight of line.highlights) {
                 // The start and end indices could be the same if a highlight is
@@ -389,7 +356,7 @@ limitations under the License.
                   highlight.endIndex;
 
                 GrAnnotation.annotateElement(
-                    el,
+                    contentEl,
                     highlight.startIndex,
                     endIndex - highlight.startIndex,
                     HL_CLASS);
@@ -401,7 +368,7 @@ limitations under the License.
         _createTabIndicatorLayer() {
           const show = () => this._showTabs;
           return {
-            annotate(el, line) {
+            annotate(contentEl, lineNumberEl, line) {
               // If visible tabs are disabled, do nothing.
               if (!show()) { return; }
 
@@ -412,7 +379,7 @@ limitations under the License.
                 // Skip forward by the length of the content
                 pos += split[i].length;
 
-                GrAnnotation.annotateElement(el, pos, 1,
+                GrAnnotation.annotateElement(contentEl, pos, 1,
                     'style-scope gr-diff tab-indicator');
 
                 // Skip forward by one tab character.
@@ -428,7 +395,7 @@ limitations under the License.
           }.bind(this);
 
           return {
-            annotate(el, line) {
+            annotate(contentEl, lineNumberEl, line) {
               if (!show()) { return; }
 
               const match = line.text.match(TRAILING_WHITESPACE_PATTERN);
@@ -438,71 +405,16 @@ limitations under the License.
                 const index = GrAnnotation.getStringLength(
                     line.text.substr(0, match.index));
                 const length = GrAnnotation.getStringLength(match[0]);
-                GrAnnotation.annotateElement(el, index, length,
+                GrAnnotation.annotateElement(contentEl, index, length,
                     'style-scope gr-diff trailing-whitespace');
               }
             },
           };
         },
 
-        /**
-         * In pages with large diffs, creating the first comment thread can be
-         * slow because nested Polymer elements (particularly
-         * iron-autogrow-textarea) add style elements to the document head,
-         * which, in turn, triggers a reflow on the page. Create a hidden
-         * thread, attach it to the page, and remove it so the stylesheet will
-         * already exist and the user's comment will be quick to load.
-         *
-         * @see https://gerrit-review.googlesource.com/c/82213/
-         */
-        _preRenderThread() {
-          const thread = document.createElement('gr-diff-comment-thread');
-          thread.setAttribute('hidden', true);
-          thread.addDraft();
-          const parent = Polymer.dom(this.root);
-          parent.appendChild(thread);
-          Polymer.dom.flush();
-          parent.removeChild(thread);
-        },
-
-        /**
-         * @return {boolean} whether any of the lines in _groups are longer
-         * than SYNTAX_MAX_LINE_LENGTH.
-         */
-        _anyLineTooLong() {
-          return this._groups.reduce((acc, group) => {
-            return acc || group.lines.reduce((acc, line) => {
-              return acc || line.text.length >= SYNTAX_MAX_LINE_LENGTH;
-            }, false);
-          }, false);
-        },
-
-        _diffTooLargeForSyntax() {
-          return this._anyLineTooLong() ||
-              this.getDiffLength() > SYNTAX_MAX_DIFF_LENGTH;
-        },
-
         setBlame(blame) {
           if (!this._builder || !blame) { return; }
           this._builder.setBlame(blame);
-        },
-
-        /**
-         * Get the approximate length of the diff as the sum of the maximum
-         * length of the chunks.
-         *
-         * @return {number}
-         */
-        getDiffLength() {
-          return this.diff.content.reduce((sum, sec) => {
-            if (sec.hasOwnProperty('ab')) {
-              return sum + sec.ab.length;
-            } else {
-              return sum + Math.max(
-                  sec.hasOwnProperty('a') ? sec.a.length : 0,
-                  sec.hasOwnProperty('b') ? sec.b.length : 0);
-            }
-          }, 0);
         },
       });
     })();

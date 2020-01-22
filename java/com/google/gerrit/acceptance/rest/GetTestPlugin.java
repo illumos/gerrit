@@ -27,7 +27,7 @@ import com.google.inject.Singleton;
 public class GetTestPlugin implements RestReadView<PluginResource> {
 
   @Override
-  public Object apply(PluginResource resource)
+  public Response<?> apply(PluginResource resource)
       throws AuthException, BadRequestException, ResourceConflictException, Exception {
     return Response.ok("Foo");
   }

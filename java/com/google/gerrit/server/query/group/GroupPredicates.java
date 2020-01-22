@@ -14,15 +14,16 @@
 
 package com.google.gerrit.server.query.group;
 
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.index.FieldDef;
 import com.google.gerrit.index.query.IndexPredicate;
 import com.google.gerrit.index.query.Predicate;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
 import com.google.gerrit.server.group.InternalGroup;
 import com.google.gerrit.server.index.group.GroupField;
 import java.util.Locale;
 
+/** Utility class to create predicates for group index queries. */
 public class GroupPredicates {
   public static Predicate<InternalGroup> id(AccountGroup.Id groupId) {
     return new GroupPredicate(GroupField.ID, groupId.toString());
@@ -63,6 +64,7 @@ public class GroupPredicates {
     return new GroupPredicate(GroupField.SUBGROUP, subgroupUuid.get());
   }
 
+  /** Predicate that is mapped to a field in the group index. */
   static class GroupPredicate extends IndexPredicate<InternalGroup> {
     GroupPredicate(FieldDef<InternalGroup, ?> def, String value) {
       super(def, value);

@@ -18,8 +18,8 @@ import static com.google.gerrit.sshd.CommandMetaData.Mode.MASTER_OR_SLAVE;
 
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Strings;
+import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.extensions.common.AccountInfo;
-import com.google.gerrit.reviewdb.client.AccountGroup;
 import com.google.gerrit.server.account.AccountLoader;
 import com.google.gerrit.server.account.GroupCache;
 import com.google.gerrit.server.account.GroupControl;
@@ -69,7 +69,7 @@ public class ListMembersCommand extends SshCommand {
     }
 
     void display(PrintWriter writer) throws PermissionBackendException {
-      Optional<InternalGroup> group = groupCache.get(new AccountGroup.NameKey(name));
+      Optional<InternalGroup> group = groupCache.get(AccountGroup.nameKey(name));
       String errorText = "Group not found or not visible\n";
 
       if (!group.isPresent()) {

@@ -15,21 +15,26 @@
 package com.google.gerrit.acceptance.api.group;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allowCapability;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
 
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.Sandboxed;
+import com.google.gerrit.acceptance.testsuite.group.GroupOperations;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.common.data.GlobalCapability;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.config.ConsistencyCheckInfo;
 import com.google.gerrit.extensions.api.config.ConsistencyCheckInfo.ConsistencyProblemInfo;
 import com.google.gerrit.extensions.api.config.ConsistencyCheckInput;
 import com.google.gerrit.extensions.common.GroupInfo;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.RefNames;
 import com.google.gerrit.server.group.db.GroupConfig;
 import com.google.gerrit.server.group.db.GroupNameNotes;
 import com.google.gerrit.server.group.db.testing.GroupTestUtil;
+import com.google.inject.Inject;
 import java.util.List;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.RefRename;
@@ -47,6 +52,9 @@ import org.junit.Test;
 @Sandboxed
 @NoHttpd
 public class GroupsConsistencyIT extends AbstractDaemonTest {
+
+  @Inject protected GroupOperations groupOperations;
+  @Inject private ProjectOperations projectOperations;
   private GroupInfo gAdmin;
   private GroupInfo g1;
   private GroupInfo g2;
@@ -55,13 +63,16 @@ public class GroupsConsistencyIT extends AbstractDaemonTest {
 
   @Before
   public void basicSetup() throws Exception {
-    allowGlobalCapabilities(REGISTERED_USERS, GlobalCapability.ACCESS_DATABASE);
+    projectOperations
+        .allProjectsForUpdate()
+        .add(allowCapability(GlobalCapability.ACCESS_DATABASE).group(REGISTERED_USERS))
+        .update();
 
-    String name1 = createGroup("g1");
-    String name2 = createGroup("g2");
+    String name1 = groupOperations.newGroup().name("g1").create().get();
+    String name2 = groupOperations.newGroup().name("g2").create().get();
 
-    gApi.groups().id(name1).addMembers(user.fullName);
-    gApi.groups().id(name2).addMembers(admin.fullName);
+    gApi.groups().id(name1).addMembers(user.fullName());
+    gApi.groups().id(name2).addMembers(admin.fullName());
     gApi.groups().id(name1).addGroups(name2);
 
     this.g1 = gApi.groups().id(name1).detail();
@@ -90,7 +101,7 @@ public class GroupsConsistencyIT extends AbstractDaemonTest {
   public void missingGroupRef() throws Exception {
 
     try (Repository repo = repoManager.openRepository(allUsers)) {
-      RefUpdate ru = repo.updateRef(RefNames.refsGroups(new AccountGroup.UUID(g1.id)));
+      RefUpdate ru = repo.updateRef(RefNames.refsGroups(AccountGroup.uuid(g1.id)));
       ru.setForceUpdate(true);
       RefUpdate.Result result = ru.delete();
       assertThat(result).isEqualTo(Result.FORCED);
@@ -105,7 +116,7 @@ public class GroupsConsistencyIT extends AbstractDaemonTest {
     try (Repository repo = repoManager.openRepository(allUsers)) {
       RefRename ru =
           repo.renameRef(
-              RefNames.refsGroups(new AccountGroup.UUID(g1.id)), RefNames.REFS_GROUPS + BOGUS_UUID);
+              RefNames.refsGroups(AccountGroup.uuid(g1.id)), RefNames.REFS_GROUPS + BOGUS_UUID);
       RefUpdate.Result result = ru.rename();
       assertThat(result).isEqualTo(Result.RENAMED);
     }
@@ -119,8 +130,8 @@ public class GroupsConsistencyIT extends AbstractDaemonTest {
     try (Repository repo = repoManager.openRepository(allUsers)) {
       RefRename ru =
           repo.renameRef(
-              RefNames.refsGroups(new AccountGroup.UUID(g1.id)),
-              RefNames.refsGroups(new AccountGroup.UUID(BOGUS_UUID)));
+              RefNames.refsGroups(AccountGroup.uuid(g1.id)),
+              RefNames.refsGroups(AccountGroup.uuid(BOGUS_UUID)));
       RefUpdate.Result result = ru.rename();
       assertThat(result).isEqualTo(Result.RENAMED);
     }
@@ -131,7 +142,7 @@ public class GroupsConsistencyIT extends AbstractDaemonTest {
   @Test
   public void groupRefDoesNotParse() throws Exception {
     updateGroupFile(
-        RefNames.refsGroups(new AccountGroup.UUID(g1.id)),
+        RefNames.refsGroups(AccountGroup.uuid(g1.id)),
         GroupConfig.GROUP_CONFIG_FILE,
         "[this is not valid\n");
     assertError("does not parse");
@@ -141,7 +152,7 @@ public class GroupsConsistencyIT extends AbstractDaemonTest {
   public void nameRefDoesNotParse() throws Exception {
     updateGroupFile(
         RefNames.REFS_GROUPNAMES,
-        GroupNameNotes.getNoteKey(new AccountGroup.NameKey(g1.name)).getName(),
+        GroupNameNotes.getNoteKey(AccountGroup.nameKey(g1.name)).getName(),
         "[this is not valid\n");
     assertError("does not parse");
   }
@@ -154,9 +165,7 @@ public class GroupsConsistencyIT extends AbstractDaemonTest {
     cfg.setString("group", null, "ownerGroupUuid", gAdmin.id);
 
     updateGroupFile(
-        RefNames.refsGroups(new AccountGroup.UUID(g1.id)),
-        GroupConfig.GROUP_CONFIG_FILE,
-        cfg.toText());
+        RefNames.refsGroups(AccountGroup.uuid(g1.id)), GroupConfig.GROUP_CONFIG_FILE, cfg.toText());
     assertError("inconsistent name");
   }
 
@@ -168,9 +177,7 @@ public class GroupsConsistencyIT extends AbstractDaemonTest {
     cfg.setString("group", null, "ownerGroupUuid", gAdmin.id);
 
     updateGroupFile(
-        RefNames.refsGroups(new AccountGroup.UUID(g1.id)),
-        GroupConfig.GROUP_CONFIG_FILE,
-        cfg.toText());
+        RefNames.refsGroups(AccountGroup.uuid(g1.id)), GroupConfig.GROUP_CONFIG_FILE, cfg.toText());
     assertError("shared group id");
   }
 
@@ -182,9 +189,7 @@ public class GroupsConsistencyIT extends AbstractDaemonTest {
     cfg.setString("group", null, "ownerGroupUuid", BOGUS_UUID);
 
     updateGroupFile(
-        RefNames.refsGroups(new AccountGroup.UUID(g1.id)),
-        GroupConfig.GROUP_CONFIG_FILE,
-        cfg.toText());
+        RefNames.refsGroups(AccountGroup.uuid(g1.id)), GroupConfig.GROUP_CONFIG_FILE, cfg.toText());
     assertError("nonexistent owner group");
   }
 
@@ -197,28 +202,27 @@ public class GroupsConsistencyIT extends AbstractDaemonTest {
 
     updateGroupFile(
         RefNames.REFS_GROUPNAMES,
-        GroupNameNotes.getNoteKey(new AccountGroup.NameKey(bogusName)).getName(),
+        GroupNameNotes.getNoteKey(AccountGroup.nameKey(bogusName)).getName(),
         config.toText());
     assertError("entry missing as group ref");
   }
 
   @Test
   public void nonexistentMember() throws Exception {
-    updateGroupFile(RefNames.refsGroups(new AccountGroup.UUID(g1.id)), "members", "314159265\n");
+    updateGroupFile(RefNames.refsGroups(AccountGroup.uuid(g1.id)), "members", "314159265\n");
     assertError("nonexistent member 314159265");
   }
 
   @Test
   public void nonexistentSubgroup() throws Exception {
-    updateGroupFile(
-        RefNames.refsGroups(new AccountGroup.UUID(g1.id)), "subgroups", BOGUS_UUID + "\n");
+    updateGroupFile(RefNames.refsGroups(AccountGroup.uuid(g1.id)), "subgroups", BOGUS_UUID + "\n");
     assertError("has nonexistent subgroup");
   }
 
   @Test
   public void cyclicSubgroup() throws Exception {
-    updateGroupFile(RefNames.refsGroups(new AccountGroup.UUID(g1.id)), "subgroups", g1.id + "\n");
-    assertWarning("cyclic");
+    updateGroupFile(RefNames.refsGroups(AccountGroup.uuid(g1.id)), "subgroups", g1.id + "\n");
+    assertWarning("cycle");
   }
 
   private void assertError(String msg) throws Exception {
@@ -248,7 +252,8 @@ public class GroupsConsistencyIT extends AbstractDaemonTest {
       }
     }
 
-    fail(String.format("could not find %s substring '%s' in %s", want, msg, problems));
+    assertWithMessage(String.format("could not find %s substring '%s' in %s", want, msg, problems))
+        .fail();
   }
 
   private void updateGroupFile(String refName, String fileName, String content) throws Exception {

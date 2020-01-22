@@ -17,10 +17,11 @@ package com.google.gerrit.server.notedb;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.gerrit.server.notedb.ChangeNoteUtil.parseCommitMessageRange;
+import static java.util.Objects.requireNonNull;
 import static org.eclipse.jgit.util.RawParseUtils.decode;
 
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.RefNames;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.util.Optional;
@@ -40,12 +41,12 @@ import org.eclipse.jgit.util.RawParseUtils;
 public class DeleteChangeMessageRewriter implements NoteDbRewriter {
 
   private final Change.Id changeId;
-  private final int targetMessageIdx;
+  private final String targetMessageId;
   private final String newChangeMessage;
 
-  DeleteChangeMessageRewriter(Change.Id changeId, int targetMessageIdx, String newChangeMessage) {
+  DeleteChangeMessageRewriter(Change.Id changeId, String targetMessageId, String newChangeMessage) {
     this.changeId = changeId;
-    this.targetMessageIdx = targetMessageIdx;
+    this.targetMessageId = requireNonNull(targetMessageId);
     this.newChangeMessage = newChangeMessage;
   }
 
@@ -67,21 +68,18 @@ public class DeleteChangeMessageRewriter implements NoteDbRewriter {
 
     ObjectId newTipId = null;
     RevCommit originalCommit;
-    int idx = 0;
+    boolean startRewrite = false;
     while ((originalCommit = revWalk.next()) != null) {
-      if (idx < targetMessageIdx) {
+      boolean isTargetCommit = originalCommit.getId().getName().equals(targetMessageId);
+      if (!startRewrite && !isTargetCommit) {
         newTipId = originalCommit;
-        idx++;
         continue;
       }
 
+      startRewrite = true;
       String newCommitMessage =
-          (idx == targetMessageIdx)
-              ? createNewCommitMessage(originalCommit)
-              : originalCommit.getFullMessage();
+          isTargetCommit ? createNewCommitMessage(originalCommit) : originalCommit.getFullMessage();
       newTipId = rewriteOneCommit(originalCommit, newTipId, newCommitMessage, inserter);
-
-      idx++;
     }
     return newTipId;
   }

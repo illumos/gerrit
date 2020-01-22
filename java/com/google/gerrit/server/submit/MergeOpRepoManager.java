@@ -15,13 +15,14 @@
 package com.google.gerrit.server.submit;
 
 import static com.google.common.base.Preconditions.checkState;
+import static java.util.Objects.requireNonNull;
 
 import com.google.common.collect.Maps;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
-import com.google.gerrit.reviewdb.server.ReviewDb;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.server.IdentifiedUser;
+import com.google.gerrit.server.change.NotifyResolver;
 import com.google.gerrit.server.git.CodeReviewCommit;
 import com.google.gerrit.server.git.CodeReviewCommit.CodeReviewRevWalk;
 import com.google.gerrit.server.git.GitRepositoryManager;
@@ -41,10 +42,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import org.eclipse.jgit.errors.RepositoryNotFoundException;
-import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.ObjectReader;
-import org.eclipse.jgit.lib.RefUpdate;
+import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevFlag;
 import org.eclipse.jgit.revwalk.RevSort;
@@ -66,7 +66,7 @@ public class MergeOpRepoManager implements AutoCloseable {
     BatchUpdate update;
 
     private final ObjectReader reader;
-    private final Map<Branch.NameKey, OpenBranch> branches;
+    private final Map<BranchNameKey, OpenBranch> branches;
 
     private OpenRepo(Repository repo, ProjectState project) {
       this.repo = repo;
@@ -83,7 +83,7 @@ public class MergeOpRepoManager implements AutoCloseable {
       branches = Maps.newHashMapWithExpectedSize(1);
     }
 
-    OpenBranch getBranch(Branch.NameKey branch) throws IntegrationException {
+    OpenBranch getBranch(BranchNameKey branch) throws IntegrationException {
       OpenBranch ob = branches.get(branch);
       if (ob == null) {
         ob = new OpenBranch(this, branch);
@@ -105,12 +105,13 @@ public class MergeOpRepoManager implements AutoCloseable {
     }
 
     public BatchUpdate getUpdate() {
-      checkState(db != null, "call setContext before getUpdate");
+      checkState(caller != null, "call setContext before getUpdate");
       if (update == null) {
         update =
             batchUpdateFactory
-                .create(db, getProjectName(), caller, ts)
+                .create(getProjectName(), caller, ts)
                 .setRepository(repo, rw, ins)
+                .setNotify(notify)
                 .setOnSubmitValidators(onSubmitValidatorsFactory.create());
       }
       return update;
@@ -128,19 +129,17 @@ public class MergeOpRepoManager implements AutoCloseable {
   }
 
   public static class OpenBranch {
-    final RefUpdate update;
     final CodeReviewCommit oldTip;
     MergeTip mergeTip;
 
-    OpenBranch(OpenRepo or, Branch.NameKey name) throws IntegrationException {
+    OpenBranch(OpenRepo or, BranchNameKey name) throws IntegrationException {
       try {
-        update = or.repo.updateRef(name.get());
-        if (update.getOldObjectId() != null) {
-          oldTip = or.rw.parseCommit(update.getOldObjectId());
-        } else if (Objects.equals(or.repo.getFullBranch(), name.get())
-            || Objects.equals(RefNames.REFS_CONFIG, name.get())) {
+        Ref ref = or.getRepo().exactRef(name.branch());
+        if (ref != null) {
+          oldTip = or.rw.parseCommit(ref.getObjectId());
+        } else if (Objects.equals(or.repo.getFullBranch(), name.branch())
+            || Objects.equals(RefNames.REFS_CONFIG, name.branch())) {
           oldTip = null;
-          update.setExpectedOldObjectId(ObjectId.zeroId());
         } else {
           throw new IntegrationException(
               "The destination branch " + name + " does not exist anymore.");
@@ -157,9 +156,9 @@ public class MergeOpRepoManager implements AutoCloseable {
   private final GitRepositoryManager repoManager;
   private final ProjectCache projectCache;
 
-  private ReviewDb db;
   private Timestamp ts;
   private IdentifiedUser caller;
+  private NotifyResolver.Result notify;
 
   @Inject
   MergeOpRepoManager(
@@ -175,10 +174,10 @@ public class MergeOpRepoManager implements AutoCloseable {
     openRepos = new HashMap<>();
   }
 
-  public void setContext(ReviewDb db, Timestamp ts, IdentifiedUser caller) {
-    this.db = db;
-    this.ts = ts;
-    this.caller = caller;
+  public void setContext(Timestamp ts, IdentifiedUser caller, NotifyResolver.Result notify) {
+    this.ts = requireNonNull(ts);
+    this.caller = requireNonNull(caller);
+    this.notify = requireNonNull(notify);
   }
 
   public OpenRepo getRepo(Project.NameKey project) throws NoSuchProjectException, IOException {
@@ -203,7 +202,7 @@ public class MergeOpRepoManager implements AutoCloseable {
       throws NoSuchProjectException, IOException {
     List<BatchUpdate> updates = new ArrayList<>(projects.size());
     for (Project.NameKey project : projects) {
-      updates.add(getRepo(project).getUpdate().setRefLogMessage("merged"));
+      updates.add(getRepo(project).getUpdate().setNotify(notify).setRefLogMessage("merged"));
     }
     return updates;
   }

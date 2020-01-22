@@ -15,12 +15,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../behaviors/gr-patch-set-behavior/gr-patch-set-behavior.html">
 <link rel="import" href="../../../behaviors/gr-path-list-behavior/gr-path-list-behavior.html">
 <link rel="import" href="../../../behaviors/keyboard-shortcut-behavior/keyboard-shortcut-behavior.html">
 <link rel="import" href="../../../behaviors/rest-client-behavior/rest-client-behavior.html">
-<link rel="import" href="../../../bower_components/iron-dropdown/iron-dropdown.html">
+<link rel="import" href="/bower_components/iron-dropdown/iron-dropdown.html">
+<link rel="import" href="/bower_components/iron-input/iron-input.html">
 <link rel="import" href="../../../styles/shared-styles.html">
 <link rel="import" href="../../core/gr-navigation/gr-navigation.html">
 <link rel="import" href="../../core/gr-reporting/gr-reporting.html">
@@ -35,6 +37,7 @@ limitations under the License.
 <link rel="import" href="../../shared/revision-info/revision-info.html">
 <link rel="import" href="../gr-comment-api/gr-comment-api.html">
 <link rel="import" href="../gr-diff-cursor/gr-diff-cursor.html">
+<link rel="import" href="../gr-apply-fix-dialog/gr-apply-fix-dialog.html">
 <link rel="import" href="../gr-diff-host/gr-diff-host.html">
 <link rel="import" href="../gr-diff-mode-selector/gr-diff-mode-selector.html">
 <link rel="import" href="../gr-diff-preferences-dialog/gr-diff-preferences-dialog.html">
@@ -70,7 +73,7 @@ limitations under the License.
         justify-content: space-between;
       }
       header {
-        padding: .75em var(--default-horizontal-margin);
+        padding: var(--spacing-s) var(--spacing-l);
       }
       .patchRangeLeft {
         align-items: center;
@@ -85,11 +88,11 @@ limitations under the License.
         white-space: nowrap;
       }
       .navLink {
-        padding: 0 .25em;
+        padding: 0 var(--spacing-xs);
       }
       .reviewed {
         display: inline-block;
-        margin: 0 .25em;
+        margin: 0 var(--spacing-xs);
         vertical-align: .15em;
       }
       .jumpToFileContainer {
@@ -99,22 +102,19 @@ limitations under the License.
         display: none;
       }
       gr-button {
-        padding: .3em 0;
+        padding: var(--spacing-s) 0;
         text-decoration: none;
       }
       .loading {
         color: var(--deemphasized-text-color);
-        font-size: 2rem;
+        font-size: var(--font-size-h1);
         height: 100%;
-        padding: 1em var(--default-horizontal-margin);
+        padding: var(--spacing-l);
         text-align: center;
       }
       .subHeader {
         flex-wrap: wrap;
-        margin: 0 var(--default-horizontal-margin) .75em;
-      }
-      .subHeader > div {
-        margin-top: .25em;
+        padding: 0 var(--spacing-l) var(--spacing-s);
       }
       .prefsButton {
         text-align: right;
@@ -143,7 +143,7 @@ limitations under the License.
         display: flex;
       }
       .diffModeSelector span {
-        margin-right: .2rem;
+        margin-right: var(--spacing-xs);
       }
       .diffModeSelector.hide,
       .separator.hide {
@@ -156,7 +156,7 @@ limitations under the License.
       }
       @media screen and (max-width: 50em) {
         header {
-          padding: .5em var(--default-horizontal-margin);
+          padding: var(--spacing-s) var(--spacing-l);
         }
         .dash {
           display: none;
@@ -167,23 +167,23 @@ limitations under the License.
         .fileNav {
           align-items: flex-start;
           display: flex;
-          margin: 0 .25em;
+          margin: 0 var(--spacing-xs);
         }
         .fullFileName {
           display: block;
           font-style: italic;
           min-width: 50%;
-          padding: 0 .1em;
+          padding: 0 var(--spacing-xxs);
           text-align: center;
           width: 100%;
           word-wrap: break-word;
         }
         .reviewed {
-          vertical-align: -.1em;
+          vertical-align: -1px;
         }
         .mobileNavLink {
           color: var(--primary-text-color);
-          font-size: 1.5rem;
+          font-size: var(--font-size-h2);
           font-weight: var(--font-weight-bold);
           text-decoration: none;
         }
@@ -278,35 +278,37 @@ limitations under the License.
           </span>
         </div>
         <div class="rightControls">
-          <span class$="blameLoader [[_computeBlameLoaderClass(_isImageDiff)]]">
+          <span class$="blameLoader [[_computeBlameLoaderClass(_isImageDiff, _path)]]">
             <gr-button
                 link
                 disabled="[[_isBlameLoading]]"
-                on-tap="_toggleBlame">[[_computeBlameToggleLabel(_isBlameLoaded, _isBlameLoading)]]</gr-button>
+                on-click="_toggleBlame">[[_computeBlameToggleLabel(_isBlameLoaded, _isBlameLoading)]]</gr-button>
             <span class="separator"></span>
           </span>
           <div class$="diffModeSelector [[_computeModeSelectHideClass(_isImageDiff)]]">
             <span>Diff view:</span>
             <gr-diff-mode-selector
                 id="modeSelect"
-                save-on-change="[[_loggedIn]]"
+                save-on-change="[[!_diffPrefsDisabled]]"
                 mode="{{changeViewState.diffMode}}"></gr-diff-mode-selector>
           </div>
           <span id="diffPrefsContainer"
-              hidden$="[[_computePrefsButtonHidden(_prefs, _loggedIn)]]" hidden>
+              hidden$="[[_computePrefsButtonHidden(_prefs, _diffPrefsDisabled)]]" hidden>
             <span class="preferences desktop">
               <gr-button
                   link
                   class="prefsButton"
                   has-tooltip
                   title="Diff preferences"
-                  on-tap="_handlePrefsTap"><iron-icon icon="gr-icons:settings"></iron-icon></gr-button>
+                  on-click="_handlePrefsTap"><iron-icon icon="gr-icons:settings"></iron-icon></gr-button>
             </span>
           </span>
           <gr-endpoint-decorator name="annotation-toggler">
             <span hidden id="annotation-span">
               <label for="annotation-checkbox" id="annotation-label"></label>
-              <input is="iron-input" type="checkbox" id="annotation-checkbox" disabled>
+              <iron-input type="checkbox" disabled>
+                <input is="iron-input" type="checkbox" id="annotation-checkbox" disabled>
+              </iron-input>
             </span>
           </gr-endpoint-decorator>
         </div>
@@ -336,12 +338,18 @@ limitations under the License.
         patch-range="[[_patchRange]]"
         path="[[_path]]"
         prefs="[[_prefs]]"
-        project-config="[[_projectConfig]]"
         project-name="[[_change.project]]"
         view-mode="[[_diffMode]]"
         is-blame-loaded="{{_isBlameLoaded}}"
+        on-comment-anchor-tap="_onLineSelected"
         on-line-selected="_onLineSelected">
     </gr-diff-host>
+    <gr-apply-fix-dialog
+      id="applyFixDialog"
+      prefs="[[_prefs]]"
+      change="[[_change]]"
+      change-num="[[_changeNum]]">
+    </gr-apply-fix-dialog>
     <gr-diff-preferences-dialog
         id="diffPreferencesDialog"
         diff-prefs="{{_prefs}}"

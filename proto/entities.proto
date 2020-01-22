@@ -1,0 +1,160 @@
+// Copyright (C) 2018 The Android Open Source Project
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto2";
+
+package devtools.gerritcodereview;
+
+option java_package = "com.google.gerrit.proto";
+
+// Serialized form of com.google.gerrit.entities.Change.Id.
+// Next ID: 2
+message Change_Id {
+  required int32 id = 1;
+}
+
+// Serialized form of com.google.gerrit.entities.Change.Key.
+// Next ID: 2
+message Change_Key {
+  optional string id = 1;
+}
+
+// Serialized form of com.google.gerrit.entities.Change.
+// Next ID: 25
+message Change {
+  required Change_Id change_id = 1;
+  optional Change_Key change_key = 2;
+  optional int32 row_version = 3;
+  optional fixed64 created_on = 4;
+  optional fixed64 last_updated_on = 5;
+  optional Account_Id owner_account_id = 7;
+  optional Branch_NameKey dest = 8;
+  optional uint32 status = 10;
+  optional int32 current_patch_set_id = 12;
+  optional string subject = 13;
+  optional string topic = 14;
+  optional string original_subject = 17;
+  optional string submission_id = 18;
+  optional Account_Id assignee = 19;
+  optional bool is_private = 20;
+  optional bool work_in_progress = 21;
+  optional bool review_started = 22;
+  optional Change_Id revert_of = 23;
+  optional PatchSet_Id cherry_pick_of = 24;
+
+  // Deleted fields, should not be reused:
+  reserved 6;    // sortkey
+  reserved 9;    // open
+  reserved 11;   // nbrPatchSets
+  reserved 15;   // lastSha1MergeTested
+  reserved 16;   // mergeable
+  reserved 101;  // note_db_state
+}
+
+// Serialized form of com.google.gerrit.enities.ChangeMessage.
+// Next ID: 3
+message ChangeMessage_Key {
+  required Change_Id change_id = 1;
+  required string uuid = 2;
+}
+
+// Serialized form of com.google.gerrit.entities.ChangeMessage.
+// Next ID: 8
+message ChangeMessage {
+  required ChangeMessage_Key key = 1;
+  optional Account_Id author_id = 2;
+  optional fixed64 written_on = 3;
+  optional string message = 4;
+  optional PatchSet_Id patchset = 5;
+  optional string tag = 6;
+  optional Account_Id real_author = 7;
+}
+
+// Serialized form of com.google.gerrit.entities.PatchSet.Id.
+// Next ID: 3
+message PatchSet_Id {
+  required Change_Id change_id = 1;
+  required int32 id = 2;
+}
+
+// Serialized form of com.google.gerrit.entities.PatchSet.
+// Next ID: 10
+message PatchSet {
+  required PatchSet_Id id = 1;
+  optional ObjectId commitId = 2;
+  optional Account_Id uploader_account_id = 3;
+  optional fixed64 created_on = 4;
+  optional string groups = 6;
+  optional string push_certificate = 8;
+  optional string description = 9;
+
+  // Deleted fields, should not be reused:
+  reserved 5;  // draft
+  reserved 7;  // pushCertficate
+}
+
+// Serialized form of com.google.gerrit.entities.Account.Id.
+// Next ID: 2
+message Account_Id {
+  required int32 id = 1;
+}
+
+// Serialized form of com.google.gerrit.entities.LabelId.
+// Next ID: 2
+message LabelId {
+  required string id = 1;
+}
+
+// Serialized form of com.google.gerrit.entities.PatchSetApproval.Key.
+// Next ID: 4
+message PatchSetApproval_Key {
+  required PatchSet_Id patch_set_id = 1;
+  required Account_Id account_id = 2;
+  required LabelId label_id = 3;
+}
+
+// Serialized form of com.google.gerrit.entities.PatchSetApproval.
+// Next ID: 9
+message PatchSetApproval {
+  required PatchSetApproval_Key key = 1;
+  optional int32 value = 2;
+  optional fixed64 granted = 3;
+  optional string tag = 6;
+  optional Account_Id real_account_id = 7;
+  optional bool post_submit = 8;
+
+  // Deleted fields, should not be reused:
+  reserved 4;  // changeOpen
+  reserved 5;  // changeSortKey
+}
+
+// Serialized form of com.google.gerrit.entities.Project.NameKey.
+// Next ID: 2
+message Project_NameKey {
+  optional string name = 1;
+}
+
+// Serialized form of com.google.gerrit.entities.Branch.NameKey.
+// Next ID: 3
+message Branch_NameKey {
+  optional Project_NameKey project = 1;
+  optional string branch = 2;
+}
+
+// Serialized form of org.eclipse.jgit.lib.ObjectId.
+// Next ID: 2
+message ObjectId {
+  // Hex string representation of the ID.
+  optional string name = 1;
+}

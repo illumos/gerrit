@@ -14,7 +14,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 -->
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 <link rel="import" href="../gr-linked-text/gr-linked-text.html">
 <link rel="import" href="../../../styles/shared-styles.html">
 
@@ -29,7 +29,7 @@ limitations under the License.
       ul,
       blockquote,
       gr-linked-text.pre {
-        margin: 0 0 .8em 0;
+        margin: 0 0 var(--spacing-m) 0;
       }
       p,
       ul,
@@ -44,14 +44,16 @@ limitations under the License.
       }
       blockquote {
         border-left: 1px solid #aaa;
-        padding: 0 .7em;
+        padding: 0 var(--spacing-m);
       }
       li {
         list-style-type: disc;
-        margin-left: 1.4em;
+        margin-left: var(--spacing-xl);
       }
       gr-linked-text.pre {
         font-family: var(--monospace-font-family);
+        font-size: var(--font-size-code);
+        line-height: var(--line-height-code);
       }
 
     </style>

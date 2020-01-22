@@ -15,13 +15,9 @@
 package com.google.gerrit.index.query;
 
 import org.junit.Ignore;
-import org.junit.Rule;
-import org.junit.rules.ExpectedException;
 
 @Ignore
 public abstract class PredicateTest {
-  @Rule public ExpectedException exception = ExpectedException.none();
-
   protected static final class TestPredicate extends OperatorPredicate<String> {
     protected TestPredicate(String name, String value) {
       super(name, value);

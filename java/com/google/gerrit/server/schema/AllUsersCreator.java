@@ -17,24 +17,25 @@ package com.google.gerrit.server.schema;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
 import static com.google.gerrit.server.schema.AclUtil.grant;
-import static com.google.gerrit.server.schema.AllProjectsCreator.getDefaultCodeReviewLabel;
+import static com.google.gerrit.server.schema.AllProjectsInput.getDefaultCodeReviewLabel;
 
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.common.UsedAt;
 import com.google.gerrit.common.Version;
 import com.google.gerrit.common.data.AccessSection;
 import com.google.gerrit.common.data.GroupReference;
 import com.google.gerrit.common.data.LabelType;
 import com.google.gerrit.common.data.Permission;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.server.GerritPersonIdent;
-import com.google.gerrit.server.UsedAt;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.group.SystemGroupBackend;
 import com.google.gerrit.server.project.ProjectConfig;
+import com.google.gerrit.server.project.ProjectConfig.Factory;
 import com.google.gerrit.server.project.RefPattern;
 import com.google.inject.Inject;
 import java.io.IOException;
@@ -50,6 +51,7 @@ public class AllUsersCreator {
   private final GitRepositoryManager mgr;
   private final AllUsersName allUsersName;
   private final PersonIdent serverUser;
+  private final ProjectConfig.Factory projectConfigFactory;
   private final GroupReference registered;
 
   @Nullable private GroupReference admin;
@@ -60,11 +62,13 @@ public class AllUsersCreator {
       GitRepositoryManager mgr,
       AllUsersName allUsersName,
       SystemGroupBackend systemGroupBackend,
-      @GerritPersonIdent PersonIdent serverUser) {
+      @GerritPersonIdent PersonIdent serverUser,
+      Factory projectConfigFactory) {
     this.mgr = mgr;
     this.allUsersName = allUsersName;
     this.serverUser = serverUser;
     this.registered = systemGroupBackend.getGroup(REGISTERED_USERS);
+    this.projectConfigFactory = projectConfigFactory;
     this.codeReviewLabel = getDefaultCodeReviewLabel();
   }
 
@@ -107,7 +111,7 @@ public class AllUsersCreator {
       md.getCommitBuilder().setCommitter(serverUser);
       md.setMessage("Initialized Gerrit Code Review " + Version.getVersion());
 
-      ProjectConfig config = ProjectConfig.read(md);
+      ProjectConfig config = projectConfigFactory.read(md);
       Project project = config.getProject();
       project.setDescription("Individual user settings and preferences.");
 

@@ -17,35 +17,45 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-diff-preferences-dialog',
+  /**
+   * @appliesMixin Gerrit.FireMixin
+   * @extends Polymer.Element
+   */
+  class GrDiffPreferencesDialog extends Polymer.mixinBehaviors( [
+    Gerrit.FireBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-diff-preferences-dialog'; }
 
-    properties: {
+    static get properties() {
+      return {
       /** @type {?} */
-      diffPrefs: Object,
+        diffPrefs: Object,
 
-      _diffPrefsChanged: Boolean,
-    },
+        _diffPrefsChanged: Boolean,
+      };
+    }
 
     getFocusStops() {
       return {
-        start: this.$.contextSelect,
+        start: this.$.diffPreferences.$.contextSelect,
         end: this.$.saveButton,
       };
-    },
+    }
 
     resetFocus() {
-      this.$.contextSelect.focus();
-    },
+      this.$.diffPreferences.$.contextSelect.focus();
+    }
 
     _computeHeaderClass(changed) {
       return changed ? 'edited' : '';
-    },
+    }
 
     _handleCancelDiff(e) {
       e.stopPropagation();
       this.$.diffPrefsOverlay.close();
-    },
+    }
 
     open() {
       this.$.diffPrefsOverlay.open().then(() => {
@@ -53,7 +63,7 @@
         this.$.diffPrefsOverlay.setFocusStops(focusStops);
         this.resetFocus();
       });
-    },
+    }
 
     _handleSaveDiffPreferences() {
       this.$.diffPreferences.save().then(() => {
@@ -61,6 +71,8 @@
 
         this.$.diffPrefsOverlay.close();
       });
-    },
-  });
+    }
+  }
+
+  customElements.define(GrDiffPreferencesDialog.is, GrDiffPreferencesDialog);
 })();

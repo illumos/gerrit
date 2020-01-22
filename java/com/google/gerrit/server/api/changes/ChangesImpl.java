@@ -20,6 +20,7 @@ import static java.util.Objects.requireNonNull;
 
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
+import com.google.gerrit.entities.Change;
 import com.google.gerrit.extensions.api.changes.ChangeApi;
 import com.google.gerrit.extensions.api.changes.Changes;
 import com.google.gerrit.extensions.client.ListChangesOption;
@@ -29,7 +30,7 @@ import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.TopLevelResource;
 import com.google.gerrit.extensions.restapi.Url;
-import com.google.gerrit.reviewdb.client.Change;
+import com.google.gerrit.server.api.changes.ChangeApiImpl.DynamicOptionParser;
 import com.google.gerrit.server.restapi.change.ChangesCollection;
 import com.google.gerrit.server.restapi.change.CreateChange;
 import com.google.gerrit.server.restapi.change.QueryChanges;
@@ -43,6 +44,7 @@ class ChangesImpl implements Changes {
   private final ChangesCollection changes;
   private final ChangeApiImpl.Factory api;
   private final CreateChange createChange;
+  private final DynamicOptionParser dynamicOptionParser;
   private final Provider<QueryChanges> queryProvider;
 
   @Inject
@@ -50,10 +52,12 @@ class ChangesImpl implements Changes {
       ChangesCollection changes,
       ChangeApiImpl.Factory api,
       CreateChange createChange,
+      DynamicOptionParser dynamicOptionParser,
       Provider<QueryChanges> queryProvider) {
     this.changes = changes;
     this.api = api;
     this.createChange = createChange;
+    this.dynamicOptionParser = dynamicOptionParser;
     this.queryProvider = queryProvider;
   }
 
@@ -88,7 +92,7 @@ class ChangesImpl implements Changes {
   public ChangeApi create(ChangeInput in) throws RestApiException {
     try {
       ChangeInfo out = createChange.apply(TopLevelResource.INSTANCE, in).value();
-      return api.create(changes.parse(new Change.Id(out._number)));
+      return api.create(changes.parse(Change.id(out._number)));
     } catch (Exception e) {
       throw asRestApiException("Cannot create change", e);
     }
@@ -116,12 +120,14 @@ class ChangesImpl implements Changes {
     }
     qc.setLimit(q.getLimit());
     qc.setStart(q.getStart());
+    qc.setNoLimit(q.getNoLimit());
     for (ListChangesOption option : q.getOptions()) {
       qc.addOption(option);
     }
+    dynamicOptionParser.parseDynamicOptions(qc, q.getPluginOptions());
 
     try {
-      List<?> result = qc.apply(TopLevelResource.INSTANCE);
+      List<?> result = qc.apply(TopLevelResource.INSTANCE).value();
       if (result.isEmpty()) {
         return ImmutableList.of();
       }

@@ -18,7 +18,7 @@ import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth8.assertThat;
 import static org.eclipse.jgit.lib.Constants.R_HEADS;
 
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.testing.InMemoryRepositoryManager;
 import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.lib.Config;
@@ -41,7 +41,7 @@ public class RepoViewTest {
   @Before
   public void setUp() throws Exception {
     InMemoryRepositoryManager repoManager = new InMemoryRepositoryManager();
-    Project.NameKey project = new Project.NameKey("project");
+    Project.NameKey project = Project.nameKey("project");
     repo = repoManager.createRepository(project);
     tr = new TestRepository<>(repo);
     tr.branch(MASTER).commit().create();

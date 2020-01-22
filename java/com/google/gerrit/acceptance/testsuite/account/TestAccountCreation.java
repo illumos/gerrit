@@ -16,7 +16,7 @@ package com.google.gerrit.acceptance.testsuite.account;
 
 import com.google.auto.value.AutoValue;
 import com.google.gerrit.acceptance.testsuite.ThrowingFunction;
-import com.google.gerrit.reviewdb.client.Account;
+import com.google.gerrit.entities.Account;
 import java.util.Optional;
 
 @AutoValue
@@ -88,9 +88,9 @@ public abstract class TestAccountCreation {
 
     abstract TestAccountCreation autoBuild();
 
-    public Account.Id create() throws Exception {
+    public Account.Id create() {
       TestAccountCreation accountUpdate = autoBuild();
-      return accountUpdate.accountCreator().apply(accountUpdate);
+      return accountUpdate.accountCreator().applyAndThrowSilently(accountUpdate);
     }
   }
 }

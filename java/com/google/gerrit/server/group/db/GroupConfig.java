@@ -24,15 +24,15 @@ import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Streams;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.exceptions.DuplicateKeyException;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.git.meta.VersionedMetaData;
 import com.google.gerrit.server.group.InternalGroup;
 import com.google.gerrit.server.util.time.TimeUtil;
-import com.google.gwtorm.server.OrmDuplicateKeyException;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.Arrays;
@@ -57,13 +57,13 @@ import org.eclipse.jgit.revwalk.RevSort;
  * AccountGroup.UUID)} or {@link #loadForGroupSnapshot(Project.NameKey, Repository,
  * AccountGroup.UUID, ObjectId)}.
  *
- * <p><strong>Note: </strong>Any modification (group creation or update) only becomes permanent (and
+ * <p><strong>Note:</strong> Any modification (group creation or update) only becomes permanent (and
  * hence written to NoteDb) if {@link #commit(MetaDataUpdate)} is called.
  *
- * <p><strong>Warning: </strong>This class is a low-level API for groups in NoteDb. Most code which
+ * <p><strong>Warning:</strong> This class is a low-level API for groups in NoteDb. Most code which
  * deals with internal Gerrit groups should use {@link Groups} or {@link GroupsUpdate} instead.
  *
- * <p><em>Internal details</em>
+ * <h2>Internal details</h2>
  *
  * <p>Each group is represented by a commit on a branch as defined by {@link
  * RefNames#refsGroups(AccountGroup.UUID)}. Previous versions of the group exist as older commits on
@@ -99,7 +99,7 @@ public class GroupConfig extends VersionedMetaData {
    * {@link #setGroupUpdate(InternalGroupUpdate, AuditLogFormatter)} on the returned {@code
    * GroupConfig}.
    *
-   * <p><strong>Note: </strong>The returned {@code GroupConfig} has to be committed via {@link
+   * <p><strong>Note:</strong> The returned {@code GroupConfig} has to be committed via {@link
    * #commit(MetaDataUpdate)} in order to create the group for real.
    *
    * @param projectName the name of the project which holds the NoteDb commits for groups
@@ -110,11 +110,11 @@ public class GroupConfig extends VersionedMetaData {
    * @throws IOException if the repository can't be accessed for some reason
    * @throws ConfigInvalidException if a group with the same UUID already exists but can't be read
    *     due to an invalid format
-   * @throws OrmDuplicateKeyException if a group with the same UUID already exists
+   * @throws DuplicateKeyException if a group with the same UUID already exists
    */
   public static GroupConfig createForNewGroup(
       Project.NameKey projectName, Repository repository, InternalGroupCreation groupCreation)
-      throws IOException, ConfigInvalidException, OrmDuplicateKeyException {
+      throws IOException, ConfigInvalidException, DuplicateKeyException {
     GroupConfig groupConfig = new GroupConfig(groupCreation.getGroupUUID());
     groupConfig.load(projectName, repository);
     groupConfig.setGroupCreation(groupCreation);
@@ -216,7 +216,7 @@ public class GroupConfig extends VersionedMetaData {
    * <p>If the group is newly created, the {@code InternalGroupUpdate} can be used to specify
    * optional properties.
    *
-   * <p><strong>Note: </strong>This method doesn't perform the update. It only contains the
+   * <p><strong>Note:</strong> This method doesn't perform the update. It only contains the
    * instructions for the update. To apply the update for real and write the result back to NoteDb,
    * call {@link #commit(MetaDataUpdate)} on this {@code GroupConfig}.
    *
@@ -233,7 +233,7 @@ public class GroupConfig extends VersionedMetaData {
   /**
    * Allows the new name of a group to be empty during creation or update.
    *
-   * <p><strong>Note: </strong>This method exists only to support the migration of legacy groups
+   * <p><strong>Note:</strong> This method exists only to support the migration of legacy groups
    * which don't always necessarily have a name. Nowadays, we enforce that groups always have names.
    * When we remove the migration code, we can probably remove this method as well.
    */
@@ -241,11 +241,10 @@ public class GroupConfig extends VersionedMetaData {
     this.allowSaveEmptyName = true;
   }
 
-  private void setGroupCreation(InternalGroupCreation groupCreation)
-      throws OrmDuplicateKeyException {
+  private void setGroupCreation(InternalGroupCreation groupCreation) throws DuplicateKeyException {
     checkLoaded();
     if (loadedGroup.isPresent()) {
-      throw new OrmDuplicateKeyException(String.format("Group %s already exists", groupUuid.get()));
+      throw new DuplicateKeyException(String.format("Group %s already exists", groupUuid.get()));
     }
 
     this.groupCreation = Optional.of(groupCreation);
@@ -412,12 +411,12 @@ public class GroupConfig extends VersionedMetaData {
   }
 
   private ImmutableSet<Account.Id> readMembers() throws IOException, ConfigInvalidException {
-    return readFromFile(MEMBERS_FILE, entry -> new Account.Id(Integer.parseInt(entry)));
+    return readFromFile(MEMBERS_FILE, entry -> Account.id(Integer.parseInt(entry)));
   }
 
   private ImmutableSet<AccountGroup.UUID> readSubgroups()
       throws IOException, ConfigInvalidException {
-    return readFromFile(SUBGROUPS_FILE, AccountGroup.UUID::new);
+    return readFromFile(SUBGROUPS_FILE, AccountGroup::uuid);
   }
 
   private <E> ImmutableSet<E> readFromFile(String filePath, Function<String, E> fromStringFunction)

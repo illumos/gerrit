@@ -21,10 +21,10 @@ import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.common.truth.IterableSubject;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.common.ProjectInfo;
 import com.google.gerrit.extensions.restapi.Url;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.project.ProjectState;
 import java.util.List;
 import java.util.Set;
@@ -38,7 +38,7 @@ public class ProjectAssert {
           .that(Url.decode(info.id))
           .isEqualTo(info.name);
     }
-    return assertThat(Iterables.transform(actual, p -> new Project.NameKey(p.name)));
+    return assertThat(Iterables.transform(actual, p -> Project.nameKey(p.name)));
   }
 
   public static void assertProjectInfo(Project project, ProjectInfo info) {
@@ -47,7 +47,7 @@ public class ProjectAssert {
       assertThat(info.name).isEqualTo(project.getName());
     }
     assertThat(Url.decode(info.id)).isEqualTo(project.getName());
-    Project.NameKey parentName = project.getParent(new Project.NameKey("All-Projects"));
+    Project.NameKey parentName = project.getParent(Project.nameKey("All-Projects"));
     if (parentName != null) {
       assertThat(info.parent).isEqualTo(parentName.get());
     } else {

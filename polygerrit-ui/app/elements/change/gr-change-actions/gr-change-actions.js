@@ -50,7 +50,6 @@
     OPTIONAL: 'OPTIONAL',
   };
 
-  // TODO(davido): Add the rest of the change actions.
   const ChangeActions = {
     ABANDON: 'abandon',
     DELETE: '/',
@@ -65,6 +64,7 @@
     REBASE_EDIT: 'rebaseEdit',
     RESTORE: 'restore',
     REVERT: 'revert',
+    REVERT_SUBMISSION: 'revert_submission',
     REVIEWED: 'reviewed',
     STOP_EDIT: 'stopEdit',
     UNIGNORE: 'unignore',
@@ -72,7 +72,6 @@
     WIP: 'wip',
   };
 
-  // TODO(andybons): Add the rest of the revision actions.
   const RevisionActions = {
     CHERRYPICK: 'cherrypick',
     REBASE: 'rebase',
@@ -88,6 +87,7 @@
     rebase: 'Rebasing...',
     restore: 'Restoring...',
     revert: 'Reverting...',
+    revert_submission: 'Reverting Submission...',
     submit: 'Submitting...',
   };
 
@@ -182,6 +182,7 @@
     ChangeActions.REBASE_EDIT,
     ChangeActions.RESTORE,
     ChangeActions.REVERT,
+    ChangeActions.REVERT_SUBMISSION,
     ChangeActions.STOP_EDIT,
     QUICK_APPROVE_ACTION.key,
     RevisionActions.REBASE,
@@ -191,9 +192,25 @@
   const AWAIT_CHANGE_ATTEMPTS = 5;
   const AWAIT_CHANGE_TIMEOUT_MS = 1000;
 
-  Polymer({
-    is: 'gr-change-actions',
+  const REVERT_TYPES = {
+    REVERT_SINGLE_CHANGE: 1,
+    REVERT_SUBMISSION: 2,
+  };
 
+  /**
+   * @appliesMixin Gerrit.FireMixin
+   * @appliesMixin Gerrit.PatchSetMixin
+   * @appliesMixin Gerrit.RESTClientMixin
+   * @extends Polymer.Element
+   */
+  class GrChangeActions extends Polymer.mixinBehaviors( [
+    Gerrit.FireBehavior,
+    Gerrit.PatchSetBehavior,
+    Gerrit.RESTClientBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-change-actions'; }
     /**
      * Fired when the change should be reloaded.
      *
@@ -218,7 +235,15 @@
      * @event show-error
      */
 
-    properties: {
+    constructor() {
+      super();
+      this.ActionType = ActionType;
+      this.ChangeActions = ChangeActions;
+      this.RevisionActions = RevisionActions;
+    }
+
+    static get properties() {
+      return {
       /**
        * @type {{
        *    _number: number,
@@ -228,191 +253,229 @@
        *    subject: string,
        *  }}
        */
-      change: Object,
-      actions: {
-        type: Object,
-        value() { return {}; },
-      },
-      primaryActionKeys: {
-        type: Array,
-        value() {
-          return [
-            RevisionActions.SUBMIT,
-          ];
+        change: Object,
+        actions: {
+          type: Object,
+          value() { return {}; },
         },
-      },
-      disableEdit: {
-        type: Boolean,
-        value: false,
-      },
-      _hasKnownChainState: {
-        type: Boolean,
-        value: false,
-      },
-      _hideQuickApproveAction: {
-        type: Boolean,
-        value: false,
-      },
-      changeNum: String,
-      changeStatus: String,
-      commitNum: String,
-      hasParent: {
-        type: Boolean,
-        observer: '_computeChainState',
-      },
-      latestPatchNum: String,
-      commitMessage: {
-        type: String,
-        value: '',
-      },
-      /** @type {?} */
-      revisionActions: {
-        type: Object,
-        value() { return {}; },
-      },
-      privateByDefault: String,
+        primaryActionKeys: {
+          type: Array,
+          value() {
+            return [
+              RevisionActions.SUBMIT,
+            ];
+          },
+        },
+        disableEdit: {
+          type: Boolean,
+          value: false,
+        },
+        _hasKnownChainState: {
+          type: Boolean,
+          value: false,
+        },
+        _hideQuickApproveAction: {
+          type: Boolean,
+          value: false,
+        },
+        changeNum: String,
+        changeStatus: String,
+        commitNum: String,
+        hasParent: {
+          type: Boolean,
+          observer: '_computeChainState',
+        },
+        latestPatchNum: String,
+        commitMessage: {
+          type: String,
+          value: '',
+        },
+        /** @type {?} */
+        revisionActions: {
+          type: Object,
+          notify: true,
+          value() { return {}; },
+        },
+        // If property binds directly to [[revisionActions.submit]] it is not
+        // updated when revisionActions doesn't contain submit action.
+        /** @type {?} */
+        _revisionSubmitAction: {
+          type: Object,
+          computed: '_getSubmitAction(revisionActions)',
+        },
+        // If property binds directly to [[revisionActions.rebase]] it is not
+        // updated when revisionActions doesn't contain rebase action.
+        /** @type {?} */
+        _revisionRebaseAction: {
+          type: Object,
+          computed: '_getRebaseAction(revisionActions)',
+        },
+        privateByDefault: String,
 
-      _loading: {
-        type: Boolean,
-        value: true,
-      },
-      _actionLoadingMessage: {
-        type: String,
-        value: '',
-      },
-      _allActionValues: {
-        type: Array,
-        computed: '_computeAllActions(actions.*, revisionActions.*,' +
+        _loading: {
+          type: Boolean,
+          value: true,
+        },
+        _actionLoadingMessage: {
+          type: String,
+          value: '',
+        },
+        _allActionValues: {
+          type: Array,
+          computed: '_computeAllActions(actions.*, revisionActions.*,' +
             'primaryActionKeys.*, _additionalActions.*, change, ' +
             '_actionPriorityOverrides.*)',
-      },
-      _topLevelActions: {
-        type: Array,
-        computed: '_computeTopLevelActions(_allActionValues.*, ' +
-            '_hiddenActions.*, _overflowActions.*)',
-        observer: '_filterPrimaryActions',
-      },
-      _topLevelPrimaryActions: Array,
-      _topLevelSecondaryActions: Array,
-      _menuActions: {
-        type: Array,
-        computed: '_computeMenuActions(_allActionValues.*, _hiddenActions.*, ' +
-            '_overflowActions.*)',
-      },
-      _overflowActions: {
-        type: Array,
-        value() {
-          const value = [
-            {
-              type: ActionType.CHANGE,
-              key: ChangeActions.WIP,
-            },
-            {
-              type: ActionType.CHANGE,
-              key: ChangeActions.DELETE,
-            },
-            {
-              type: ActionType.REVISION,
-              key: RevisionActions.CHERRYPICK,
-            },
-            {
-              type: ActionType.CHANGE,
-              key: ChangeActions.MOVE,
-            },
-            {
-              type: ActionType.REVISION,
-              key: RevisionActions.DOWNLOAD,
-            },
-            {
-              type: ActionType.CHANGE,
-              key: ChangeActions.IGNORE,
-            },
-            {
-              type: ActionType.CHANGE,
-              key: ChangeActions.UNIGNORE,
-            },
-            {
-              type: ActionType.CHANGE,
-              key: ChangeActions.REVIEWED,
-            },
-            {
-              type: ActionType.CHANGE,
-              key: ChangeActions.UNREVIEWED,
-            },
-            {
-              type: ActionType.CHANGE,
-              key: ChangeActions.PRIVATE,
-            },
-            {
-              type: ActionType.CHANGE,
-              key: ChangeActions.PRIVATE_DELETE,
-            },
-            {
-              type: ActionType.CHANGE,
-              key: ChangeActions.FOLLOW_UP,
-            },
-          ];
-          return value;
         },
-      },
-      _actionPriorityOverrides: {
-        type: Array,
-        value() { return []; },
-      },
-      _additionalActions: {
-        type: Array,
-        value() { return []; },
-      },
-      _hiddenActions: {
-        type: Array,
-        value() { return []; },
-      },
-      _disabledMenuActions: {
-        type: Array,
-        value() { return []; },
-      },
-      // editPatchsetLoaded == "does the current selected patch range have
-      // 'edit' as one of either basePatchNum or patchNum".
-      editPatchsetLoaded: {
-        type: Boolean,
-        value: false,
-      },
-      // editMode == "is edit mode enabled in the file list".
-      editMode: {
-        type: Boolean,
-        value: false,
-      },
-      editBasedOnCurrentPatchSet: {
-        type: Boolean,
-        value: true,
-      },
-    },
+        _topLevelActions: {
+          type: Array,
+          computed: '_computeTopLevelActions(_allActionValues.*, ' +
+            '_hiddenActions.*, _overflowActions.*)',
+          observer: '_filterPrimaryActions',
+        },
+        _topLevelPrimaryActions: Array,
+        _topLevelSecondaryActions: Array,
+        _menuActions: {
+          type: Array,
+          computed: '_computeMenuActions(_allActionValues.*, ' +
+            '_hiddenActions.*, _overflowActions.*)',
+        },
+        _overflowActions: {
+          type: Array,
+          value() {
+            const value = [
+              {
+                type: ActionType.CHANGE,
+                key: ChangeActions.WIP,
+              },
+              {
+                type: ActionType.CHANGE,
+                key: ChangeActions.DELETE,
+              },
+              {
+                type: ActionType.REVISION,
+                key: RevisionActions.CHERRYPICK,
+              },
+              {
+                type: ActionType.CHANGE,
+                key: ChangeActions.MOVE,
+              },
+              {
+                type: ActionType.REVISION,
+                key: RevisionActions.DOWNLOAD,
+              },
+              {
+                type: ActionType.CHANGE,
+                key: ChangeActions.IGNORE,
+              },
+              {
+                type: ActionType.CHANGE,
+                key: ChangeActions.UNIGNORE,
+              },
+              {
+                type: ActionType.CHANGE,
+                key: ChangeActions.REVIEWED,
+              },
+              {
+                type: ActionType.CHANGE,
+                key: ChangeActions.UNREVIEWED,
+              },
+              {
+                type: ActionType.CHANGE,
+                key: ChangeActions.PRIVATE,
+              },
+              {
+                type: ActionType.CHANGE,
+                key: ChangeActions.PRIVATE_DELETE,
+              },
+              {
+                type: ActionType.CHANGE,
+                key: ChangeActions.FOLLOW_UP,
+              },
+            ];
+            return value;
+          },
+        },
+        _actionPriorityOverrides: {
+          type: Array,
+          value() { return []; },
+        },
+        _additionalActions: {
+          type: Array,
+          value() { return []; },
+        },
+        _hiddenActions: {
+          type: Array,
+          value() { return []; },
+        },
+        _disabledMenuActions: {
+          type: Array,
+          value() { return []; },
+        },
+        // editPatchsetLoaded == "does the current selected patch range have
+        // 'edit' as one of either basePatchNum or patchNum".
+        editPatchsetLoaded: {
+          type: Boolean,
+          value: false,
+        },
+        // editMode == "is edit mode enabled in the file list".
+        editMode: {
+          type: Boolean,
+          value: false,
+        },
+        editBasedOnCurrentPatchSet: {
+          type: Boolean,
+          value: true,
+        },
+        _revertChanges: Array,
+      };
+    }
 
-    ActionType,
-    ChangeActions,
-    RevisionActions,
-
-    behaviors: [
-      Gerrit.PatchSetBehavior,
-      Gerrit.RESTClientBehavior,
-    ],
-
-    observers: [
-      '_actionsChanged(actions.*, revisionActions.*, _additionalActions.*)',
-      '_changeChanged(change)',
-      '_editStatusChanged(editMode, editPatchsetLoaded, ' +
+    static get observers() {
+      return [
+        '_actionsChanged(actions.*, revisionActions.*, _additionalActions.*)',
+        '_changeChanged(change)',
+        '_editStatusChanged(editMode, editPatchsetLoaded, ' +
           'editBasedOnCurrentPatchSet, disableEdit, actions.*, change.*)',
-    ],
+      ];
+    }
 
-    listeners: {
-      'fullscreen-overlay-opened': '_handleHideBackgroundContent',
-      'fullscreen-overlay-closed': '_handleShowBackgroundContent',
-    },
+    /** @override */
+    created() {
+      super.created();
+      this.addEventListener('fullscreen-overlay-opened',
+          () => this._handleHideBackgroundContent());
+      this.addEventListener('fullscreen-overlay-closed',
+          () => this._handleShowBackgroundContent());
+    }
 
+    /** @override */
     ready() {
+      super.ready();
       this.$.jsAPI.addElement(this.$.jsAPI.Element.CHANGE_ACTIONS, this);
       this._handleLoadingComplete();
-    },
+    }
+
+    _getSubmitAction(revisionActions) {
+      return this._getRevisionAction(revisionActions, 'submit', null);
+    }
+
+    _getRebaseAction(revisionActions) {
+      return this._getRevisionAction(revisionActions, 'rebase',
+          {rebaseOnCurrent: null}
+      );
+    }
+
+    _getRevisionAction(revisionActions, actionName, emptyActionValue) {
+      if (!revisionActions) {
+        return undefined;
+      }
+      if (revisionActions[actionName] === undefined) {
+        // Return null to fire an event when reveisionActions was loaded
+        // but doesn't contain actionName. undefined doesn't fire an event
+        return emptyActionValue;
+      }
+      return revisionActions[actionName];
+    }
 
     reload() {
       if (!this.changeNum || !this.latestPatchNum) {
@@ -420,25 +483,39 @@
       }
 
       this._loading = true;
-      return this._getRevisionActions().then(revisionActions => {
-        if (!revisionActions) { return; }
+      return this._getRevisionActions()
+          .then(revisionActions => {
+            if (!revisionActions) { return; }
 
-        this.revisionActions = revisionActions;
-        this._handleLoadingComplete();
-      }).catch(err => {
-        this.fire('show-alert', {message: ERR_REVISION_ACTIONS});
-        this._loading = false;
-        throw err;
-      });
-    },
+            this.revisionActions = this._updateRebaseAction(revisionActions);
+            this._handleLoadingComplete();
+          })
+          .catch(err => {
+            this.fire('show-alert', {message: ERR_REVISION_ACTIONS});
+            this._loading = false;
+            throw err;
+          });
+    }
 
     _handleLoadingComplete() {
       Gerrit.awaitPluginsLoaded().then(() => this._loading = false);
-    },
+    }
+
+    _updateRebaseAction(revisionActions) {
+      if (revisionActions && revisionActions.rebase) {
+        revisionActions.rebase.rebaseOnCurrent =
+            !!revisionActions.rebase.enabled;
+        this._parentIsCurrent = !revisionActions.rebase.enabled;
+        revisionActions.rebase.enabled = true;
+      } else {
+        this._parentIsCurrent = true;
+      }
+      return revisionActions;
+    }
 
     _changeChanged() {
       this.reload();
-    },
+    }
 
     addActionButton(type, label) {
       if (type !== ActionType.CHANGE && type !== ActionType.REVISION) {
@@ -449,11 +526,12 @@
         label,
         __type: type,
         __key: ADDITIONAL_ACTION_KEY_PREFIX +
-            Math.random().toString(36).substr(2),
+            Math.random().toString(36)
+                .substr(2),
       };
       this.push('_additionalActions', action);
       return action.__key;
-    },
+    }
 
     removeActionButton(key) {
       const idx = this._indexOfActionButtonWithKey(key);
@@ -461,7 +539,7 @@
         return;
       }
       this.splice('_additionalActions', idx, 1);
-    },
+    }
 
     setActionButtonProp(key, prop, value) {
       this.set([
@@ -469,7 +547,7 @@
         this._indexOfActionButtonWithKey(key),
         prop,
       ], value);
-    },
+    }
 
     setActionOverflow(type, key, overflow) {
       if (type !== ActionType.CHANGE && type !== ActionType.REVISION) {
@@ -486,15 +564,14 @@
       } else if (overflow) {
         this.push('_overflowActions', action);
       }
-    },
+    }
 
     setActionPriority(type, key, priority) {
       if (type !== ActionType.CHANGE && type !== ActionType.REVISION) {
         throw Error(`Invalid action type given: ${type}`);
       }
-      const index = this._actionPriorityOverrides.findIndex(action => {
-        return action.type === type && action.key === key;
-      });
+      const index = this._actionPriorityOverrides
+          .findIndex(action => action.type === type && action.key === key);
       const action = {
         type,
         key,
@@ -505,7 +582,7 @@
       } else {
         this.push('_actionPriorityOverrides', action);
       }
-    },
+    }
 
     setActionHidden(type, key, hidden) {
       if (type !== ActionType.CHANGE && type !== ActionType.REVISION) {
@@ -518,7 +595,7 @@
       } else if (!hidden && idx !== -1) {
         this.splice('_hiddenActions', idx, 1);
       }
-    },
+    }
 
     getActionDetails(action) {
       if (this.revisionActions[action]) {
@@ -526,7 +603,7 @@
       } else if (this.actions[action]) {
         return this.actions[action];
       }
-    },
+    }
 
     _indexOfActionButtonWithKey(key) {
       for (let i = 0; i < this._additionalActions.length; i++) {
@@ -535,23 +612,32 @@
         }
       }
       return -1;
-    },
+    }
 
     _getRevisionActions() {
       return this.$.restAPI.getChangeRevisionActions(this.changeNum,
           this.latestPatchNum);
-    },
+    }
 
     _shouldHideActions(actions, loading) {
       return loading || !actions || !actions.base || !actions.base.length;
-    },
+    }
 
     _keyCount(changeRecord) {
       return Object.keys((changeRecord && changeRecord.base) || {}).length;
-    },
+    }
 
     _actionsChanged(actionsChangeRecord, revisionActionsChangeRecord,
         additionalActionsChangeRecord) {
+      // Polymer 2: check for undefined
+      if ([
+        actionsChangeRecord,
+        revisionActionsChangeRecord,
+        additionalActionsChangeRecord,
+      ].some(arg => arg === undefined)) {
+        return;
+      }
+
       const additionalActions = (additionalActionsChangeRecord &&
           additionalActionsChangeRecord.base) || [];
       this.hidden = this._keyCount(actionsChangeRecord) === 0 &&
@@ -566,20 +652,31 @@
           this.set('revisionActions.download', DOWNLOAD_ACTION);
         }
       }
-    },
+    }
 
     /**
      * @param {string=} actionName
      */
     _deleteAndNotify(actionName) {
-      if (this.actions[actionName]) {
+      if (this.actions && this.actions[actionName]) {
         delete this.actions[actionName];
-        this.notifyPath('actions.' + actionName);
+        // We assign a fake value of 'false' to support Polymer 2
+        // see https://github.com/Polymer/polymer/issues/2631
+        this.notifyPath('actions.' + actionName, false);
       }
-    },
+    }
 
     _editStatusChanged(editMode, editPatchsetLoaded,
         editBasedOnCurrentPatchSet, disableEdit) {
+      // Polymer 2: check for undefined
+      if ([
+        editMode,
+        editBasedOnCurrentPatchSet,
+        disableEdit,
+      ].some(arg => arg === undefined)) {
+        return;
+      }
+
       if (disableEdit) {
         this._deleteAndNotify('publishEdit');
         this._deleteAndNotify('rebaseEdit');
@@ -588,10 +685,10 @@
         this._deleteAndNotify('edit');
         return;
       }
-      if (editPatchsetLoaded) {
+      if (this.actions && editPatchsetLoaded) {
         // Only show actions that mutate an edit if an actual edit patch set
         // is loaded.
-        if (this.changeIsOpen(this.change.status)) {
+        if (this.changeIsOpen(this.change)) {
           if (editBasedOnCurrentPatchSet) {
             if (!this.actions.publishEdit) {
               this.set('actions.publishEdit', PUBLISH_EDIT);
@@ -613,7 +710,7 @@
         this._deleteAndNotify('deleteEdit');
       }
 
-      if (this.changeIsOpen(this.change.status)) {
+      if (this.actions && this.changeIsOpen(this.change)) {
         // Only show edit button if there is no edit patchset loaded and the
         // file list is not in edit mode.
         if (editPatchsetLoaded || editMode) {
@@ -634,13 +731,11 @@
         // Remove edit button.
         this._deleteAndNotify('edit');
       }
-    },
+    }
 
     _getValuesFor(obj) {
-      return Object.keys(obj).map(key => {
-        return obj[key];
-      });
-    },
+      return Object.keys(obj).map(key => obj[key]);
+    }
 
     _getLabelStatus(label) {
       if (label.approved) {
@@ -652,7 +747,7 @@
       } else {
         return LabelStatus.NEED;
       }
-    },
+    }
 
     /**
      * Get highest score for last missing permitted label for current change.
@@ -700,15 +795,14 @@
         }
       }
       return null;
-    },
+    }
 
     hideQuickApproveAction() {
       this._topLevelSecondaryActions =
-        this._topLevelSecondaryActions.filter(sa => {
-          return sa.key !== QUICK_APPROVE_ACTION.key;
-        });
+        this._topLevelSecondaryActions
+            .filter(sa => sa.key !== QUICK_APPROVE_ACTION.key);
       this._hideQuickApproveAction = true;
-    },
+    }
 
     _getQuickApproveAction() {
       if (this._hideQuickApproveAction) {
@@ -727,7 +821,7 @@
       review.labels[approval.label] = approval.score;
       action.payload = review;
       return action;
-    },
+    }
 
     _getActionValues(actionsChangeRecord, primariesChangeRecord,
         additionalActionsChangeRecord, type) {
@@ -764,15 +858,15 @@
 
       let additionalActions = (additionalActionsChangeRecord &&
       additionalActionsChangeRecord.base) || [];
-      additionalActions = additionalActions.filter(a => {
-        return a.__type === type;
-      }).map(a => {
-        a.__primary = primaryActionKeys.includes(a.__key);
-        // Triggers a re-render by ensuring object inequality.
-        return Object.assign({}, a);
-      });
+      additionalActions = additionalActions
+          .filter(a => a.__type === type)
+          .map(a => {
+            a.__primary = primaryActionKeys.includes(a.__key);
+            // Triggers a re-render by ensuring object inequality.
+            return Object.assign({}, a);
+          });
       return result.concat(additionalActions).concat(pluginActions);
-    },
+    }
 
     _populateActionUrl(action) {
       const patchNum =
@@ -780,7 +874,7 @@
       this.$.restAPI.getChangeActionURL(
           this.changeNum, patchNum, '/' + action.__key)
           .then(url => action.__url = url);
-    },
+    }
 
     /**
      * Given a change action, return a display label that uses the appropriate
@@ -796,7 +890,7 @@
       }
       // Otherwise, just map the name to sentence case.
       return this._toSentenceCase(action.label);
-    },
+    }
 
     /**
      * Capitalize the first letter and lowecase all others.
@@ -807,16 +901,16 @@
     _toSentenceCase(s) {
       if (!s.length) { return ''; }
       return s[0].toUpperCase() + s.slice(1).toLowerCase();
-    },
+    }
 
     _computeLoadingLabel(action) {
       return ActionLoadingLabels[action] || 'Working...';
-    },
+    }
 
     _canSubmitChange() {
       return this.$.jsAPI.canSubmitChange(this.change,
           this._getRevision(this.change, this.latestPatchNum));
-    },
+    }
 
     _getRevision(change, patchNum) {
       for (const rev of Object.values(change.revisions)) {
@@ -825,24 +919,32 @@
         }
       }
       return null;
-    },
-
-    _modifyRevertMsg() {
-      return this.$.jsAPI.modifyRevertMsg(this.change,
-          this.$.confirmRevertDialog.message, this.commitMessage);
-    },
+    }
 
     showRevertDialog() {
-      this.$.confirmRevertDialog.populateRevertMessage(
-          this.commitMessage, this.change.current_revision);
-      this.$.confirmRevertDialog.message = this._modifyRevertMsg();
-      this._showActionDialog(this.$.confirmRevertDialog);
-    },
+      const query = 'submissionid:' + this.change.submission_id;
+      this.$.restAPI.getChanges('', query)
+          .then(changes => {
+            this._revertChanges = changes;
+            this._showActionDialog(this.$.confirmRevertDialog);
+          });
+    }
+
+    showRevertSubmissionDialog() {
+      const query = 'submissionid:' + this.change.submission_id;
+      this.$.restAPI.getChanges('', query)
+          .then(changes => {
+            this.$.confirmRevertSubmissionDialog.
+                _populateRevertSubmissionMessage(
+                    this.commitMessage, this.change, changes);
+            this._showActionDialog(this.$.confirmRevertSubmissionDialog);
+          });
+    }
 
     _handleActionTap(e) {
       e.preventDefault();
       let el = Polymer.dom(e).localTarget;
-      while (el.is !== 'gr-button') {
+      while (el.tagName.toLowerCase() !== 'gr-button') {
         if (!el.parentElement) { return; }
         el = el.parentElement;
       }
@@ -855,7 +957,7 @@
       }
       const type = el.getAttribute('data-action-type');
       this._handleAction(type, key);
-    },
+    }
 
     _handleOveflowItemTap(e) {
       e.preventDefault();
@@ -867,7 +969,7 @@
         return;
       }
       this._handleAction(e.detail.action.__type, e.detail.action.__key);
-    },
+    }
 
     _handleAction(type, key) {
       this.$.reporting.reportInteraction(`${type}-${key}`);
@@ -881,7 +983,7 @@
         default:
           this._fireAction(this._prependSlash(key), this.actions[key], false);
       }
-    },
+    }
 
     _handleChangeAction(key) {
       let action;
@@ -889,13 +991,14 @@
         case ChangeActions.REVERT:
           this.showRevertDialog();
           break;
+        case ChangeActions.REVERT_SUBMISSION:
+          this.showRevertSubmissionDialog();
+          break;
         case ChangeActions.ABANDON:
           this._showActionDialog(this.$.confirmAbandonDialog);
           break;
         case QUICK_APPROVE_ACTION.key:
-          action = this._allActionValues.find(o => {
-            return o.key === key;
-          });
+          action = this._allActionValues.find(o => o.key === key);
           this._fireAction(
               this._prependSlash(key), action, true, action.payload);
           break;
@@ -929,7 +1032,7 @@
         default:
           this._fireAction(this._prependSlash(key), this.actions[key], false);
       }
-    },
+    }
 
     _handleRevisionAction(key) {
       switch (key) {
@@ -951,11 +1054,11 @@
           this._fireAction(this._prependSlash(key),
               this.revisionActions[key], true);
       }
-    },
+    }
 
     _prependSlash(key) {
       return key === '/' ? key : `/${key}`;
-    },
+    }
 
     /**
      * _hasKnownChainState set to true true if hasParent is defined (can be
@@ -963,25 +1066,25 @@
      */
     _computeChainState(hasParent) {
       this._hasKnownChainState = true;
-    },
+    }
 
     _calculateDisabled(action, hasKnownChainState) {
       if (action.__key === 'rebase' && hasKnownChainState === false) {
         return true;
       }
       return !action.enabled;
-    },
+    }
 
     _handleConfirmDialogCancel() {
       this._hideAllDialogs();
-    },
+    }
 
     _hideAllDialogs() {
       const dialogEls =
           Polymer.dom(this.root).querySelectorAll('.confirmDialog');
       for (const dialogEl of dialogEls) { dialogEl.hidden = true; }
       this.$.overlay.close();
-    },
+    }
 
     _handleRebaseConfirm(e) {
       const el = this.$.confirmRebase;
@@ -989,20 +1092,19 @@
       this.$.overlay.close();
       el.hidden = true;
       this._fireAction('/rebase', this.revisionActions.rebase, true, payload);
-    },
+    }
 
     _handleCherrypickConfirm() {
       this._handleCherryPickRestApi(false);
-    },
+    }
 
     _handleCherrypickConflictConfirm() {
       this._handleCherryPickRestApi(true);
-    },
+    }
 
     _handleCherryPickRestApi(conflicts) {
       const el = this.$.confirmCherrypick;
       if (!el.branch) {
-        // TODO(davido): Fix error handling
         this.fire('show-alert', {message: ERR_BRANCH_EMPTY});
         return;
       }
@@ -1023,7 +1125,7 @@
             allow_conflicts: conflicts,
           }
       );
-    },
+    }
 
     _handleMoveConfirm() {
       const el = this.$.confirmMove;
@@ -1042,15 +1144,27 @@
             message: el.message,
           }
       );
-    },
+    }
 
-    _handleRevertDialogConfirm() {
+    _handleRevertDialogConfirm(e) {
+      const revertType = e.detail.revertType;
+      const message = e.detail.message;
       const el = this.$.confirmRevertDialog;
       this.$.overlay.close();
       el.hidden = true;
-      this._fireAction('/revert', this.actions.revert, false,
-          {message: el.message});
-    },
+      switch (revertType) {
+        case REVERT_TYPES.REVERT_SINGLE_CHANGE:
+          this._fireAction('/revert', this.actions.revert, false,
+              {message});
+          break;
+        case REVERT_TYPES.REVERT_SUBMISSION:
+          this._fireAction('/revert_submission', this.actions.revert_submission,
+              false, {message});
+          break;
+        default:
+          console.error('invalid revert type');
+      }
+    }
 
     _handleAbandonDialogConfirm() {
       const el = this.$.confirmAbandonDialog;
@@ -1058,38 +1172,37 @@
       el.hidden = true;
       this._fireAction('/abandon', this.actions.abandon, false,
           {message: el.message});
-    },
+    }
 
     _handleCreateFollowUpChange() {
       this.$.createFollowUpChange.handleCreateChange();
       this._handleCloseCreateFollowUpChange();
-    },
+    }
 
     _handleCloseCreateFollowUpChange() {
       this.$.overlay.close();
-    },
+    }
 
     _handleDeleteConfirm() {
       this._fireAction('/', this.actions[ChangeActions.DELETE], false);
-    },
+    }
 
     _handleDeleteEditConfirm() {
       this._hideAllDialogs();
 
       this._fireAction('/edit', this.actions.deleteEdit, false);
-    },
+    }
 
     _handleSubmitConfirm() {
       if (!this._canSubmitChange()) { return; }
       this._hideAllDialogs();
       this._fireAction('/submit', this.revisionActions.submit, true);
-    },
+    }
 
     _getActionOverflowIndex(type, key) {
-      return this._overflowActions.findIndex(action => {
-        return action.type === type && action.key === key;
-      });
-    },
+      return this._overflowActions
+          .findIndex(action => action.type === type && action.key === key);
+    }
 
     _setLoadingOnButtonWithKey(type, key) {
       this._actionLoadingMessage = this._computeLoadingLabel(key);
@@ -1112,7 +1225,7 @@
         buttonEl.removeAttribute('loading');
         buttonEl.disabled = false;
       }.bind(this);
-    },
+    }
 
     /**
      * @param {string} endpoint
@@ -1126,7 +1239,7 @@
 
       this._send(action.method, opt_payload, endpoint, revAction, cleanupFn,
           action).then(this._handleResponse.bind(this, action));
-    },
+    }
 
     _showActionDialog(dialog) {
       this._hideAllDialogs();
@@ -1137,7 +1250,7 @@
           dialog.resetFocus();
         }
       });
-    },
+    }
 
     // TODO(rmistry): Redo this after
     // https://bugs.chromium.org/p/gerrit/issues/detail?id=4671 is resolved.
@@ -1145,7 +1258,7 @@
       const labels = this.$.jsAPI.getLabelValuesPostRevert(this.change);
       if (!labels) { return Promise.resolve(); }
       return this.$.restAPI.saveChangeReview(newChangeId, 'current', {labels});
-    },
+    }
 
     _handleResponse(action, response) {
       if (!response) { return; }
@@ -1174,13 +1287,24 @@
           case ChangeActions.REBASE_EDIT:
             Gerrit.Nav.navigateToChange(this.change);
             break;
+          case ChangeActions.REVERT_SUBMISSION:
+            if (!obj.revert_changes || !obj.revert_changes.length) return;
+            /* If there is only 1 change then gerrit will automatically
+               redirect to that change */
+            Gerrit.Nav.navigateToSearchQuery('topic: ' +
+                obj.revert_changes[0].topic);
+            break;
           default:
             this.dispatchEvent(new CustomEvent('reload-change',
                 {detail: {action: action.__key}, bubbles: false}));
             break;
         }
       });
-    },
+    }
+
+    _handleShowRevertSubmissionChangesConfirm() {
+      this._hideAllDialogs();
+    }
 
     _handleResponseError(action, response, body) {
       if (action && action.__key === RevisionActions.CHERRYPICK) {
@@ -1197,7 +1321,7 @@
           throw Error(errText);
         }
       });
-    },
+    }
 
     /**
      * @param {string} method
@@ -1240,58 +1364,58 @@
                   return response;
                 });
           });
-    },
+    }
 
     _handleAbandonTap() {
       this._showActionDialog(this.$.confirmAbandonDialog);
-    },
+    }
 
     _handleCherrypickTap() {
       this.$.confirmCherrypick.branch = '';
       this._showActionDialog(this.$.confirmCherrypick);
-    },
+    }
 
     _handleMoveTap() {
       this.$.confirmMove.branch = '';
       this.$.confirmMove.message = '';
       this._showActionDialog(this.$.confirmMove);
-    },
+    }
 
     _handleDownloadTap() {
       this.fire('download-tap', null, {bubbles: false});
-    },
+    }
 
     _handleDeleteTap() {
       this._showActionDialog(this.$.confirmDeleteDialog);
-    },
+    }
 
     _handleDeleteEditTap() {
       this._showActionDialog(this.$.confirmDeleteEditDialog);
-    },
+    }
 
     _handleFollowUpTap() {
       this._showActionDialog(this.$.createFollowUpDialog);
-    },
+    }
 
     _handleWipTap() {
       this._fireAction('/wip', this.actions.wip, false);
-    },
+    }
 
     _handlePublishEditTap() {
       this._fireAction('/edit:publish', this.actions.publishEdit, false);
-    },
+    }
 
     _handleRebaseEditTap() {
       this._fireAction('/edit:rebase', this.actions.rebaseEdit, false);
-    },
+    }
 
     _handleHideBackgroundContent() {
       this.$.mainContent.classList.add('overlayOpen');
-    },
+    }
 
     _handleShowBackgroundContent() {
       this.$.mainContent.classList.remove('overlayOpen');
-    },
+    }
 
     /**
      * Merge sources of change actions into a single ordered array of action
@@ -1306,6 +1430,17 @@
      */
     _computeAllActions(changeActionsRecord, revisionActionsRecord,
         primariesRecord, additionalActionsRecord, change) {
+      // Polymer 2: check for undefined
+      if ([
+        changeActionsRecord,
+        revisionActionsRecord,
+        primariesRecord,
+        additionalActionsRecord,
+        change,
+      ].some(arg => arg === undefined)) {
+        return [];
+      }
+
       const revisionActionValues = this._getActionValues(revisionActionsRecord,
           primariesRecord, additionalActionsRecord, ActionType.REVISION);
       const changeActionValues = this._getActionValues(changeActionsRecord,
@@ -1324,13 +1459,12 @@
             }
             return action;
           });
-    },
+    }
 
     _getActionPriority(action) {
       if (action.__type && action.__key) {
-        const overrideAction = this._actionPriorityOverrides.find(i => {
-          return i.type === action.__type && i.key === action.__key;
-        });
+        const overrideAction = this._actionPriorityOverrides
+            .find(i => i.type === action.__type && i.key === action.__key);
 
         if (overrideAction !== undefined) {
           return overrideAction.priority;
@@ -1346,7 +1480,7 @@
         return ActionPriority.REVISION;
       }
       return ActionPriority.DEFAULT;
-    },
+    }
 
     /**
      * Sort comparator to define the order of change actions.
@@ -1360,7 +1494,7 @@
       } else {
         return priorityDelta;
       }
-    },
+    }
 
     _computeTopLevelActions(actionRecord, hiddenActionsRecord) {
       const hiddenActions = hiddenActionsRecord.base || [];
@@ -1368,14 +1502,14 @@
         const overflow = this._getActionOverflowIndex(a.__type, a.__key) !== -1;
         return !(overflow || hiddenActions.includes(a.__key));
       });
-    },
+    }
 
     _filterPrimaryActions(_topLevelActions) {
       this._topLevelPrimaryActions = _topLevelActions.filter(action =>
         action.__primary);
       this._topLevelSecondaryActions = _topLevelActions.filter(action =>
         !action.__primary);
-    },
+    }
 
     _computeMenuActions(actionRecord, hiddenActionsRecord) {
       const hiddenActions = hiddenActionsRecord.base || [];
@@ -1392,7 +1526,7 @@
           tooltip: action.title,
         };
       });
-    },
+    }
 
     /**
      * Occasionally, a change created by a change action is not yet knwon to the
@@ -1426,22 +1560,24 @@
         };
         check();
       });
-    },
+    }
 
     _handleEditTap() {
       this.dispatchEvent(new CustomEvent('edit-tap', {bubbles: false}));
-    },
+    }
 
     _handleStopEditTap() {
       this.dispatchEvent(new CustomEvent('stop-edit-tap', {bubbles: false}));
-    },
+    }
 
     _computeHasTooltip(title) {
       return !!title;
-    },
+    }
 
     _computeHasIcon(action) {
       return action.icon ? '' : 'hidden';
-    },
-  });
+    }
+  }
+
+  customElements.define(GrChangeActions.is, GrChangeActions);
 })();

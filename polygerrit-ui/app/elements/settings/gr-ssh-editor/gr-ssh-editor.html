@@ -15,8 +15,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
-<link rel="import" href="../../../bower_components/iron-autogrow-textarea/iron-autogrow-textarea.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/iron-autogrow-textarea/iron-autogrow-textarea.html">
 <link rel="import" href="../../../styles/gr-form-styles.html">
 <link rel="import" href="../../shared/gr-button/gr-button.html">
 <link rel="import" href="../../shared/gr-copy-clipboard/gr-copy-clipboard.html">
@@ -26,7 +26,9 @@ limitations under the License.
 
 <dom-module id="gr-ssh-editor">
   <template>
-    <style include="shared-styles"></style>
+    <style include="shared-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <style include="gr-form-styles">
       .statusHeader {
         width: 4em;
@@ -35,11 +37,13 @@ limitations under the License.
         width: 7.5em;
       }
       #viewKeyOverlay {
-        padding: 2em;
+        padding: var(--spacing-xxl);
         width: 50em;
       }
       .publicKey {
         font-family: var(--monospace-font-family);
+        font-size: var(--font-size-mono);
+        line-height: var(--line-height-mono);
         overflow-x: scroll;
         overflow-wrap: break-word;
         width: 30em;
@@ -50,7 +54,7 @@ limitations under the License.
         right: 2em;
       }
       #existing {
-        margin-bottom: 1em;
+        margin-bottom: var(--spacing-l);
       }
       #existing .commentColumn {
         min-width: 27em;
@@ -77,7 +81,7 @@ limitations under the License.
                 <td>
                   <gr-button
                       link
-                      on-tap="_showKey"
+                      on-click="_showKey"
                       data-index$="[[index]]"
                       link>Click to View</gr-button>
                 </td>
@@ -93,7 +97,7 @@ limitations under the License.
                   <gr-button
                       link
                       data-index$="[[index]]"
-                      on-tap="_handleDeleteKey">Delete</gr-button>
+                      on-click="_handleDeleteKey">Delete</gr-button>
                 </td>
               </tr>
             </template>
@@ -116,10 +120,10 @@ limitations under the License.
           </fieldset>
           <gr-button
               class="closeButton"
-              on-tap="_closeOverlay">Close</gr-button>
+              on-click="_closeOverlay">Close</gr-button>
         </gr-overlay>
         <gr-button
-            on-tap="save"
+            on-click="save"
             disabled$="[[!hasUnsavedChanges]]">Save changes</gr-button>
       </fieldset>
       <fieldset>
@@ -137,7 +141,7 @@ limitations under the License.
             id="addButton"
             link
             disabled$="[[_computeAddButtonDisabled(_newKey)]]"
-            on-tap="_handleAddKey">Add new SSH key</gr-button>
+            on-click="_handleAddKey">Add new SSH key</gr-button>
       </fieldset>
     </div>
     <gr-rest-api-interface id="restAPI"></gr-rest-api-interface>

@@ -52,10 +52,10 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Queue;
 import java.util.Set;
 import java.util.TreeSet;
@@ -88,6 +88,7 @@ public class PluginLoader implements LifecycleListener {
   private final Provider<String> urlProvider;
   private final PersistentCacheFactory persistentCacheFactory;
   private final boolean remoteAdmin;
+  private final MandatoryPluginsCollection mandatoryPlugins;
   private final UniversalServerPluginProvider serverPluginFactory;
   private final GerritRuntime gerritRuntime;
 
@@ -102,6 +103,7 @@ public class PluginLoader implements LifecycleListener {
       @CanonicalWebUrl Provider<String> provider,
       PersistentCacheFactory cacheFactory,
       UniversalServerPluginProvider pluginFactory,
+      MandatoryPluginsCollection mpc,
       GerritRuntime gerritRuntime) {
     pluginsDir = sitePaths.plugins_dir;
     dataDir = sitePaths.data_dir;
@@ -115,6 +117,7 @@ public class PluginLoader implements LifecycleListener {
     serverPluginFactory = pluginFactory;
 
     remoteAdmin = cfg.getBoolean("plugins", null, "allowRemoteAdmin", false);
+    mandatoryPlugins = mpc;
     this.gerritRuntime = gerritRuntime;
 
     long checkFrequency =
@@ -227,6 +230,11 @@ public class PluginLoader implements LifecycleListener {
           continue;
         }
 
+        if (mandatoryPlugins.contains(name)) {
+          logger.atWarning().log("Mandatory plugin %s cannot be disabled", name);
+          continue;
+        }
+
         logger.atInfo().log("Disabling plugin %s", active.getName());
         Path off =
             active.getSrcFile().resolveSibling(active.getSrcFile().getFileName() + ".disabled");
@@ -290,12 +298,7 @@ public class PluginLoader implements LifecycleListener {
 
   private void removeStalePluginFiles() {
     DirectoryStream.Filter<Path> filter =
-        new DirectoryStream.Filter<Path>() {
-          @Override
-          public boolean accept(Path entry) throws IOException {
-            return entry.getFileName().toString().startsWith("plugin_");
-          }
-        };
+        entry -> entry.getFileName().toString().startsWith("plugin_");
     try (DirectoryStream<Path> files = Files.newDirectoryStream(tempDir, filter)) {
       for (Path file : files) {
         logger.atInfo().log("Removing stale plugin file: %s", file.toFile().getName());
@@ -387,69 +390,77 @@ public class PluginLoader implements LifecycleListener {
   }
 
   public synchronized void rescan() {
+    Set<String> loadedPlugins = new HashSet<>();
     SetMultimap<String, Path> pluginsFiles = prunePlugins(pluginsDir);
-    if (pluginsFiles.isEmpty()) {
-      return;
+
+    if (!pluginsFiles.isEmpty()) {
+      syncDisabledPlugins(pluginsFiles);
+
+      Map<String, Path> activePlugins = filterDisabled(pluginsFiles);
+      for (Map.Entry<String, Path> entry : jarsFirstSortedPluginsSet(activePlugins)) {
+        String name = entry.getKey();
+        Path path = entry.getValue();
+        String fileName = path.getFileName().toString();
+        if (!isUiPlugin(fileName) && !serverPluginFactory.handles(path)) {
+          logger.atWarning().log(
+              "No Plugin provider was found that handles this file format: %s", fileName);
+          continue;
+        }
+
+        FileSnapshot brokenTime = broken.get(name);
+        if (brokenTime != null && !brokenTime.isModified(path.toFile())) {
+          continue;
+        }
+
+        Plugin active = running.get(name);
+        if (active != null && !active.isModified(path)) {
+          loadedPlugins.add(name);
+          continue;
+        }
+
+        if (active != null) {
+          logger.atInfo().log("Reloading plugin %s", active.getName());
+        }
+
+        try {
+          Plugin loadedPlugin = runPlugin(name, path, active);
+          if (!loadedPlugin.isDisabled()) {
+            loadedPlugins.add(name);
+            logger.atInfo().log(
+                "%s plugin %s, version %s",
+                active == null ? "Loaded" : "Reloaded",
+                loadedPlugin.getName(),
+                loadedPlugin.getVersion());
+          }
+        } catch (PluginInstallException e) {
+          logger.atWarning().withCause(e.getCause()).log("Cannot load plugin %s", name);
+        }
+      }
     }
 
-    syncDisabledPlugins(pluginsFiles);
-
-    Map<String, Path> activePlugins = filterDisabled(pluginsFiles);
-    for (Map.Entry<String, Path> entry : jarsFirstSortedPluginsSet(activePlugins)) {
-      String name = entry.getKey();
-      Path path = entry.getValue();
-      String fileName = path.getFileName().toString();
-      if (!isUiPlugin(fileName) && !serverPluginFactory.handles(path)) {
-        logger.atWarning().log(
-            "No Plugin provider was found that handles this file format: %s", fileName);
-        continue;
-      }
-
-      FileSnapshot brokenTime = broken.get(name);
-      if (brokenTime != null && !brokenTime.isModified(path.toFile())) {
-        continue;
-      }
-
-      Plugin active = running.get(name);
-      if (active != null && !active.isModified(path)) {
-        continue;
-      }
-
-      if (active != null) {
-        logger.atInfo().log("Reloading plugin %s", active.getName());
-      }
-
-      try {
-        Plugin loadedPlugin = runPlugin(name, path, active);
-        if (!loadedPlugin.isDisabled()) {
-          logger.atInfo().log(
-              "%s plugin %s, version %s",
-              active == null ? "Loaded" : "Reloaded",
-              loadedPlugin.getName(),
-              loadedPlugin.getVersion());
-        }
-      } catch (PluginInstallException e) {
-        logger.atWarning().withCause(e.getCause()).log("Cannot load plugin %s", name);
-      }
+    Set<String> missingMandatory = Sets.difference(mandatoryPlugins.asSet(), loadedPlugins);
+    if (!missingMandatory.isEmpty()) {
+      throw new MissingMandatoryPluginsException(missingMandatory);
     }
 
     cleanInBackground();
   }
 
-  private void addAllEntries(Map<String, Path> from, TreeSet<Entry<String, Path>> to) {
-    Iterator<Entry<String, Path>> it = from.entrySet().iterator();
+  private void addAllEntries(Map<String, Path> from, TreeSet<Map.Entry<String, Path>> to) {
+    Iterator<Map.Entry<String, Path>> it = from.entrySet().iterator();
     while (it.hasNext()) {
-      Entry<String, Path> entry = it.next();
+      Map.Entry<String, Path> entry = it.next();
       to.add(new AbstractMap.SimpleImmutableEntry<>(entry.getKey(), entry.getValue()));
     }
   }
 
-  private TreeSet<Entry<String, Path>> jarsFirstSortedPluginsSet(Map<String, Path> activePlugins) {
-    TreeSet<Entry<String, Path>> sortedPlugins =
+  private TreeSet<Map.Entry<String, Path>> jarsFirstSortedPluginsSet(
+      Map<String, Path> activePlugins) {
+    TreeSet<Map.Entry<String, Path>> sortedPlugins =
         Sets.newTreeSet(
-            new Comparator<Entry<String, Path>>() {
+            new Comparator<Map.Entry<String, Path>>() {
               @Override
-              public int compare(Entry<String, Path> e1, Entry<String, Path> e2) {
+              public int compare(Map.Entry<String, Path> e1, Map.Entry<String, Path> e2) {
                 Path n1 = e1.getValue().getFileName();
                 Path n2 = e2.getValue().getFileName();
                 return ComparisonChain.start()
@@ -476,6 +487,12 @@ public class PluginLoader implements LifecycleListener {
       throws PluginInstallException {
     FileSnapshot snapshot = FileSnapshot.save(plugin.toFile());
     try {
+      boolean restartRequired = oldPlugin != null && !oldPlugin.canReload();
+      if (restartRequired && mandatoryPlugins.contains(name)) {
+        logger.atWarning().log("Restarting mandatory plugin %s not allowed", name);
+        return oldPlugin;
+      }
+
       Plugin newPlugin = loadPlugin(name, plugin, snapshot);
       if (newPlugin.getCleanupHandle() != null) {
         cleanupHandles.put(newPlugin, newPlugin.getCleanupHandle());

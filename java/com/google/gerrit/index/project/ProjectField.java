@@ -20,11 +20,11 @@ import static com.google.gerrit.index.FieldDef.fullText;
 import static com.google.gerrit.index.FieldDef.prefix;
 import static com.google.gerrit.index.FieldDef.storedOnly;
 
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.index.FieldDef;
 import com.google.gerrit.index.RefState;
 import com.google.gerrit.index.SchemaUtil;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
 
 /** Index schema for projects. */
 public class ProjectField {
@@ -49,7 +49,7 @@ public class ProjectField {
       exact("state").stored().build(p -> p.getProject().getState().name());
 
   public static final FieldDef<ProjectData, Iterable<String>> ANCESTOR_NAME =
-      exact("ancestor_name").buildRepeatable(p -> p.getParentNames());
+      exact("ancestor_name").buildRepeatable(ProjectData::getParentNames);
 
   /**
    * All values of all refs that were used in the course of indexing this document. This covers

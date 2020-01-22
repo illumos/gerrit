@@ -15,14 +15,18 @@
 package com.google.gerrit.acceptance.rest.project;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.block;
+import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
 
 import com.google.common.collect.Iterables;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.GitUtil;
 import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.acceptance.RestResponse;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.common.data.Permission;
 import com.google.gerrit.extensions.common.CommitInfo;
+import com.google.inject.Inject;
 import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
@@ -32,12 +36,14 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class GetCommitIT extends AbstractDaemonTest {
+  @Inject private ProjectOperations projectOperations;
+
   private TestRepository<Repository> repo;
 
   @Before
   public void setUp() throws Exception {
     repo = GitUtil.newTestRepository(repoManager.openRepository(project));
-    blockRead("refs/*");
+    blockRead();
   }
 
   @After
@@ -85,8 +91,7 @@ public class GetCommitIT extends AbstractDaemonTest {
   @Test
   public void getOpenChange_Found() throws Exception {
     unblockRead();
-    PushOneCommit.Result r =
-        pushFactory.create(db, admin.getIdent(), testRepo).to("refs/for/master");
+    PushOneCommit.Result r = pushFactory.create(admin.newIdent(), testRepo).to("refs/for/master");
     r.assertOkStatus();
 
     CommitInfo info = getCommit(r.getCommit());
@@ -108,9 +113,17 @@ public class GetCommitIT extends AbstractDaemonTest {
 
   @Test
   public void getOpenChange_NotFound() throws Exception {
-    PushOneCommit.Result r =
-        pushFactory.create(db, admin.getIdent(), testRepo).to("refs/for/master");
+    // Need to unblock read to allow the push operation to succeed if not, when retrieving the
+    // advertised refs during
+    // the push, the client won't be sent the initial commit and will send it again as part of the
+    // change.
+    unblockRead();
+
+    PushOneCommit.Result r = pushFactory.create(admin.newIdent(), testRepo).to("refs/for/master");
     r.assertOkStatus();
+
+    // Re-blocking the read
+    blockRead();
     assertNotFound(r.getCommit());
   }
 
@@ -119,6 +132,14 @@ public class GetCommitIT extends AbstractDaemonTest {
       u.getConfig().getAccessSection("refs/*").remove(new Permission(Permission.READ));
       u.save();
     }
+  }
+
+  private void blockRead() {
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(block(Permission.READ).ref("refs/*").group(REGISTERED_USERS))
+        .update();
   }
 
   private void assertNotFound(ObjectId id) throws Exception {

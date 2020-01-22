@@ -15,14 +15,23 @@
 package com.google.gerrit.server.restapi.account;
 
 import com.google.common.base.Strings;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.server.account.AccountResource;
 import com.google.inject.Singleton;
 
+/**
+ * REST endpoint to get the status of an account.
+ *
+ * <p>This REST endpoint handles {@code GET /accounts/<account-identifier>/status} requests.
+ *
+ * <p>The account status is a free-form text that a user can set for the own account (e.g. the 'OOO'
+ * string is often used to signal that the user is out-of-office).
+ */
 @Singleton
 public class GetStatus implements RestReadView<AccountResource> {
   @Override
-  public String apply(AccountResource rsrc) {
-    return Strings.nullToEmpty(rsrc.getUser().getAccount().getStatus());
+  public Response<String> apply(AccountResource rsrc) {
+    return Response.ok(Strings.nullToEmpty(rsrc.getUser().getAccount().status()));
   }
 }

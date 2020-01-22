@@ -15,11 +15,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 
 <link rel="import" href="../../../behaviors/gr-patch-set-behavior/gr-patch-set-behavior.html">
 <link rel="import" href="../../../behaviors/gr-path-list-behavior/gr-path-list-behavior.html">
-<link rel="import" href="../../../bower_components/iron-input/iron-input.html">
+<link rel="import" href="/bower_components/iron-input/iron-input.html">
 <link rel="import" href="../../core/gr-navigation/gr-navigation.html">
 <link rel="import" href="../../shared/gr-autocomplete/gr-autocomplete.html">
 <link rel="import" href="../../shared/gr-button/gr-button.html">
@@ -43,7 +43,7 @@ limitations under the License.
         display: none;
       }
       gr-button {
-        margin-left: 1em;
+        margin-left: var(--spacing-l);
         text-decoration: none;
       }
       gr-dialog {
@@ -52,23 +52,16 @@ limitations under the License.
       gr-dialog .main {
         width: 100%;
       }
-      gr-autocomplete {
-        --gr-autocomplete: {
-          border: 1px solid var(--border-color);
-          border-radius: 2px;
-          font-size: var(--font-size-normal);
-          height: 2em;
-          padding: 0 .15em;
-        }
+      gr-dialog .main > iron-input{
+        width: 100%;
       }
       input {
         border: 1px solid var(--border-color);
-        border-radius: 2px;
-        font-size: var(--font-size-normal);
-        height: 2em;
-        margin: .5em 0;
-        padding: 0 .15em;
+        border-radius: var(--border-radius);
+        margin: var(--spacing-m) 0;
+        padding: var(--spacing-s);
         width: 100%;
+        box-sizing: content-box;
       }
       @media screen and (max-width: 50em) {
         gr-dialog {
@@ -81,19 +74,19 @@ limitations under the License.
           id$="[[action.id]]"
           class$="[[_computeIsInvisible(action.id, hiddenActions)]]"
           link
-          on-tap="_handleTap">[[action.label]]</gr-button>
+          on-click="_handleTap">[[action.label]]</gr-button>
     </template>
     <gr-overlay id="overlay" with-backdrop>
       <gr-dialog
           id="openDialog"
           class="invisible dialog"
           disabled$="[[!_isValidPath(_path)]]"
-          confirm-label="Open"
+          confirm-label="Confirm"
           confirm-on-enter
           on-confirm="_handleOpenConfirm"
           on-cancel="_handleDialogCancel">
         <div class="header" slot="header">
-          Open an existing or new file
+          Add a new file or open an existing file
         </div>
         <div class="main" slot="main">
           <gr-autocomplete
@@ -132,11 +125,16 @@ limitations under the License.
               placeholder="Enter an existing full file path."
               query="[[_query]]"
               text="{{_path}}"></gr-autocomplete>
-          <input
-              class="newPathInput"
-              is="iron-input"
+          <iron-input
+              class="newPathIronInput"
               bind-value="{{_newPath}}"
-              placeholder="Enter the new path."/>
+              placeholder="Enter the new path.">
+            <input
+                class="newPathInput"
+                is="iron-input"
+                bind-value="{{_newPath}}"
+                placeholder="Enter the new path.">
+          </iron-input>
         </div>
       </gr-dialog>
       <gr-dialog
@@ -148,10 +146,14 @@ limitations under the License.
           on-cancel="_handleDialogCancel">
         <div class="header" slot="header">Restore this file?</div>
         <div class="main" slot="main">
-          <input
-              is="iron-input"
+          <iron-input
               disabled
-              bind-value="{{_path}}"/>
+              bind-value="{{_path}}">
+            <input
+                is="iron-input"
+                disabled
+                bind-value="{{_path}}">
+          </iron-input>
         </div>
       </gr-dialog>
     </gr-overlay>

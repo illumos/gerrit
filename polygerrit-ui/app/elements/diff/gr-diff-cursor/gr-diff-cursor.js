@@ -35,89 +35,121 @@
   const LEFT_SIDE_CLASS = 'target-side-left';
   const RIGHT_SIDE_CLASS = 'target-side-right';
 
-  Polymer({
-    is: 'gr-diff-cursor',
+  /** @extends Polymer.Element */
+  class GrDiffCursor extends Polymer.mixinBehaviors([Gerrit.FireBehavior],
+      Polymer.GestureEventListeners(
+          Polymer.LegacyElementMixin(Polymer.Element))) {
+    static get is() { return 'gr-diff-cursor'; }
 
-    properties: {
+    static get properties() {
+      return {
       /**
        * Either DiffSides.LEFT or DiffSides.RIGHT.
        */
-      side: {
-        type: String,
-        value: DiffSides.RIGHT,
-      },
-      /** @type {!HTMLElement|undefined} */
-      diffRow: {
-        type: Object,
-        notify: true,
-        observer: '_rowChanged',
-      },
+        side: {
+          type: String,
+          value: DiffSides.RIGHT,
+        },
+        /** @type {!HTMLElement|undefined} */
+        diffRow: {
+          type: Object,
+          notify: true,
+          observer: '_rowChanged',
+        },
 
-      /**
-       * The diff views to cursor through and listen to.
-       */
-      diffs: {
-        type: Array,
-        value() { return []; },
-      },
+        /**
+         * The diff views to cursor through and listen to.
+         */
+        diffs: {
+          type: Array,
+          value() { return []; },
+        },
 
-      /**
-       * If set, the cursor will attempt to move to the line number (instead of
-       * the first chunk) the next time the diff renders. It is set back to null
-       * when used.
-       *
-       * @type {?number}
-       */
-      initialLineNumber: {
-        type: Number,
-        value: null,
-      },
+        /**
+         * If set, the cursor will attempt to move to the line number (instead of
+         * the first chunk) the next time the diff renders. It is set back to null
+         * when used. It should be only used if you want the line to be focused
+         * after initialization of the component and page should scroll
+         * to that position. This parameter should be set at most for one gr-diff
+         * element in the page.
+         *
+         * @type {?number}
+         */
+        initialLineNumber: {
+          type: Number,
+          value: null,
+        },
 
-      /**
-       * The scroll behavior for the cursor. Values are 'never' and
-       * 'keep-visible'. 'keep-visible' will only scroll if the cursor is beyond
-       * the viewport.
-       */
-      _scrollBehavior: {
-        type: String,
-        value: ScrollBehavior.KEEP_VISIBLE,
-      },
+        /**
+         * The scroll behavior for the cursor. Values are 'never' and
+         * 'keep-visible'. 'keep-visible' will only scroll if the cursor is beyond
+         * the viewport.
+         */
+        _scrollBehavior: {
+          type: String,
+          value: ScrollBehavior.KEEP_VISIBLE,
+        },
 
-      _focusOnMove: {
-        type: Boolean,
-        value: true,
-      },
+        _focusOnMove: {
+          type: Boolean,
+          value: true,
+        },
 
-      _listeningForScroll: Boolean,
-    },
+        _listeningForScroll: Boolean,
+      };
+    }
 
-    observers: [
-      '_updateSideClass(side)',
-      '_diffsChanged(diffs.splices)',
-    ],
+    static get observers() {
+      return [
+        '_updateSideClass(side)',
+        '_diffsChanged(diffs.splices)',
+      ];
+    }
 
+    /** @override */
+    ready() {
+      super.ready();
+      Polymer.RenderStatus.afterNextRender(this, () => {
+        /*
+        This represents the diff cursor is ready for interaction coming from
+        client components. It is more then Polymer "ready" lifecycle, as no
+        "ready" events are automatically fired by Polymer, it means
+        the cursor is completely interactable - in this case attached and
+        painted on the page. We name it "ready" instead of "rendered" as the
+        long-term goal is to make gr-diff-cursor a javascript class - not a DOM
+        element with an actual lifecycle. This will be triggered only once
+        per element.
+        */
+        this.fire('ready', null, {bubbles: false});
+      });
+    }
+
+    /** @override */
     attached() {
+      super.attached();
       // Catch when users are scrolling as the view loads.
       this.listen(window, 'scroll', '_handleWindowScroll');
-    },
+    }
 
+    /** @override */
     detached() {
+      super.detached();
       this.unlisten(window, 'scroll', '_handleWindowScroll');
-    },
+    }
 
     moveLeft() {
       this.side = DiffSides.LEFT;
       if (this._isTargetBlank()) {
         this.moveUp();
       }
-    },
+    }
 
     moveRight() {
       this.side = DiffSides.RIGHT;
       if (this._isTargetBlank()) {
         this.moveUp();
       }
-    },
+    }
 
     moveDown() {
       if (this._getViewMode() === DiffViewMode.SIDE_BY_SIDE) {
@@ -125,7 +157,7 @@
       } else {
         this.$.cursorManager.next();
       }
-    },
+    }
 
     moveUp() {
       if (this._getViewMode() === DiffViewMode.SIDE_BY_SIDE) {
@@ -133,30 +165,28 @@
       } else {
         this.$.cursorManager.previous();
       }
-    },
+    }
 
-    moveToNextChunk() {
+    moveToNextChunk(opt_clipToTop) {
       this.$.cursorManager.next(this._isFirstRowOfChunk.bind(this),
-          target => {
-            return target.parentNode.scrollHeight;
-          });
+          target => target.parentNode.scrollHeight, opt_clipToTop);
       this._fixSide();
-    },
+    }
 
     moveToPreviousChunk() {
       this.$.cursorManager.previous(this._isFirstRowOfChunk.bind(this));
       this._fixSide();
-    },
+    }
 
     moveToNextCommentThread() {
       this.$.cursorManager.next(this._rowHasThread.bind(this));
       this._fixSide();
-    },
+    }
 
     moveToPreviousCommentThread() {
       this.$.cursorManager.previous(this._rowHasThread.bind(this));
       this._fixSide();
-    },
+    }
 
     /**
      * @param {number} number
@@ -169,7 +199,7 @@
         this.side = side;
         this.$.cursorManager.setCursor(row);
       }
-    },
+    }
 
     /**
      * Get the line number element targeted by the cursor row and side.
@@ -188,20 +218,24 @@
       }
 
       return this.diffRow.querySelector(lineElSelector);
-    },
+    }
 
     getTargetDiffElement() {
-      // Find the parent diff element of the cursor row.
-      for (let diff = this.diffRow; diff; diff = diff.parentElement) {
-        if (diff.tagName === 'GR-DIFF') { return diff; }
+      if (!this.diffRow) return null;
+
+      const hostOwner = Polymer.dom(/** @type {Node} */ (this.diffRow))
+          .getOwnerRoot();
+      if (hostOwner && hostOwner.host &&
+          hostOwner.host.tagName === 'GR-DIFF') {
+        return hostOwner.host;
       }
       return null;
-    },
+    }
 
     moveToFirstChunk() {
       this.$.cursorManager.moveToStart();
-      this.moveToNextChunk();
-    },
+      this.moveToNextChunk(true);
+    }
 
     reInitCursor() {
       this._updateStops();
@@ -211,7 +245,7 @@
       } else {
         this.moveToFirstChunk();
       }
-    },
+    }
 
     _handleWindowScroll() {
       if (this._listeningForScroll) {
@@ -219,22 +253,39 @@
         this._focusOnMove = false;
         this._listeningForScroll = false;
       }
-    },
+    }
 
     handleDiffUpdate() {
       this._updateStops();
-
       if (!this.diffRow) {
+        // does not scroll during init unless requested
+        const scrollingBehaviorForInit = this.initialLineNumber ?
+          ScrollBehavior.KEEP_VISIBLE :
+          ScrollBehavior.NEVER;
+        this._scrollBehavior = scrollingBehaviorForInit;
         this.reInitCursor();
       }
       this._scrollBehavior = ScrollBehavior.KEEP_VISIBLE;
       this._focusOnMove = true;
       this._listeningForScroll = false;
-    },
+    }
 
     _handleDiffRenderStart() {
       this._listeningForScroll = true;
-    },
+    }
+
+    createCommentInPlace() {
+      const diffWithRangeSelected = this.diffs
+          .find(diff => diff.isRangeSelected());
+      if (diffWithRangeSelected) {
+        diffWithRangeSelected.createRangeComment();
+      } else {
+        const line = this.getTargetLineElement();
+        if (line) {
+          this.getTargetDiffElement().addDraftAtLine(line);
+        }
+      }
+    }
 
     /**
      * Get an object describing the location of the cursor. Such as
@@ -267,7 +318,7 @@
         leftSide: cell.matches('.left'),
         number: parseInt(number, 10),
       };
-    },
+    }
 
     _getViewMode() {
       if (!this.diffRow) {
@@ -279,24 +330,24 @@
       } else {
         return DiffViewMode.UNIFIED;
       }
-    },
+    }
 
     _rowHasSide(row) {
       const selector = (this.side === DiffSides.LEFT ? '.left' : '.right') +
           ' + .content';
       return !!row.querySelector(selector);
-    },
+    }
 
     _isFirstRowOfChunk(row) {
       const parentClassList = row.parentNode.classList;
       return parentClassList.contains('section') &&
           parentClassList.contains('delta') &&
           !row.previousSibling;
-    },
+    }
 
     _rowHasThread(row) {
-      return row.querySelector('gr-diff-comment-thread');
-    },
+      return row.querySelector('.thread-group');
+    }
 
     /**
      * If we jumped to a row where there is no content on the current side then
@@ -308,7 +359,7 @@
         this.side = this.side === DiffSides.LEFT ?
           DiffSides.RIGHT : DiffSides.LEFT;
       }
-    },
+    }
 
     _isTargetBlank() {
       if (!this.diffRow) {
@@ -318,14 +369,14 @@
       const actions = this._getActionsForRow();
       return (this.side === DiffSides.LEFT && !actions.left) ||
           (this.side === DiffSides.RIGHT && !actions.right);
-    },
+    }
 
     _rowChanged(newRow, oldRow) {
       if (oldRow) {
         oldRow.classList.remove(LEFT_SIDE_CLASS, RIGHT_SIDE_CLASS);
       }
       this._updateSideClass();
-    },
+    }
 
     _updateSideClass() {
       if (!this.diffRow) {
@@ -335,11 +386,11 @@
           this.diffRow);
       this.toggleClass(RIGHT_SIDE_CLASS, this.side === DiffSides.RIGHT,
           this.diffRow);
-    },
+    }
 
     _isActionType(type) {
       return type !== 'blank' && type !== 'contextControl';
-    },
+    }
 
     _getActionsForRow() {
       const actions = {left: false, right: false};
@@ -350,18 +401,16 @@
             this.diffRow.getAttribute('right-type'));
       }
       return actions;
-    },
+    }
 
     _getStops() {
       return this.diffs.reduce(
-          (stops, diff) => {
-            return stops.concat(diff.getCursorStops());
-          }, []);
-    },
+          (stops, diff) => stops.concat(diff.getCursorStops()), []);
+    }
 
     _updateStops() {
       this.$.cursorManager.stops = this._getStops();
-    },
+    }
 
     /**
      * Setup and tear down on-render listeners for any diffs that are added or
@@ -398,7 +447,7 @@
               'render-content', 'handleDiffUpdate');
         }
       }
-    },
+    }
 
     _findRowByNumberAndFile(targetNumber, side, opt_path) {
       let stops;
@@ -415,6 +464,8 @@
           return stops[i];
         }
       }
-    },
-  });
+    }
+  }
+
+  customElements.define(GrDiffCursor.is, GrDiffCursor);
 })();

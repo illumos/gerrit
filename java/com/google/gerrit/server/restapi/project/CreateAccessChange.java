@@ -16,7 +16,11 @@ package com.google.gerrit.server.restapi.project;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.gerrit.common.data.AccessSection;
-import com.google.gerrit.common.errors.InvalidNameException;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.exceptions.InvalidNameException;
 import com.google.gerrit.extensions.api.access.ProjectAccessInput;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
@@ -24,16 +28,11 @@ import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestModifyView;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.ApprovalsUtil;
-import com.google.gerrit.server.Sequences;
 import com.google.gerrit.server.change.ChangeInserter;
 import com.google.gerrit.server.change.ChangeJson;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
+import com.google.gerrit.server.notedb.Sequences;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.permissions.ProjectPermission;
@@ -44,7 +43,6 @@ import com.google.gerrit.server.project.ProjectResource;
 import com.google.gerrit.server.update.BatchUpdate;
 import com.google.gerrit.server.update.UpdateException;
 import com.google.gerrit.server.util.time.TimeUtil;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -64,10 +62,10 @@ public class CreateAccessChange implements RestModifyView<ProjectResource, Proje
   private final ChangeInserter.Factory changeInserterFactory;
   private final BatchUpdate.Factory updateFactory;
   private final Provider<MetaDataUpdate.User> metaDataUpdateFactory;
-  private final Provider<ReviewDb> db;
   private final SetAccessUtil setAccess;
   private final ChangeJson.Factory jsonFactory;
   private final ProjectCache projectCache;
+  private final ProjectConfig.Factory projectConfigFactory;
 
   @Inject
   CreateAccessChange(
@@ -76,25 +74,25 @@ public class CreateAccessChange implements RestModifyView<ProjectResource, Proje
       BatchUpdate.Factory updateFactory,
       Sequences seq,
       Provider<MetaDataUpdate.User> metaDataUpdateFactory,
-      Provider<ReviewDb> db,
       SetAccessUtil accessUtil,
       ChangeJson.Factory jsonFactory,
-      ProjectCache projectCache) {
+      ProjectCache projectCache,
+      ProjectConfig.Factory projectConfigFactory) {
     this.permissionBackend = permissionBackend;
     this.seq = seq;
     this.changeInserterFactory = changeInserterFactory;
     this.updateFactory = updateFactory;
     this.metaDataUpdateFactory = metaDataUpdateFactory;
-    this.db = db;
     this.setAccess = accessUtil;
     this.jsonFactory = jsonFactory;
     this.projectCache = projectCache;
+    this.projectConfigFactory = projectConfigFactory;
   }
 
   @Override
   public Response<ChangeInfo> apply(ProjectResource rsrc, ProjectAccessInput input)
       throws PermissionBackendException, AuthException, IOException, ConfigInvalidException,
-          OrmException, InvalidNameException, UpdateException, RestApiException {
+          InvalidNameException, UpdateException, RestApiException {
     PermissionBackend.ForProject forProject =
         permissionBackend.user(rsrc.getUser()).project(rsrc.getNameKey());
     if (!check(forProject, ProjectPermission.READ_CONFIG)) {
@@ -114,10 +112,10 @@ public class CreateAccessChange implements RestModifyView<ProjectResource, Proje
     List<AccessSection> additions = setAccess.getAccessSections(input.add);
 
     Project.NameKey newParentProjectName =
-        input.parent == null ? null : new Project.NameKey(input.parent);
+        input.parent == null ? null : Project.nameKey(input.parent);
 
     try (MetaDataUpdate md = metaDataUpdateUser.create(rsrc.getNameKey())) {
-      ProjectConfig config = ProjectConfig.read(md);
+      ProjectConfig config = projectConfigFactory.read(md);
       ObjectId oldCommit = config.getRevision();
       String oldCommitSha1 = oldCommit == null ? null : oldCommit.getName();
 
@@ -136,11 +134,10 @@ public class CreateAccessChange implements RestModifyView<ProjectResource, Proje
 
       md.setMessage("Review access change");
       md.setInsertChangeId(true);
-      Change.Id changeId = new Change.Id(seq.nextChangeId());
+      Change.Id changeId = Change.id(seq.nextChangeId());
 
       RevCommit commit =
-          config.commitToNewRef(
-              md, new PatchSet.Id(changeId, Change.INITIAL_PATCH_SET_ID).toRefName());
+          config.commitToNewRef(md, PatchSet.id(changeId, Change.INITIAL_PATCH_SET_ID).toRefName());
 
       if (commit.name().equals(oldCommitSha1)) {
         throw new BadRequestException("no change");
@@ -150,7 +147,7 @@ public class CreateAccessChange implements RestModifyView<ProjectResource, Proje
           ObjectReader objReader = objInserter.newReader();
           RevWalk rw = new RevWalk(objReader);
           BatchUpdate bu =
-              updateFactory.create(db.get(), rsrc.getNameKey(), rsrc.getUser(), TimeUtil.nowTs())) {
+              updateFactory.create(rsrc.getNameKey(), rsrc.getUser(), TimeUtil.nowTs())) {
         bu.setRepository(md.getRepository(), rw, objInserter);
         ChangeInserter ins = newInserter(changeId, commit);
         bu.insertChange(ins);

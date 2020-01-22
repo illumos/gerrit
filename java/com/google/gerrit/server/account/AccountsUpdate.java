@@ -24,29 +24,27 @@ import com.google.common.base.Throwables;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.Runnables;
-import com.google.gerrit.common.Nullable;
-import com.google.gerrit.reviewdb.client.Account;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.exceptions.DuplicateKeyException;
+import com.google.gerrit.exceptions.StorageException;
+import com.google.gerrit.git.LockFailureException;
+import com.google.gerrit.git.RefUpdateUtil;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.IdentifiedUser;
-import com.google.gerrit.server.account.InternalAccountUpdate.Builder;
 import com.google.gerrit.server.account.externalids.ExternalIdNotes;
 import com.google.gerrit.server.account.externalids.ExternalIdNotes.ExternalIdNotesLoader;
 import com.google.gerrit.server.account.externalids.ExternalIds;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.extensions.events.GitReferenceUpdated;
 import com.google.gerrit.server.git.GitRepositoryManager;
-import com.google.gerrit.server.git.LockFailureException;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.index.change.ReindexAfterRefUpdate;
-import com.google.gerrit.server.update.RefUpdateUtil;
+import com.google.gerrit.server.notedb.Sequences;
 import com.google.gerrit.server.update.RetryHelper;
-import com.google.gerrit.server.update.RetryHelper.Action;
-import com.google.gerrit.server.update.RetryHelper.ActionType;
-import com.google.gwtorm.server.OrmDuplicateKeyException;
-import com.google.gwtorm.server.OrmException;
-import com.google.inject.Inject;
+import com.google.gerrit.server.update.RetryableAction.Action;
 import com.google.inject.Provider;
 import com.google.inject.assistedinject.Assisted;
+import com.google.inject.assistedinject.AssistedInject;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.List;
@@ -81,7 +79,7 @@ import org.eclipse.jgit.lib.Repository;
  * commit in the user branch, and thus help debugging.
  *
  * <p>For creating a new account a new account ID can be retrieved from {@link
- * com.google.gerrit.server.Sequences#nextAccountId()}.
+ * Sequences#nextAccountId()}.
  *
  * <p>The account updates are written to NoteDb. In NoteDb accounts are represented as user branches
  * in the {@code All-Users} repository. Optionally a user branch can contain a 'account.config' file
@@ -89,9 +87,9 @@ import org.eclipse.jgit.lib.Repository;
  * The timestamp of the first commit on a user branch denotes the registration date. The initial
  * commit on the user branch may be empty (since having an 'account.config' is optional). See {@link
  * AccountConfig} for details of the 'account.config' file format. In addition the user branch can
- * contain a 'preferences.config' config file to store preferences (see {@link Preferences}) and a
- * 'watch.config' config file to store project watches (see {@link ProjectWatches}). External IDs
- * are stored separately in the {@code refs/meta/external-ids} notes branch (see {@link
+ * contain a 'preferences.config' config file to store preferences (see {@link StoredPreferences})
+ * and a 'watch.config' config file to store project watches (see {@link ProjectWatches}). External
+ * IDs are stored separately in the {@code refs/meta/external-ids} notes branch (see {@link
  * ExternalIdNotes}).
  *
  * <p>On updating an account the account is evicted from the account cache and reindexed. The
@@ -123,16 +121,28 @@ public class AccountsUpdate {
   public interface Factory {
     /**
      * Creates an {@code AccountsUpdate} which uses the identity of the specified user as author for
-     * all commits related to accounts. The Gerrit server identity will be used as committer.
+     * all commits related to accounts. The server identity will be used as committer.
      *
-     * <p><strong>Note</strong>: Please use this method with care and rather consider to use the
-     * correct annotation on the provider of an {@code AccountsUpdate} instead.
+     * <p><strong>Note</strong>: Please use this method with care and consider using the {@link
+     * com.google.gerrit.server.UserInitiated} annotation on the provider of an {@code
+     * AccountsUpdate} instead.
      *
-     * @param currentUser the user to which modifications should be attributed, or {@code null} if
-     *     the Gerrit server identity should also be used as author
+     * @param currentUser the user to which modifications should be attributed
+     * @param externalIdNotesLoader the loader that should be used to load external ID notes
      */
-    AccountsUpdate create(
-        @Nullable IdentifiedUser currentUser, ExternalIdNotesLoader externalIdNotesLoader);
+    AccountsUpdate create(IdentifiedUser currentUser, ExternalIdNotesLoader externalIdNotesLoader);
+
+    /**
+     * Creates an {@code AccountsUpdate} which uses the server identity as author and committer for
+     * all commits related to accounts.
+     *
+     * <p><strong>Note</strong>: Please use this method with care and consider using the {@link
+     * com.google.gerrit.server.ServerInitiated} annotation on the provider of an {@code
+     * AccountsUpdate} instead.
+     *
+     * @param externalIdNotesLoader the loader that should be used to load external ID notes
+     */
+    AccountsUpdate createWithServerIdent(ExternalIdNotesLoader externalIdNotesLoader);
   }
 
   /**
@@ -154,12 +164,9 @@ public class AccountsUpdate {
     void update(AccountState accountState, InternalAccountUpdate.Builder update) throws IOException;
 
     static AccountUpdater join(List<AccountUpdater> updaters) {
-      return new AccountUpdater() {
-        @Override
-        public void update(AccountState accountState, Builder update) throws IOException {
-          for (AccountUpdater updater : updaters) {
-            updater.update(accountState, update);
-          }
+      return (accountState, update) -> {
+        for (AccountUpdater updater : updaters) {
+          updater.update(accountState, update);
         }
       };
     }
@@ -175,7 +182,7 @@ public class AccountsUpdate {
 
   private final GitRepositoryManager repoManager;
   private final GitReferenceUpdated gitRefUpdated;
-  @Nullable private final IdentifiedUser currentUser;
+  private final Optional<IdentifiedUser> currentUser;
   private final AllUsersName allUsersName;
   private final ExternalIds externalIds;
   private final Provider<MetaDataUpdate.InternalFactory> metaDataUpdateInternalFactory;
@@ -190,7 +197,7 @@ public class AccountsUpdate {
   // Invoked after updating the account but before committing the changes.
   private final Runnable beforeCommit;
 
-  @Inject
+  @AssistedInject
   AccountsUpdate(
       GitRepositoryManager repoManager,
       GitReferenceUpdated gitRefUpdated,
@@ -199,19 +206,44 @@ public class AccountsUpdate {
       Provider<MetaDataUpdate.InternalFactory> metaDataUpdateInternalFactory,
       RetryHelper retryHelper,
       @GerritPersonIdent PersonIdent serverIdent,
-      @Assisted @Nullable IdentifiedUser currentUser,
       @Assisted ExternalIdNotesLoader extIdNotesLoader) {
     this(
         repoManager,
         gitRefUpdated,
-        currentUser,
+        Optional.empty(),
         allUsersName,
         externalIds,
         metaDataUpdateInternalFactory,
         retryHelper,
         extIdNotesLoader,
         serverIdent,
-        createPersonIdent(serverIdent, currentUser),
+        createPersonIdent(serverIdent, Optional.empty()),
+        Runnables.doNothing(),
+        Runnables.doNothing());
+  }
+
+  @AssistedInject
+  AccountsUpdate(
+      GitRepositoryManager repoManager,
+      GitReferenceUpdated gitRefUpdated,
+      AllUsersName allUsersName,
+      ExternalIds externalIds,
+      Provider<MetaDataUpdate.InternalFactory> metaDataUpdateInternalFactory,
+      RetryHelper retryHelper,
+      @GerritPersonIdent PersonIdent serverIdent,
+      @Assisted IdentifiedUser currentUser,
+      @Assisted ExternalIdNotesLoader extIdNotesLoader) {
+    this(
+        repoManager,
+        gitRefUpdated,
+        Optional.of(currentUser),
+        allUsersName,
+        externalIds,
+        metaDataUpdateInternalFactory,
+        retryHelper,
+        extIdNotesLoader,
+        serverIdent,
+        createPersonIdent(serverIdent, Optional.of(currentUser)),
         Runnables.doNothing(),
         Runnables.doNothing());
   }
@@ -220,7 +252,7 @@ public class AccountsUpdate {
   public AccountsUpdate(
       GitRepositoryManager repoManager,
       GitReferenceUpdated gitRefUpdated,
-      @Nullable IdentifiedUser currentUser,
+      Optional<IdentifiedUser> currentUser,
       AllUsersName allUsersName,
       ExternalIds externalIds,
       Provider<MetaDataUpdate.InternalFactory> metaDataUpdateInternalFactory,
@@ -246,11 +278,11 @@ public class AccountsUpdate {
   }
 
   private static PersonIdent createPersonIdent(
-      PersonIdent serverIdent, @Nullable IdentifiedUser user) {
-    if (user == null) {
+      PersonIdent serverIdent, Optional<IdentifiedUser> user) {
+    if (!user.isPresent()) {
       return serverIdent;
     }
-    return user.newCommitterIdent(serverIdent.getWhen(), serverIdent.getTimeZone());
+    return user.get().newCommitterIdent(serverIdent.getWhen(), serverIdent.getTimeZone());
   }
 
   /**
@@ -260,14 +292,13 @@ public class AccountsUpdate {
    * @param accountId ID of the new account
    * @param init consumer to populate the new account
    * @return the newly created account
-   * @throws OrmDuplicateKeyException if the account already exists
+   * @throws DuplicateKeyException if the account already exists
    * @throws IOException if creating the user branch fails due to an IO error
-   * @throws OrmException if creating the user branch fails
    * @throws ConfigInvalidException if any of the account fields has an invalid value
    */
   public AccountState insert(
       String message, Account.Id accountId, Consumer<InternalAccountUpdate.Builder> init)
-      throws OrmException, IOException, ConfigInvalidException {
+      throws IOException, ConfigInvalidException {
     return insert(message, accountId, AccountUpdater.fromConsumer(init));
   }
 
@@ -278,19 +309,18 @@ public class AccountsUpdate {
    * @param accountId ID of the new account
    * @param updater updater to populate the new account
    * @return the newly created account
-   * @throws OrmDuplicateKeyException if the account already exists
+   * @throws DuplicateKeyException if the account already exists
    * @throws IOException if creating the user branch fails due to an IO error
-   * @throws OrmException if creating the user branch fails
    * @throws ConfigInvalidException if any of the account fields has an invalid value
    */
   public AccountState insert(String message, Account.Id accountId, AccountUpdater updater)
-      throws OrmException, IOException, ConfigInvalidException {
+      throws IOException, ConfigInvalidException {
     return updateAccount(
             r -> {
               AccountConfig accountConfig = read(r, accountId);
               Account account =
                   accountConfig.getNewAccount(new Timestamp(committerIdent.getWhen().getTime()));
-              AccountState accountState = AccountState.forAccount(allUsersName, account);
+              AccountState accountState = AccountState.forAccount(account);
               InternalAccountUpdate.Builder updateBuilder = InternalAccountUpdate.builder();
               updater.update(accountState, updateBuilder);
 
@@ -299,7 +329,7 @@ public class AccountsUpdate {
               ExternalIdNotes extIdNotes =
                   createExternalIdNotes(r, accountConfig.getExternalIdsRev(), accountId, update);
               UpdatedAccount updatedAccounts =
-                  new UpdatedAccount(allUsersName, externalIds, message, accountConfig, extIdNotes);
+                  new UpdatedAccount(externalIds, message, accountConfig, extIdNotes);
               updatedAccounts.setCreated(true);
               return updatedAccounts;
             })
@@ -318,12 +348,11 @@ public class AccountsUpdate {
    * @throws IOException if updating the user branch fails due to an IO error
    * @throws LockFailureException if updating the user branch still fails due to concurrent updates
    *     after the retry timeout exceeded
-   * @throws OrmException if updating the user branch fails
    * @throws ConfigInvalidException if any of the account fields has an invalid value
    */
   public Optional<AccountState> update(
       String message, Account.Id accountId, Consumer<InternalAccountUpdate.Builder> update)
-      throws OrmException, LockFailureException, IOException, ConfigInvalidException {
+      throws LockFailureException, IOException, ConfigInvalidException {
     return update(message, accountId, AccountUpdater.fromConsumer(update));
   }
 
@@ -339,16 +368,15 @@ public class AccountsUpdate {
    * @throws IOException if updating the user branch fails due to an IO error
    * @throws LockFailureException if updating the user branch still fails due to concurrent updates
    *     after the retry timeout exceeded
-   * @throws OrmException if updating the user branch fails
    * @throws ConfigInvalidException if any of the account fields has an invalid value
    */
   public Optional<AccountState> update(String message, Account.Id accountId, AccountUpdater updater)
-      throws OrmException, LockFailureException, IOException, ConfigInvalidException {
+      throws LockFailureException, IOException, ConfigInvalidException {
     return updateAccount(
         r -> {
           AccountConfig accountConfig = read(r, accountId);
           Optional<AccountState> account =
-              AccountState.fromAccountConfig(allUsersName, externalIds, accountConfig);
+              AccountState.fromAccountConfig(externalIds, accountConfig);
           if (!account.isPresent()) {
             return null;
           }
@@ -361,7 +389,7 @@ public class AccountsUpdate {
           ExternalIdNotes extIdNotes =
               createExternalIdNotes(r, accountConfig.getExternalIdsRev(), accountId, update);
           UpdatedAccount updatedAccounts =
-              new UpdatedAccount(allUsersName, externalIds, message, accountConfig, extIdNotes);
+              new UpdatedAccount(externalIds, message, accountConfig, extIdNotes);
           return updatedAccounts;
         });
   }
@@ -374,7 +402,7 @@ public class AccountsUpdate {
   }
 
   private Optional<AccountState> updateAccount(AccountUpdate accountUpdate)
-      throws IOException, ConfigInvalidException, OrmException {
+      throws IOException, ConfigInvalidException {
     return executeAccountUpdate(
         () -> {
           try (Repository allUsersRepo = repoManager.openRepository(allUsersName)) {
@@ -390,16 +418,14 @@ public class AccountsUpdate {
   }
 
   private Optional<AccountState> executeAccountUpdate(Action<Optional<AccountState>> action)
-      throws IOException, ConfigInvalidException, OrmException {
+      throws IOException, ConfigInvalidException {
     try {
-      return retryHelper.execute(
-          ActionType.ACCOUNT_UPDATE, action, LockFailureException.class::isInstance);
+      return retryHelper.accountUpdate("updateAccount", action).call();
     } catch (Exception e) {
       Throwables.throwIfUnchecked(e);
       Throwables.throwIfInstanceOf(e, IOException.class);
       Throwables.throwIfInstanceOf(e, ConfigInvalidException.class);
-      Throwables.throwIfInstanceOf(e, OrmException.class);
-      throw new OrmException(e);
+      throw new StorageException(e);
     }
   }
 
@@ -408,7 +434,7 @@ public class AccountsUpdate {
       Optional<ObjectId> rev,
       Account.Id accountId,
       InternalAccountUpdate update)
-      throws IOException, ConfigInvalidException, OrmDuplicateKeyException {
+      throws IOException, ConfigInvalidException, DuplicateKeyException {
     ExternalIdNotes.checkSameAccount(
         Iterables.concat(
             update.getCreatedExternalIds(),
@@ -458,7 +484,7 @@ public class AccountsUpdate {
         .updateCaches(accountsThatWillBeReindexByReindexAfterRefUpdate);
 
     gitRefUpdated.fire(
-        allUsersName, batchRefUpdate, currentUser != null ? currentUser.state() : null);
+        allUsersName, batchRefUpdate, currentUser.map(user -> user.state()).orElse(null));
   }
 
   private static Set<Account.Id> getUpdatedAccounts(BatchRefUpdate batchRefUpdate) {
@@ -529,12 +555,10 @@ public class AccountsUpdate {
 
   @FunctionalInterface
   private static interface AccountUpdate {
-    UpdatedAccount update(Repository allUsersRepo)
-        throws IOException, ConfigInvalidException, OrmException;
+    UpdatedAccount update(Repository allUsersRepo) throws IOException, ConfigInvalidException;
   }
 
   private static class UpdatedAccount {
-    private final AllUsersName allUsersName;
     private final ExternalIds externalIds;
     private final String message;
     private final AccountConfig accountConfig;
@@ -543,13 +567,11 @@ public class AccountsUpdate {
     private boolean created;
 
     private UpdatedAccount(
-        AllUsersName allUsersName,
         ExternalIds externalIds,
         String message,
         AccountConfig accountConfig,
         ExternalIdNotes extIdNotes) {
       checkState(!Strings.isNullOrEmpty(message), "message for account update must be set");
-      this.allUsersName = requireNonNull(allUsersName);
       this.externalIds = requireNonNull(externalIds);
       this.message = requireNonNull(message);
       this.accountConfig = requireNonNull(accountConfig);
@@ -565,8 +587,7 @@ public class AccountsUpdate {
     }
 
     public AccountState getAccount() throws IOException {
-      return AccountState.fromAccountConfig(allUsersName, externalIds, accountConfig, extIdNotes)
-          .get();
+      return AccountState.fromAccountConfig(externalIds, accountConfig, extIdNotes).get();
     }
 
     public ExternalIdNotes getExternalIdNotes() {

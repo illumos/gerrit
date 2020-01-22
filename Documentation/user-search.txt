@@ -1,3 +1,4 @@
+:linkattrs:
 = Gerrit Code Review - Searching Changes
 
 == Default Searches
@@ -53,7 +54,7 @@ age:'AGE'::
 +
 Amount of time that has expired since the change was last updated
 with a review comment or new patch set.  The age must be specified
-to include a unit suffix, for example `age:2d`:
+to include a unit suffix, for example `-age:2d`:
 +
 * s, sec, second, seconds
 * m, min, minute, minutes
@@ -62,6 +63,10 @@ to include a unit suffix, for example `age:2d`:
 * w, week, weeks (`1 week` is treated as `7 days`)
 * mon, month, months (`1 month` is treated as `30 days`)
 * y, year, years (`1 year` is treated as `365 days`)
+
+`age` can be used both forward and backward looking: `age:2d`
+means 'everything older than 2 days' while `-age:2d` means
+'everything with an age of at most 2 days'.
 
 [[assignee]]
 assignee:'USER'::
@@ -136,6 +141,11 @@ revertof:'ID'::
 +
 Changes that revert the change specified by the numeric 'ID'.
 
+[[submissionid]]
+submissionid:'ID'::
++
+Changes that have the specified submission 'ID'.
+
 [[reviewerin]]
 reviewerin:'GROUP'::
 +
@@ -152,7 +162,7 @@ project:'PROJECT', p:'PROJECT'::
 Changes occurring in 'PROJECT'. If 'PROJECT' starts with `^` it
 matches project names by regular expression.  The
 link:http://www.brics.dk/automaton/[dk.brics.automaton
-library] is used for evaluation of such patterns.
+library,role=external,window=_blank] is used for evaluation of such patterns.
 
 [[projects]]
 projects:'PREFIX'::
@@ -171,7 +181,7 @@ repository:'REPOSITORY', repo:'REPOSITORY'::
 Changes occurring in 'REPOSITORY'. If 'REPOSITORY' starts with `^` it
 matches repository names by regular expression.  The
 link:http://www.brics.dk/automaton/[dk.brics.automaton
-library] is used for evaluation of such patterns.
+library,role=external,window=_blank] is used for evaluation of such patterns.
 
 [[repositories]]
 repositories:'PREFIX', repos:'PREFIX'::
@@ -194,7 +204,7 @@ the traditional 'refs/heads/' prefix.
 If 'BRANCH' starts with `^` it matches branch names by regular
 expression patterns.  The
 link:http://www.brics.dk/automaton/[dk.brics.automaton
-library] is used for evaluation of such patterns.
+library,role=external,window=_blank] is used for evaluation of such patterns.
 
 [[intopic]]
 intopic:'TOPIC'::
@@ -204,7 +214,7 @@ Changes whose designated topic contains 'TOPIC', using a full-text search.
 If 'TOPIC' starts with `^` it matches topic names by regular
 expression patterns.  The
 link:http://www.brics.dk/automaton/[dk.brics.automaton
-library] is used for evaluation of such patterns.
+library,role=external,window=_blank] is used for evaluation of such patterns.
 
 [[topic]]
 topic:'TOPIC'::
@@ -219,6 +229,16 @@ hashtag:'HASHTAG'::
 Changes whose link:intro-user.html#hashtags[hashtag] matches 'HASHTAG'.
 The match is case-insensitive.
 
+[[cherrypickof]]
+cherrypickof:'CHANGE[,PATCHSET]'::
++
+Changes which were created using the 'cherry-pick' functionality and
+whose source change number matches 'CHANGE' and source patchset number
+matches 'PATCHSET'. Note that 'PATCHSET' is optional. For example, a
+`cherrypickof:12345` matches all changes which were cherry-picked from
+change 12345 and `cherrypickof:12345,2` matches all changes which were
+cherry-picked from the 2nd patchset of change 12345.
+
 [[ref]]
 ref:'REF'::
 +
@@ -229,7 +249,7 @@ must start with 'refs/'.
 If 'REF' starts with `^` it matches reference names by regular
 expression patterns.  The
 link:http://www.brics.dk/automaton/[dk.brics.automaton
-library] is used for evaluation of such patterns.
+library,role=external,window=_blank] is used for evaluation of such patterns.
 
 [[tr,bug]]
 tr:'ID', bug:'ID'::
@@ -264,7 +284,7 @@ path:'PATH'::
 Matches any change touching file at 'PATH'. By default exact path
 matching is used, but regular expressions can be enabled by starting
 with `^`.  For example, to match all XML files use `file:^.*\.xml$`.
-The link:http://www.brics.dk/automaton/[dk.brics.automaton library]
+The link:http://www.brics.dk/automaton/[dk.brics.automaton library,role=external,window=_blank]
 is used for the evaluation of such patterns.
 +
 The `^` required at the beginning of the regular expression not only
@@ -277,6 +297,8 @@ should be double quoted when using more complex construction (like
 ones using a bracket expression). For example, to match all XML
 files named like 'name1.xml', 'name2.xml', and 'name3.xml' use
 `file:"^name[1-3].xml"`.
++
+Slash ('/') is used path separator.
 
 [[file]]
 file:'NAME', f:'NAME'::
@@ -289,6 +311,46 @@ named exactly `Foo.java` and does not match `AbstractFoo.java`.
 +
 Regular expression matching can be enabled by starting the string
 with `^`. In this mode `file:` is an alias of `path:` (see above).
+
+[[extension]]
+extension:'EXT', ext:'EXT'::
++
+Matches any change touching a file with extension 'EXT', case-insensitive. The
+extension is defined as the portion of the filename following the final `.`.
+Files with no `.` in their name have no extension and can be matched by an
+empty string.
+
+[[onlyextensions]]
+onlyextensions:'EXT_LIST', onlyexts:'EXT_LIST'::
++
+Matches any change touching only files with extensions that are listed in
+'EXT_LIST' (comma-separated list). The matching is done case-insensitive.
+An extension is defined as the portion of the filename following the final `.`.
+Files with no `.` in their name have no extension and can be matched by an
+empty string.
+
+[[directory]]
+directory:'DIR', dir:'DIR'::
++
+Matches any change where the current patch set touches a file in the directory
+'DIR'. The matching is done case-insensitive. 'DIR' can be a full directory
+name, a directory prefix or any combination of intermediate directory segments.
+E.g. a change that touches a file in the directory 'a/b/c' matches for 'a/b/c',
+'a', 'a/b', 'b', 'b/c' and 'c'.
++
+Slash ('/') is used path separator. Leading and trailing slashes are allowed
+but are not mandatory.
++
+If 'DIR' starts with `^` it matches directories and directory segments by
+regular expression. The link:http://www.brics.dk/automaton/[dk.brics.automaton
+library,role=external,window=_blank] is used for evaluation of such patterns.
+
+[[footer-operator]]
+footer:'FOOTER'::
++
+Matches any change that has 'FOOTER' as footer in the commit message of the
+current patch set. 'FOOTER' can be specified verbatim ('<key>: <value>', must
+be quoted) or as '<key>=<value>'. The matching is done case-insensitive.
 
 [[star]]
 star:'LABEL'::
@@ -365,7 +427,7 @@ is:cc::
 True on any change where the current user is in CC.
 Same as `cc:self`.
 
-is:open, is:pending::
+is:open, is:pending, is:new::
 +
 True if the change is open.
 
@@ -417,7 +479,7 @@ is:wip::
 True if the change is Work In Progress.
 
 [[status]]
-status:open, status:pending::
+status:open, status:pending, status:new::
 +
 True if the change state is 'review in progress'.
 

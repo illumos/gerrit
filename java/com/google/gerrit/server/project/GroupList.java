@@ -16,8 +16,8 @@ package com.google.gerrit.server.project;
 
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.data.GroupReference;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.git.ValidationError;
 import com.google.gerrit.server.git.meta.TabFile;
 import java.io.IOException;
@@ -28,6 +28,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * File format for group name aliases.
+ *
+ * <p>Project configuration must use aliases for groups used in the permission section. The
+ * aliases/group mapping is stored in a file "groups", (de)serialized with this class.
+ */
 public class GroupList extends TabFile {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
 
@@ -48,7 +54,7 @@ public class GroupList extends TabFile {
         logger.atWarning().log("null field in group list for %s:\n%s", project, text);
         continue;
       }
-      AccountGroup.UUID uuid = new AccountGroup.UUID(row.left);
+      AccountGroup.UUID uuid = AccountGroup.uuid(row.left);
       String name = row.right;
       GroupReference ref = new GroupReference(uuid, name);
 

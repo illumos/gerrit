@@ -15,8 +15,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/iron-autogrow-textarea/iron-autogrow-textarea.html">
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/iron-autogrow-textarea/iron-autogrow-textarea.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../styles/shared-styles.html">
 <link rel="import" href="../../shared/gr-autocomplete/gr-autocomplete.html">
 <link rel="import" href="../../shared/gr-dialog/gr-dialog.html">
@@ -36,9 +37,6 @@ limitations under the License.
       label {
         cursor: pointer;
       }
-      iron-autogrow-textarea {
-        padding: 0;
-      }
       .main {
         display: flex;
         flex-direction: column;
@@ -47,11 +45,9 @@ limitations under the License.
       .main label,
       .main input[type="text"] {
         display: block;
-        font: inherit;
         width: 100%;
       }
       .main .message {
-        border: groove;
         width: 100%;
       }
       .warning {

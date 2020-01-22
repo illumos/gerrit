@@ -15,9 +15,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 <link rel="import" href="../../../behaviors/async-foreach-behavior/async-foreach-behavior.html">
 <link rel="import" href="../../../behaviors/dom-util-behavior/dom-util-behavior.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../behaviors/keyboard-shortcut-behavior/keyboard-shortcut-behavior.html">
 <link rel="import" href="../../../behaviors/gr-patch-set-behavior/gr-patch-set-behavior.html">
 <link rel="import" href="../../../styles/shared-styles.html">
@@ -47,8 +48,8 @@ limitations under the License.
         align-items: center;
         border-top: 1px solid var(--border-color);
         display: flex;
-        min-height: 2.25em;
-        padding: .2em var(--default-horizontal-margin) .2em calc(var(--default-horizontal-margin) - .35rem);
+        min-height: calc(var(--line-height-normal) + 2*var(--spacing-s));
+        padding: var(--spacing-xs) var(--spacing-l) var(--spacing-xs) calc(var(--spacing-l) - .35rem);
       }
       :host(.loading) .row {
         opacity: .5;
@@ -64,6 +65,9 @@ limitations under the License.
       }
       .invisible {
         visibility: hidden;
+      }
+      .header-row {
+        font-weight: var(--font-weight-bold);
       }
       .controlRow {
         align-items: center;
@@ -112,35 +116,39 @@ limitations under the License.
         cursor: pointer;
         flex: 1;
         text-decoration: none;
-        white-space: nowrap;
+        /* Wrap it into multiple lines if too long. */
+        white-space: normal;
+        word-break: break-word;
       }
       .path:hover :first-child {
         text-decoration: underline;
       }
-      .path,
-      .path div {
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
       .oldPath {
         color: var(--deemphasized-text-color);
       }
-      .comments,
+      .header-stats {
+        text-align: center;
+        min-width: 7.5em;
+      }
       .stats {
         text-align: right;
+        min-width: 7.5em;
       }
       .comments {
-        padding-left: 2em;
+        padding-left: var(--spacing-l);
+        min-width: 7.5em;
       }
-      .stats {
-        min-width: 7em;
-      }
-      .row:not(.header) .stats,
+      .row:not(.header-row) .stats,
       .total-stats {
         font-family: var(--monospace-font-family);
+        font-size: var(--font-size-mono);
+        line-height: var(--line-height-mono);
+        display: flex;
       }
       .sizeBars {
-        margin-left: .5em;
+        margin-left: var(--spacing-m);
+        min-width: 7em;
+        text-align: center;
       }
       .sizeBars.hide {
         display: none;
@@ -156,17 +164,19 @@ limitations under the License.
       .removed {
         color: var(--vote-text-color-disliked);
         text-align: left;
+        min-width: 4em;
+        padding-left: var(--spacing-s);
       }
       .drafts {
         color: #C62828;
         font-weight: var(--font-weight-bold);
       }
       .show-hide {
-        margin-left: .35em;
+        margin-left: var(--spacing-s);
         width: 1.9em;
       }
       .fileListButton {
-        margin: .5em;
+        margin: var(--spacing-m);
       }
       .totalChanges {
         justify-content: flex-end;
@@ -190,15 +200,11 @@ limitations under the License.
       .truncatedFileName {
         display: none;
       }
-      .expanded .fullFileName {
-        white-space: normal;
-        word-wrap: break-word;
-      }
       .mobile {
         display: none;
       }
       .reviewed {
-        margin-left: 2em;
+        margin-left: var(--spacing-xxl);
         width: 15em;
       }
       .reviewed label {
@@ -224,7 +230,7 @@ limitations under the License.
       }
       .reviewedLabel {
         color: var(--deemphasized-text-color);
-        margin-right: 1em;
+        margin-right: var(--spacing-l);
         opacity: 0;
       }
       .reviewedLabel.isReviewed {
@@ -237,10 +243,12 @@ limitations under the License.
       .markReviewed,
       .pathLink {
         display: inline-block;
-        margin: -.2em 0;
-        padding: .4em 0;
+        margin: -2px 0;
+        padding: var(--spacing-s) 0;
       }
-      @media screen and (max-width: 50em) {
+
+      /** small screen breakpoint: 768px */
+      @media screen and (max-width: 55em) {
         .desktop {
           display: none;
         }
@@ -275,7 +283,25 @@ limitations under the License.
     </style>
     <div
         id="container"
-        on-tap="_handleFileListTap">
+        on-click="_handleFileListClick">
+      <div class="header-row row">
+        <div class="status"></div>
+        <div class="path">File</div>
+        <div class="comments">Comments</div>
+        <div class="sizeBars">Size</div>
+        <div class="header-stats">Delta</div>
+        <template is="dom-if" if="[[_showDynamicColumns]]">
+          <template is="dom-repeat" items="[[_dynamicHeaderEndpoints]]" as="headerEndpoint">
+            <gr-endpoint-decorator name$="[[headerEndpoint]]">
+            </gr-endpoint-decorator>
+          </template>
+        </template>
+        <!-- Empty div here exists to keep spacing in sync with file rows. -->
+        <div class="reviewed hideOnEdit" hidden$="[[!_loggedIn]]"></div>
+        <div class="editFileControls showOnEdit"></div>
+        <div class="show-hide"></div>
+      </div>
+
       <template is="dom-repeat"
           items="[[_shownFiles]]"
           id="files"
@@ -361,6 +387,20 @@ limitations under the License.
                 [[_formatPercentage(file.size, file.size_delta)]]
               </span>
             </div>
+            <template is="dom-if" if="[[_showDynamicColumns]]">
+              <template is="dom-repeat" items="[[_dynamicContentEndpoints]]" as="contentEndpoint">
+                <div class$="[[_computeClass('', file.__path)]]">
+                  <gr-endpoint-decorator name="[[contentEndpoint]]">
+                    <gr-endpoint-param name="changeNum" value="[[changeNum]]">
+                    </gr-endpoint-param>
+                    <gr-endpoint-param name="patchRange" value="[[patchRange]]">
+                    </gr-endpoint-param>
+                    <gr-endpoint-param name="path" value="[[file.__path]]">
+                    </gr-endpoint-param>
+                  </gr-endpoint-decorator>
+                </div>
+              </template>
+            </template>
             <div class="reviewed hideOnEdit" hidden$="[[!_loggedIn]]" hidden>
               <span class$="reviewedLabel [[_computeReviewedClass(file.isReviewed)]]">Reviewed</span>
               <label>
@@ -394,14 +434,12 @@ limitations under the License.
                 no-auto-render
                 show-load-failure
                 display-line="[[_displayLine]]"
-                inline-index=[[index]]
                 hidden="[[!_isFileExpanded(file.__path, _expandedFilePaths.*)]]"
                 change-num="[[changeNum]]"
                 patch-range="[[patchRange]]"
                 path="[[file.__path]]"
                 prefs="[[diffPrefs]]"
                 project-name="[[change.project]]"
-                project-config="[[projectConfig]]"
                 on-line-selected="_onLineSelected"
                 no-render-on-prefs-change
                 view-mode="[[diffViewMode]]"></gr-diff-host>
@@ -426,8 +464,14 @@ limitations under the License.
           -[[_patchChange.deleted]]
         </span>
       </div>
+      <template is="dom-if" if="[[_showDynamicColumns]]">
+        <template is="dom-repeat" items="[[_dynamicSummaryEndpoints]]" as="summaryEndpoint">
+          <gr-endpoint-decorator name="[[summaryEndpoint]]">
+          </gr-endpoint-decorator>
+        </template>
+      </template>
       <!-- Empty div here exists to keep spacing in sync with file rows. -->
-      <div class="reviewed hideOnEdit" hidden$="[[!_loggedIn]]" hidden></div>
+      <div class="reviewed hideOnEdit" hidden$="[[!_loggedIn]]"></div>
       <div class="editFileControls showOnEdit"></div>
       <div class="show-hide"></div>
     </div>
@@ -451,7 +495,7 @@ limitations under the License.
       <gr-button
           class="fileListButton"
           id="incrementButton"
-          link on-tap="_incrementNumFilesShown">
+          link on-click="_incrementNumFilesShown">
         [[_computeIncrementText(numFilesShown, _files)]]
       </gr-button>
       <gr-tooltip-content
@@ -461,7 +505,7 @@ limitations under the License.
         <gr-button
             class="fileListButton"
             id="showAllButton"
-            link on-tap="_showAllFiles">
+            link on-click="_showAllFiles">
           [[_computeShowAllText(_files)]]
         </gr-button><!--
   --></gr-tooltip-content>

@@ -15,8 +15,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../behaviors/gr-patch-set-behavior/gr-patch-set-behavior.html">
 <link rel="import" href="../../../behaviors/gr-path-list-behavior/gr-path-list-behavior.html">
 <link rel="import" href="../../../behaviors/keyboard-shortcut-behavior/keyboard-shortcut-behavior.html">
@@ -47,23 +48,23 @@ limitations under the License.
         align-items: center;
         display: flex;
         justify-content: space-between;
-        padding: .75em var(--default-horizontal-margin);
+        padding: var(--spacing-m) var(--spacing-l);
       }
       header gr-editable-label {
-        font-size: var(--font-size-large);
+        font-size: var(--font-size-h3);
         --label-style: {
           text-overflow: initial;
           white-space: initial;
           word-break: break-all;
         }
         --input-style: {
-          margin-top: 1em;
+          margin-top: var(--spacing-l);
         }
       }
       .textareaWrapper {
         border: 1px solid var(--border-color);
-        border-radius: 3px;
-        margin: var(--default-horizontal-margin);
+        border-radius: var(--border-radius);
+        margin: var(--spacing-l);
       }
       .textareaWrapper .editButtons {
         display: none;
@@ -71,7 +72,7 @@ limitations under the License.
       .controlGroup {
         align-items: center;
         display: flex;
-        font-size: var(--font-size-large);
+        font-size: var(--font-size-h3);
       }
       .rightControls {
         justify-content: flex-end;
@@ -101,13 +102,13 @@ limitations under the License.
           <gr-button
               id="close"
               link
-              on-tap="_handleCloseTap">Close</gr-button>
+              on-click="_handleCloseTap">Close</gr-button>
           <gr-button
               id="save"
               disabled$="[[_saveDisabled]]"
               primary
               link
-              on-tap="_saveEdit">Save</gr-button>
+              on-click="_saveEdit">Save</gr-button>
         </span>
       </header>
     </gr-fixed-panel>

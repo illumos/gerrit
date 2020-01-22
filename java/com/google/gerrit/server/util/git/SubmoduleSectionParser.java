@@ -14,9 +14,9 @@
 
 package com.google.gerrit.server.util.git;
 
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.SubmoduleSubscription;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.SubmoduleSubscription;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.HashSet;
@@ -45,10 +45,10 @@ public class SubmoduleSectionParser {
 
   private final Config config;
   private final String canonicalWebUrl;
-  private final Branch.NameKey superProjectBranch;
+  private final BranchNameKey superProjectBranch;
 
   public SubmoduleSectionParser(
-      Config config, String canonicalWebUrl, Branch.NameKey superProjectBranch) {
+      Config config, String canonicalWebUrl, BranchNameKey superProjectBranch) {
     this.config = config;
     this.canonicalWebUrl = canonicalWebUrl;
     this.superProjectBranch = superProjectBranch;
@@ -81,13 +81,13 @@ public class SubmoduleSectionParser {
         String project;
 
         if (branch.equals(".")) {
-          branch = superProjectBranch.get();
+          branch = superProjectBranch.branch();
         }
 
         // relative URL
         if (url.startsWith("../")) {
           // prefix with a slash for easier relative path walks
-          project = '/' + superProjectBranch.getParentKey().get();
+          project = '/' + superProjectBranch.project().get();
           String hostPart = url;
           while (hostPart.startsWith("../")) {
             int lastSlash = project.lastIndexOf('/');
@@ -133,9 +133,9 @@ public class SubmoduleSectionParser {
                   0, //
                   project.length() - Constants.DOT_GIT_EXT.length());
         }
-        Project.NameKey projectKey = new Project.NameKey(project);
+        Project.NameKey projectKey = Project.nameKey(project);
         return new SubmoduleSubscription(
-            superProjectBranch, new Branch.NameKey(projectKey, branch), path);
+            superProjectBranch, BranchNameKey.create(projectKey, branch), path);
       }
     } catch (URISyntaxException e) {
       // Error in url syntax (in fact it is uri syntax)

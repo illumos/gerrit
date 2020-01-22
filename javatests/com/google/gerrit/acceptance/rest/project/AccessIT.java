@@ -15,35 +15,39 @@ package com.google.gerrit.acceptance.rest.project;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth8.assertThat;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static com.google.gerrit.extensions.client.ListChangesOption.MESSAGES;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
+import static com.google.gerrit.truth.ConfigSubject.assertThat;
 
 import com.google.gerrit.acceptance.AbstractDaemonTest;
+import com.google.gerrit.acceptance.ExtensionRegistry;
+import com.google.gerrit.acceptance.ExtensionRegistry.Registration;
 import com.google.gerrit.acceptance.GitUtil;
 import com.google.gerrit.acceptance.PushOneCommit;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.common.data.AccessSection;
 import com.google.gerrit.common.data.GlobalCapability;
 import com.google.gerrit.common.data.Permission;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.access.AccessSectionInfo;
 import com.google.gerrit.extensions.api.access.PermissionInfo;
 import com.google.gerrit.extensions.api.access.PermissionRuleInfo;
 import com.google.gerrit.extensions.api.access.ProjectAccessInfo;
 import com.google.gerrit.extensions.api.access.ProjectAccessInput;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
-import com.google.gerrit.extensions.api.projects.BranchInfo;
 import com.google.gerrit.extensions.api.projects.ProjectApi;
 import com.google.gerrit.extensions.client.ChangeStatus;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.GroupInfo;
 import com.google.gerrit.extensions.common.WebLinkInfo;
-import com.google.gerrit.extensions.registration.DynamicSet;
-import com.google.gerrit.extensions.registration.RegistrationHandle;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.webui.FileHistoryWebLink;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
 import com.google.gerrit.server.config.AllProjectsNameProvider;
 import com.google.gerrit.server.group.SystemGroupBackend;
 import com.google.gerrit.server.project.ProjectConfig;
@@ -63,20 +67,20 @@ import org.junit.Test;
 
 public class AccessIT extends AbstractDaemonTest {
 
-  private static final String PROJECT_NAME = "newProject";
-
   private static final String REFS_ALL = Constants.R_REFS + "*";
   private static final String REFS_HEADS = Constants.R_HEADS + "*";
 
   private static final String LABEL_CODE_REVIEW = "Code-Review";
 
-  private Project.NameKey newProjectName;
+  @Inject private ProjectOperations projectOperations;
+  @Inject private RequestScopeOperations requestScopeOperations;
+  @Inject private ExtensionRegistry extensionRegistry;
 
-  @Inject private DynamicSet<FileHistoryWebLink> fileHistoryWebLinkDynamicSet;
+  private Project.NameKey newProjectName;
 
   @Before
   public void setUp() throws Exception {
-    newProjectName = createProject(PROJECT_NAME);
+    newProjectName = projectOperations.newProject().create();
   }
 
   @Test
@@ -85,57 +89,45 @@ public class AccessIT extends AbstractDaemonTest {
     assertThat(inheritedName).isEqualTo(AllProjectsNameProvider.DEFAULT);
   }
 
+  private Registration newFileHistoryWebLink() {
+    FileHistoryWebLink weblink =
+        new FileHistoryWebLink() {
+          @Override
+          public WebLinkInfo getFileHistoryWebLink(
+              String projectName, String revision, String fileName) {
+            return new WebLinkInfo(
+                "name", "imageURL", "http://view/" + projectName + "/" + fileName);
+          }
+        };
+    return extensionRegistry.newRegistration().add(weblink);
+  }
+
   @Test
   public void webLink() throws Exception {
-    RegistrationHandle handle =
-        fileHistoryWebLinkDynamicSet.add(
-            "gerrit",
-            new FileHistoryWebLink() {
-              @Override
-              public WebLinkInfo getFileHistoryWebLink(
-                  String projectName, String revision, String fileName) {
-                return new WebLinkInfo(
-                    "name", "imageURL", "http://view/" + projectName + "/" + fileName);
-              }
-            });
-    try {
+    try (Registration registration = newFileHistoryWebLink()) {
       ProjectAccessInfo info = pApi().access();
       assertThat(info.configWebLinks).hasSize(1);
       assertThat(info.configWebLinks.get(0).url)
           .isEqualTo("http://view/" + newProjectName + "/project.config");
-    } finally {
-      handle.remove();
     }
   }
 
   @Test
   public void webLinkNoRefsMetaConfig() throws Exception {
-    RegistrationHandle handle =
-        fileHistoryWebLinkDynamicSet.add(
-            "gerrit",
-            new FileHistoryWebLink() {
-              @Override
-              public WebLinkInfo getFileHistoryWebLink(
-                  String projectName, String revision, String fileName) {
-                return new WebLinkInfo(
-                    "name", "imageURL", "http://view/" + projectName + "/" + fileName);
-              }
-            });
-    try (Repository repo = repoManager.openRepository(newProjectName)) {
+    try (Repository repo = repoManager.openRepository(newProjectName);
+        Registration registration = newFileHistoryWebLink()) {
       RefUpdate u = repo.updateRef(RefNames.REFS_CONFIG);
       u.setForceUpdate(true);
       assertThat(u.delete()).isEqualTo(Result.FORCED);
 
       // This should not crash.
       pApi().access();
-    } finally {
-      handle.remove();
     }
   }
 
   @Test
   public void addAccessSection() throws Exception {
-    RevCommit initialHead = getRemoteHead(newProjectName, RefNames.REFS_CONFIG);
+    RevCommit initialHead = projectOperations.project(newProjectName).getHead(RefNames.REFS_CONFIG);
 
     ProjectAccessInput accessInput = newProjectAccessInput();
     AccessSectionInfo accessSectionInfo = createDefaultAccessSectionInfo();
@@ -145,7 +137,7 @@ public class AccessIT extends AbstractDaemonTest {
 
     assertThat(pApi().access().local).isEqualTo(accessInput.add);
 
-    RevCommit updatedHead = getRemoteHead(newProjectName, RefNames.REFS_CONFIG);
+    RevCommit updatedHead = projectOperations.project(newProjectName).getHead(RefNames.REFS_CONFIG);
     eventRecorder.assertRefUpdatedEvents(
         newProjectName.get(), RefNames.REFS_CONFIG, null, initialHead, initialHead, updatedHead);
   }
@@ -153,8 +145,7 @@ public class AccessIT extends AbstractDaemonTest {
   @Test
   public void createAccessChangeNop() throws Exception {
     ProjectAccessInput accessInput = newProjectAccessInput();
-    exception.expect(BadRequestException.class);
-    pApi().accessChange(accessInput);
+    assertThrows(BadRequestException.class, () -> pApi().accessChange(accessInput));
   }
 
   @Test
@@ -179,9 +170,13 @@ public class AccessIT extends AbstractDaemonTest {
 
   @Test
   public void createAccessChange() throws Exception {
-    allow(newProjectName, RefNames.REFS_CONFIG, Permission.READ, REGISTERED_USERS);
+    projectOperations
+        .project(newProjectName)
+        .forUpdate()
+        .add(allow(Permission.READ).ref(RefNames.REFS_CONFIG).group(REGISTERED_USERS))
+        .update();
     // User can see the branch
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     pApi().branch("refs/heads/master").get();
 
     ProjectAccessInput accessInput = newProjectAccessInput();
@@ -196,7 +191,7 @@ public class AccessIT extends AbstractDaemonTest {
     accessSection.permissions.put(Permission.READ, read);
     accessInput.add.put(REFS_HEADS, accessSection);
 
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     ChangeInfo out = pApi().accessChange(accessInput);
 
     assertThat(out.project).isEqualTo(newProjectName.get());
@@ -204,7 +199,7 @@ public class AccessIT extends AbstractDaemonTest {
     assertThat(out.status).isEqualTo(ChangeStatus.NEW);
     assertThat(out.submitted).isNull();
 
-    setApiUser(admin);
+    requestScopeOperations.setApiUser(admin.id());
 
     ChangeInfo c = gApi.changes().id(out._number).get(MESSAGES);
     assertThat(c.messages.stream().map(m -> m.message)).containsExactly("Uploaded patch set 1");
@@ -215,27 +210,22 @@ public class AccessIT extends AbstractDaemonTest {
     gApi.changes().id(out._number).current().submit();
 
     // check that the change took effect.
-    setApiUser(user);
-    try {
-      BranchInfo info = pApi().branch("refs/heads/master").get();
-      fail("wanted failure, got " + newGson().toJson(info));
-    } catch (ResourceNotFoundException e) {
-      // OK.
-    }
+    requestScopeOperations.setApiUser(user.id());
+    assertThrows(ResourceNotFoundException.class, () -> pApi().branch("refs/heads/master").get());
 
     // Restore.
     accessInput.add.clear();
     accessInput.remove.put(REFS_HEADS, accessSection);
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
 
-    setApiUser(admin);
+    requestScopeOperations.setApiUser(admin.id());
     out = pApi().accessChange(accessInput);
 
     gApi.changes().id(out._number).current().review(reviewIn);
     gApi.changes().id(out._number).current().submit();
 
     // Now it works again.
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     pApi().branch("refs/heads/master").get();
   }
 
@@ -335,9 +325,8 @@ public class AccessIT extends AbstractDaemonTest {
     accessInput.add.put(REFS_ALL, accessSectionInfo);
     pApi().access(accessInput);
 
-    setApiUser(user);
-    exception.expect(ResourceNotFoundException.class);
-    pApi().access();
+    requestScopeOperations.setApiUser(user.id());
+    assertThrows(ResourceNotFoundException.class, () -> pApi().access());
   }
 
   @Test
@@ -355,9 +344,8 @@ public class AccessIT extends AbstractDaemonTest {
     AccessSectionInfo accessSectionInfoToApply = createDefaultAccessSectionInfo();
     accessInfoToApply.add.put(REFS_HEADS, accessSectionInfoToApply);
 
-    setApiUser(user);
-    exception.expect(ResourceNotFoundException.class);
-    pApi().access();
+    requestScopeOperations.setApiUser(user.id());
+    assertThrows(ResourceNotFoundException.class, () -> pApi().access());
   }
 
   @Test
@@ -402,7 +390,7 @@ public class AccessIT extends AbstractDaemonTest {
     assertThat(owners.includes).isNull();
 
     // PROJECT_OWNERS is invisible to anonymous user, but GetAccess disregards visibility.
-    setApiUserAnonymous();
+    requestScopeOperations.setApiUserAnonymous();
     ProjectAccessInfo anonResult = pApi().access();
     assertThat(anonResult.groups.keySet())
         .containsExactly(
@@ -412,22 +400,21 @@ public class AccessIT extends AbstractDaemonTest {
   @Test
   public void updateParentAsUser() throws Exception {
     // Create child
-    String newParentProjectName = createProject(PROJECT_NAME + "PA").get();
+    String newParentProjectName = projectOperations.newProject().create().get();
 
     // Set new parent
     ProjectAccessInput accessInput = newProjectAccessInput();
     accessInput.parent = newParentProjectName;
 
-    setApiUser(user);
-    exception.expect(AuthException.class);
-    exception.expectMessage("administrate server not permitted");
-    pApi().access(accessInput);
+    requestScopeOperations.setApiUser(user.id());
+    AuthException thrown = assertThrows(AuthException.class, () -> pApi().access(accessInput));
+    assertThat(thrown).hasMessageThat().contains("administrate server not permitted");
   }
 
   @Test
   public void updateParentAsAdministrator() throws Exception {
     // Create parent
-    String newParentProjectName = createProject(PROJECT_NAME + "PA").get();
+    String newParentProjectName = projectOperations.newProject().create().get();
 
     // Set new parent
     ProjectAccessInput accessInput = newProjectAccessInput();
@@ -445,9 +432,9 @@ public class AccessIT extends AbstractDaemonTest {
 
     accessInput.add.put(AccessSection.GLOBAL_CAPABILITIES, accessSectionInfo);
 
-    setApiUser(user);
-    exception.expect(AuthException.class);
-    gApi.projects().name(allProjects.get()).access(accessInput);
+    requestScopeOperations.setApiUser(user.id());
+    assertThrows(
+        AuthException.class, () -> gApi.projects().name(allProjects.get()).access(accessInput));
   }
 
   @Test
@@ -465,7 +452,7 @@ public class AccessIT extends AbstractDaemonTest {
                 .get(AccessSection.GLOBAL_CAPABILITIES)
                 .permissions
                 .keySet())
-        .containsAllIn(accessSectionInfo.permissions.keySet());
+        .containsAtLeastElementsIn(accessSectionInfo.permissions.keySet());
   }
 
   @Test
@@ -475,8 +462,7 @@ public class AccessIT extends AbstractDaemonTest {
 
     accessInput.add.put(AccessSection.GLOBAL_CAPABILITIES, accessSectionInfo);
 
-    exception.expect(BadRequestException.class);
-    pApi().access(accessInput);
+    assertThrows(BadRequestException.class, () -> pApi().access(accessInput));
   }
 
   @Test
@@ -489,9 +475,9 @@ public class AccessIT extends AbstractDaemonTest {
     accessSectionInfo.permissions.put(Permission.PUSH, permissionInfo);
 
     accessInput.add.put(AccessSection.GLOBAL_CAPABILITIES, accessSectionInfo);
-
-    exception.expect(BadRequestException.class);
-    gApi.projects().name(allProjects.get()).access(accessInput);
+    assertThrows(
+        BadRequestException.class,
+        () -> gApi.projects().name(allProjects.get()).access(accessInput));
   }
 
   @Test
@@ -501,9 +487,9 @@ public class AccessIT extends AbstractDaemonTest {
 
     accessInput.remove.put(AccessSection.GLOBAL_CAPABILITIES, accessSectionInfo);
 
-    setApiUser(user);
-    exception.expect(AuthException.class);
-    gApi.projects().name(allProjects.get()).access(accessInput);
+    requestScopeOperations.setApiUser(user.id());
+    assertThrows(
+        AuthException.class, () -> gApi.projects().name(allProjects.get()).access(accessInput));
   }
 
   @Test
@@ -527,7 +513,7 @@ public class AccessIT extends AbstractDaemonTest {
                 .get(AccessSection.GLOBAL_CAPABILITIES)
                 .permissions
                 .keySet())
-        .containsAllIn(accessSectionInfo.permissions.keySet());
+        .containsAtLeastElementsIn(accessSectionInfo.permissions.keySet());
 
     // Remove
     accessInput.add.clear();
@@ -571,7 +557,7 @@ public class AccessIT extends AbstractDaemonTest {
     config = cfg.toText();
     PushOneCommit push =
         pushFactory.create(
-            db, admin.getIdent(), allProjectsRepo, "Subject", ProjectConfig.PROJECT_CONFIG, config);
+            admin.newIdent(), allProjectsRepo, "Subject", ProjectConfig.PROJECT_CONFIG, config);
     push.to(RefNames.REFS_CONFIG).assertOkStatus();
 
     // Verify that unknownPermission is present
@@ -582,7 +568,7 @@ public class AccessIT extends AbstractDaemonTest {
             .file(ProjectConfig.PROJECT_CONFIG)
             .asString();
     cfg.fromText(config);
-    assertThat(cfg.getString(access, refsFor, unknownPermission)).isEqualTo(registeredUsers);
+    assertThat(cfg).stringValue(access, refsFor, unknownPermission).isEqualTo(registeredUsers);
 
     // Make permission change through API
     ProjectAccessInput accessInput = newProjectAccessInput();
@@ -601,20 +587,24 @@ public class AccessIT extends AbstractDaemonTest {
             .file(ProjectConfig.PROJECT_CONFIG)
             .asString();
     cfg.fromText(config);
-    assertThat(cfg.getString(access, refsFor, unknownPermission)).isEqualTo(registeredUsers);
+    assertThat(cfg).stringValue(access, refsFor, unknownPermission).isEqualTo(registeredUsers);
   }
 
   @Test
   public void allUsersCanOnlyInheritFromAllProjects() throws Exception {
     ProjectAccessInput accessInput = newProjectAccessInput();
     accessInput.parent = project.get();
-    exception.expect(BadRequestException.class);
-    exception.expectMessage(allUsers.get() + " must inherit from " + allProjects.get());
-    gApi.projects().name(allUsers.get()).access(accessInput);
+    BadRequestException thrown =
+        assertThrows(
+            BadRequestException.class,
+            () -> gApi.projects().name(allUsers.get()).access(accessInput));
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains(allUsers.get() + " must inherit from " + allProjects.get());
   }
 
   @Test
-  public void syncCreateGroupPermission() throws Exception {
+  public void syncCreateGroupPermission_addAndRemoveCreateGroupCapability() throws Exception {
     // Grant CREATE_GROUP to Registered Users
     ProjectAccessInput accessInput = newProjectAccessInput();
     AccessSectionInfo accessSection = newAccessSectionInfo();
@@ -652,6 +642,44 @@ public class AccessIT extends AbstractDaemonTest {
   }
 
   @Test
+  public void syncCreateGroupPermission_addCreateGroupCapabilityToMultipleGroups()
+      throws Exception {
+    PermissionRuleInfo pri = new PermissionRuleInfo(PermissionRuleInfo.Action.ALLOW, false);
+
+    // Grant CREATE_GROUP to Registered Users
+    ProjectAccessInput accessInput = newProjectAccessInput();
+    AccessSectionInfo accessSection = newAccessSectionInfo();
+    PermissionInfo createGroup = newPermissionInfo();
+    createGroup.rules.put(SystemGroupBackend.REGISTERED_USERS.get(), pri);
+    accessSection.permissions.put(GlobalCapability.CREATE_GROUP, createGroup);
+    accessInput.add.put(AccessSection.GLOBAL_CAPABILITIES, accessSection);
+    gApi.projects().name(allProjects.get()).access(accessInput);
+
+    // Grant CREATE_GROUP to Administrators
+    accessInput = newProjectAccessInput();
+    accessSection = newAccessSectionInfo();
+    createGroup = newPermissionInfo();
+    createGroup.rules.put(adminGroupUuid().get(), pri);
+    accessSection.permissions.put(GlobalCapability.CREATE_GROUP, createGroup);
+    accessInput.add.put(AccessSection.GLOBAL_CAPABILITIES, accessSection);
+    gApi.projects().name(allProjects.get()).access(accessInput);
+
+    // Assert that the permissions were synced from All-Projects (global) to All-Users (ref)
+    Map<String, AccessSectionInfo> local = gApi.projects().name("All-Users").access().local;
+    assertThat(local).isNotNull();
+    assertThat(local).containsKey(RefNames.REFS_GROUPS + "*");
+    Map<String, PermissionInfo> permissions = local.get(RefNames.REFS_GROUPS + "*").permissions;
+    assertThat(permissions).hasSize(2);
+    // READ is the default permission and should be preserved by the syncer
+    assertThat(permissions.keySet()).containsExactly(Permission.READ, Permission.CREATE);
+    Map<String, PermissionRuleInfo> rules = permissions.get(Permission.CREATE).rules;
+    assertThat(rules.keySet())
+        .containsExactly(SystemGroupBackend.REGISTERED_USERS.get(), adminGroupUuid().get());
+    assertThat(rules.get(SystemGroupBackend.REGISTERED_USERS.get())).isEqualTo(pri);
+    assertThat(rules.get(adminGroupUuid().get())).isEqualTo(pri);
+  }
+
+  @Test
   public void addAccessSectionForInvalidRef() throws Exception {
     ProjectAccessInput accessInput = newProjectAccessInput();
     AccessSectionInfo accessSectionInfo = createDefaultAccessSectionInfo();
@@ -660,9 +688,9 @@ public class AccessIT extends AbstractDaemonTest {
     String invalidRef = Constants.R_HEADS + "stable_*";
     accessInput.add.put(invalidRef, accessSectionInfo);
 
-    exception.expect(BadRequestException.class);
-    exception.expectMessage("Invalid Name: " + invalidRef);
-    pApi().access(accessInput);
+    BadRequestException thrown =
+        assertThrows(BadRequestException.class, () -> pApi().access(accessInput));
+    assertThat(thrown).hasMessageThat().contains("Invalid Name: " + invalidRef);
   }
 
   @Test
@@ -674,9 +702,9 @@ public class AccessIT extends AbstractDaemonTest {
     String invalidRef = Constants.R_HEADS + "stable_*";
     accessInput.add.put(invalidRef, accessSectionInfo);
 
-    exception.expect(BadRequestException.class);
-    exception.expectMessage("Invalid Name: " + invalidRef);
-    pApi().accessChange(accessInput);
+    BadRequestException thrown =
+        assertThrows(BadRequestException.class, () -> pApi().accessChange(accessInput));
+    assertThat(thrown).hasMessageThat().contains("Invalid Name: " + invalidRef);
   }
 
   private ProjectApi pApi() throws Exception {

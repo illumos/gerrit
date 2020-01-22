@@ -15,10 +15,13 @@
 package com.google.gerrit.server.restapi.account;
 
 import static com.google.gerrit.server.account.externalids.ExternalId.SCHEME_USERNAME;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.common.base.Strings;
 import com.google.common.flogger.FluentLogger;
-import com.google.gerrit.common.errors.EmailException;
+import com.google.common.io.BaseEncoding;
+import com.google.gerrit.common.UsedAt;
+import com.google.gerrit.exceptions.EmailException;
 import com.google.gerrit.extensions.common.HttpPasswordInput;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
@@ -27,7 +30,6 @@ import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
-import com.google.gerrit.server.UsedAt;
 import com.google.gerrit.server.UserInitiated;
 import com.google.gerrit.server.account.AccountResource;
 import com.google.gerrit.server.account.AccountsUpdate;
@@ -37,7 +39,6 @@ import com.google.gerrit.server.mail.send.HttpPasswordUpdateSender;
 import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -45,9 +46,17 @@ import java.io.IOException;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.Optional;
-import org.apache.commons.codec.binary.Base64;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 
+/**
+ * REST endpoint to set/delete the password for HTTP access of an account.
+ *
+ * <p>This REST endpoint handles {@code PUT /accounts/<account-identifier>/password.http} and {@code
+ * DELETE /accounts/<account-identifier>/password.http} requests.
+ *
+ * <p>Gerrit only stores the hash of the HTTP password, hence if an HTTP password was set it's not
+ * possible to get it back from Gerrit.
+ */
 @Singleton
 public class PutHttpPassword implements RestModifyView<AccountResource, HttpPasswordInput> {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
@@ -85,8 +94,8 @@ public class PutHttpPassword implements RestModifyView<AccountResource, HttpPass
 
   @Override
   public Response<String> apply(AccountResource rsrc, HttpPasswordInput input)
-      throws AuthException, ResourceNotFoundException, ResourceConflictException, OrmException,
-          IOException, ConfigInvalidException, PermissionBackendException {
+      throws AuthException, ResourceNotFoundException, ResourceConflictException, IOException,
+          ConfigInvalidException, PermissionBackendException {
     if (!self.get().hasSameAccountId(rsrc.getUser())) {
       permissionBackend.currentUser().check(GlobalPermission.ADMINISTRATE_SERVER);
     }
@@ -111,7 +120,7 @@ public class PutHttpPassword implements RestModifyView<AccountResource, HttpPass
 
   @UsedAt(UsedAt.Project.PLUGIN_SERVICEUSER)
   public Response<String> apply(IdentifiedUser user, String newPassword)
-      throws ResourceNotFoundException, ResourceConflictException, OrmException, IOException,
+      throws ResourceNotFoundException, ResourceConflictException, IOException,
           ConfigInvalidException {
     String userName =
         user.getUserName().orElseThrow(() -> new ResourceConflictException("username must be set"));
@@ -134,10 +143,10 @@ public class PutHttpPassword implements RestModifyView<AccountResource, HttpPass
           .send();
     } catch (EmailException e) {
       logger.atSevere().withCause(e).log(
-          "Cannot send HttpPassword update message to %s", user.getAccount().getPreferredEmail());
+          "Cannot send HttpPassword update message to %s", user.getAccount().preferredEmail());
     }
 
-    return Strings.isNullOrEmpty(newPassword) ? Response.<String>none() : Response.ok(newPassword);
+    return Strings.isNullOrEmpty(newPassword) ? Response.none() : Response.ok(newPassword);
   }
 
   @UsedAt(UsedAt.Project.PLUGIN_SERVICEUSER)
@@ -145,7 +154,7 @@ public class PutHttpPassword implements RestModifyView<AccountResource, HttpPass
     byte[] rand = new byte[LEN];
     rng.nextBytes(rand);
 
-    byte[] enc = Base64.encodeBase64(rand, false);
+    byte[] enc = BaseEncoding.base64().encode(rand).getBytes(UTF_8);
     StringBuilder r = new StringBuilder(enc.length);
     for (int i = 0; i < enc.length; i++) {
       if (enc[i] == '=') {

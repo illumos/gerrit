@@ -21,11 +21,12 @@ import com.google.gerrit.common.data.Permission;
 import com.google.gerrit.common.data.PermissionRange;
 import com.google.gerrit.common.data.PermissionRule;
 import com.google.gerrit.common.data.PermissionRule.Action;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.conditions.BooleanCondition;
 import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.logging.CallerFinder;
 import com.google.gerrit.server.notedb.ChangeNotes;
@@ -33,8 +34,6 @@ import com.google.gerrit.server.permissions.PermissionBackend.ForChange;
 import com.google.gerrit.server.permissions.PermissionBackend.ForRef;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.util.MagicBranch;
-import com.google.gwtorm.server.OrmException;
-import com.google.inject.util.Providers;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
@@ -197,7 +196,6 @@ class RefControl {
       case GIT:
         return false;
 
-      case JSON_RPC:
       case REST_API:
       case SSH_COMMAND:
       case UNKNOWN:
@@ -229,7 +227,6 @@ class RefControl {
       case GIT:
         return canPushWithForce() || canPerform(Permission.DELETE);
 
-      case JSON_RPC:
       case REST_API:
       case SSH_COMMAND:
       case UNKNOWN:
@@ -398,7 +395,7 @@ class RefControl {
           withForce,
           projectControl.getProject().getName(),
           refName,
-          callerFinder.findCaller());
+          callerFinder.findCallerLazy());
       return false;
     }
 
@@ -411,7 +408,7 @@ class RefControl {
             withForce,
             projectControl.getProject().getName(),
             refName,
-            callerFinder.findCaller());
+            callerFinder.findCallerLazy());
         return true;
       }
     }
@@ -423,7 +420,7 @@ class RefControl {
         withForce,
         projectControl.getProject().getName(),
         refName,
-        callerFinder.findCaller());
+        callerFinder.findCallerLazy());
     return false;
   }
 
@@ -443,11 +440,8 @@ class RefControl {
     @Override
     public ForChange change(ChangeData cd) {
       try {
-        // TODO(hiesel) Force callers to call database() and use db instead of cd.db()
-        return getProjectControl()
-            .controlFor(cd.db(), cd.change())
-            .asForChange(cd, Providers.of(cd.db()));
-      } catch (OrmException e) {
+        return getProjectControl().controlFor(cd.notes()).asForChange(cd);
+      } catch (StorageException e) {
         return FailedPermissionBackend.change("unavailable", e);
       }
     }
@@ -461,12 +455,12 @@ class RefControl {
           "expected change in project %s, not %s",
           project,
           change.getProject());
-      return getProjectControl().controlFor(notes).asForChange(null, db);
+      return getProjectControl().controlFor(notes).asForChange(null);
     }
 
     @Override
     public ForChange indexedChange(ChangeData cd, ChangeNotes notes) {
-      return getProjectControl().controlFor(notes).asForChange(cd, db);
+      return getProjectControl().controlFor(notes).asForChange(cd);
     }
 
     @Override

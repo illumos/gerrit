@@ -15,8 +15,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/iron-autogrow-textarea/iron-autogrow-textarea.html">
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/iron-autogrow-textarea/iron-autogrow-textarea.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../shared/gr-dialog/gr-dialog.html">
 <link rel="import" href="../../../styles/shared-styles.html">
 
@@ -42,14 +43,9 @@ limitations under the License.
       }
       iron-autogrow-textarea {
         font-family: var(--monospace-font-family);
-        padding: 0;
+        font-size: var(--font-size-mono);
+        line-height: var(--line-height-mono);
         width: 73ch; /* Add a char to account for the border. */
-
-        --iron-autogrow-textarea {
-          border: 1px solid var(--border-color);
-          box-sizing: border-box;
-          font-family: var(--monospace-font-family);
-        }
       }
     </style>
     <gr-dialog

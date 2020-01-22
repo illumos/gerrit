@@ -24,10 +24,9 @@
   // arbitrary JavaScript.
   const IMAGE_MIME_PATTERN = /^image\/(bmp|gif|x-icon|jpeg|jpg|png|tiff|webp)$/;
 
-  function GrDiffBuilderImage(diff, comments, createThreadGroupFn, prefs,
-      outputEl, baseImage, revisionImage) {
-    GrDiffBuilderSideBySide.call(this, diff, comments, createThreadGroupFn,
-        prefs, outputEl, []);
+  /** @constructor */
+  function GrDiffBuilderImage(diff, prefs, outputEl, baseImage, revisionImage) {
+    GrDiffBuilderSideBySide.call(this, diff, prefs, outputEl, []);
     this._baseImage = baseImage;
     this._revisionImage = revisionImage;
   }
@@ -97,7 +96,7 @@
         image._width = imageEl.naturalWidth;
         this._updateImageLabel(section, className, image);
       }.bind(this);
-      imageEl.src = 'data:' + image.type + ';base64, ' + image.body;
+      imageEl.setAttribute('src', `data:${image.type};base64, ${image.body}`);
       imageEl.addEventListener('error', () => {
         imageEl.remove();
         td.textContent = '[Image failed to load]';

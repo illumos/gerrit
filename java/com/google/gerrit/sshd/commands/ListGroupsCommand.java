@@ -18,9 +18,9 @@ import static com.google.gerrit.sshd.CommandMetaData.Mode.MASTER_OR_SLAVE;
 
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Strings;
+import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.extensions.common.GroupInfo;
 import com.google.gerrit.extensions.restapi.Url;
-import com.google.gerrit.reviewdb.client.AccountGroup;
 import com.google.gerrit.server.account.GroupCache;
 import com.google.gerrit.server.group.InternalGroup;
 import com.google.gerrit.server.ioutil.ColumnFormatter;
@@ -62,7 +62,7 @@ public class ListGroupsCommand extends SshCommand {
       if (verboseOutput) {
         Optional<InternalGroup> group =
             info.ownerId != null
-                ? groupCache.get(new AccountGroup.UUID(Url.decode(info.ownerId)))
+                ? groupCache.get(AccountGroup.uuid(Url.decode(info.ownerId)))
                 : Optional.empty();
 
         formatter.addColumn(Url.decode(info.id));

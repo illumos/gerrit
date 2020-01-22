@@ -14,10 +14,13 @@
 
 package com.google.gerrit.server.rules;
 
-import static org.easymock.EasyMock.expect;
+import static com.google.common.truth.Truth.assertThat;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.google.gerrit.common.data.LabelTypes;
-import com.google.gerrit.server.project.testing.Util;
+import com.google.gerrit.server.project.testing.TestLabels;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.inject.AbstractModule;
 import com.googlecode.prolog_cafe.exceptions.CompileException;
@@ -29,7 +32,6 @@ import com.googlecode.prolog_cafe.lang.SymbolTerm;
 import java.io.PushbackReader;
 import java.io.StringReader;
 import java.util.Arrays;
-import org.easymock.EasyMock;
 import org.eclipse.jgit.lib.Config;
 import org.junit.Before;
 import org.junit.Test;
@@ -49,17 +51,17 @@ public class GerritCommonTest extends PrologTestCase {
             bind(PrologEnvironment.Args.class)
                 .toInstance(
                     new PrologEnvironment.Args(
-                        null, null, null, null, null, null, null, cfg, null, null));
+                        null, null, null, null, null, null, null, null, cfg, null, null));
           }
         });
   }
 
   @Override
   protected void setUpEnvironment(PrologEnvironment env) throws Exception {
-    LabelTypes labelTypes = new LabelTypes(Arrays.asList(Util.codeReview(), Util.verified()));
-    ChangeData cd = EasyMock.createMock(ChangeData.class);
-    expect(cd.getLabelTypes()).andStubReturn(labelTypes);
-    EasyMock.replay(cd);
+    LabelTypes labelTypes =
+        new LabelTypes(Arrays.asList(TestLabels.codeReview(), TestLabels.verified()));
+    ChangeData cd = mock(ChangeData.class);
+    when(cd.getLabelTypes()).thenReturn(labelTypes);
     env.set(StoredValues.CHANGE_DATA, cd);
   }
 
@@ -82,11 +84,14 @@ public class GerritCommonTest extends PrologTestCase {
       throw new CompileException("Cannot consult " + nameTerm);
     }
 
-    exception.expect(ReductionLimitException.class);
-    exception.expectMessage("exceeded reduction limit of 1300");
-    env.once(
-        Prolog.BUILTIN,
-        "call",
-        new StructureTerm(":", SymbolTerm.create("user"), SymbolTerm.create("loopy")));
+    ReductionLimitException thrown =
+        assertThrows(
+            ReductionLimitException.class,
+            () ->
+                env.once(
+                    Prolog.BUILTIN,
+                    "call",
+                    new StructureTerm(":", SymbolTerm.create("user"), SymbolTerm.create("loopy"))));
+    assertThat(thrown).hasMessageThat().contains("exceeded reduction limit of 1300");
   }
 }

@@ -16,13 +16,13 @@ package com.google.gerrit.server.restapi.project;
 
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Strings;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.api.projects.DescriptionInput;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestModifyView;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.git.meta.MetaDataUpdate;
 import com.google.gerrit.server.permissions.PermissionBackend;
@@ -43,15 +43,18 @@ public class PutDescription implements RestModifyView<ProjectResource, Descripti
   private final ProjectCache cache;
   private final Provider<MetaDataUpdate.Server> updateFactory;
   private final PermissionBackend permissionBackend;
+  private final ProjectConfig.Factory projectConfigFactory;
 
   @Inject
   PutDescription(
       ProjectCache cache,
       Provider<MetaDataUpdate.Server> updateFactory,
-      PermissionBackend permissionBackend) {
+      PermissionBackend permissionBackend,
+      ProjectConfig.Factory projectConfigFactory) {
     this.cache = cache;
     this.updateFactory = updateFactory;
     this.permissionBackend = permissionBackend;
+    this.projectConfigFactory = projectConfigFactory;
   }
 
   @Override
@@ -69,7 +72,7 @@ public class PutDescription implements RestModifyView<ProjectResource, Descripti
         .check(ProjectPermission.WRITE_CONFIG);
 
     try (MetaDataUpdate md = updateFactory.get().create(resource.getNameKey())) {
-      ProjectConfig config = ProjectConfig.read(md);
+      ProjectConfig config = projectConfigFactory.read(md);
       Project project = config.getProject();
       project.setDescription(Strings.emptyToNull(input.description));
 
@@ -86,7 +89,7 @@ public class PutDescription implements RestModifyView<ProjectResource, Descripti
       md.getRepository().setGitwebDescription(project.getDescription());
 
       return Strings.isNullOrEmpty(project.getDescription())
-          ? Response.<String>none()
+          ? Response.none()
           : Response.ok(project.getDescription());
     } catch (RepositoryNotFoundException notFound) {
       throw new ResourceNotFoundException(resource.getName());

@@ -15,7 +15,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 
 <link rel="import" href="../../../styles/shared-styles.html">
 <link rel="import" href="../../shared/gr-button/gr-button.html">
@@ -30,7 +30,7 @@ limitations under the License.
       #graphic,
       #help {
         display: inline-block;
-        margin: .5em;
+        margin: var(--spacing-m);
       }
       #graphic #circle {
         align-items: center;
@@ -51,13 +51,14 @@ limitations under the License.
         text-align: center;
       }
       #help {
-        padding-top: 1.35em;
+        padding-top: var(--spacing-xl);
         vertical-align: top;
       }
       #help h1 {
-        font-size: var(--font-size-large);
+        font-size: var(--font-size-h3);
       }
       #help p {
+        margin-bottom: var(--spacing-m);
         max-width: 35em;
       }
       @media only screen and (max-width: 50em) {
@@ -81,7 +82,7 @@ limitations under the License.
         other git code review tools. Click on the `Create Change' button
         and follow the step by step instructions.
       </p>
-      <gr-button on-tap="_handleCreateTap">Create Change</gr-button>
+      <gr-button on-click="_handleCreateTap">Create Change</gr-button>
     </div>
   </template>
   <script src="gr-create-change-help.js"></script>

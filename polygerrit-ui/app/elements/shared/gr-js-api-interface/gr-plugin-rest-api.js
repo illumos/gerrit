@@ -46,6 +46,19 @@
     getRestApi().invalidateReposCache();
   };
 
+  GrPluginRestApi.prototype.getAccount = function() {
+    return getRestApi().getAccount();
+  };
+
+  GrPluginRestApi.prototype.getAccountCapabilities = function(capabilities) {
+    return getRestApi().getAccountCapabilities(capabilities);
+  };
+
+  GrPluginRestApi.prototype.getRepos =
+    function(filter, reposPerPage, opt_offset) {
+      return getRestApi().getRepos(filter, reposPerPage, opt_offset);
+    };
+
   /**
    * Fetch and return native browser REST API Response.
    *
@@ -57,9 +70,9 @@
    * @return {!Promise}
    */
   GrPluginRestApi.prototype.fetch = function(method, url, opt_payload,
-      opt_errFn) {
+      opt_errFn, opt_contentType) {
     return getRestApi().send(method, this.opt_prefix + url, opt_payload,
-        opt_errFn);
+        opt_errFn, opt_contentType);
   };
 
   /**
@@ -73,20 +86,21 @@
    * @return {!Promise} resolves on success, rejects on error.
    */
   GrPluginRestApi.prototype.send = function(method, url, opt_payload,
-      opt_errFn) {
-    return this.fetch(method, url, opt_payload, opt_errFn).then(response => {
-      if (response.status < 200 || response.status >= 300) {
-        return response.text().then(text => {
-          if (text) {
-            return Promise.reject(text);
+      opt_errFn, opt_contentType) {
+    return this.fetch(method, url, opt_payload, opt_errFn, opt_contentType)
+        .then(response => {
+          if (response.status < 200 || response.status >= 300) {
+            return response.text().then(text => {
+              if (text) {
+                return Promise.reject(new Error(text));
+              } else {
+                return Promise.reject(new Error(response.status));
+              }
+            });
           } else {
-            return Promise.reject(response.status);
+            return getRestApi().getResponseObject(response);
           }
         });
-      } else {
-        return getRestApi().getResponseObject(response);
-      }
-    });
   };
 
   /**
@@ -101,16 +115,18 @@
    * @param {string} url URL without base path or plugin prefix
    * @return {!Promise} resolves on success, rejects on error.
    */
-  GrPluginRestApi.prototype.post = function(url, opt_payload) {
-    return this.send('POST', url, opt_payload);
+  GrPluginRestApi.prototype.post = function(url, opt_payload, opt_errFn,
+      opt_contentType) {
+    return this.send('POST', url, opt_payload, opt_errFn, opt_contentType);
   };
 
   /**
    * @param {string} url URL without base path or plugin prefix
    * @return {!Promise} resolves on success, rejects on error.
    */
-  GrPluginRestApi.prototype.put = function(url, opt_payload) {
-    return this.send('PUT', url, opt_payload);
+  GrPluginRestApi.prototype.put = function(url, opt_payload, opt_errFn,
+      opt_contentType) {
+    return this.send('PUT', url, opt_payload, opt_errFn, opt_contentType);
   };
 
   /**
@@ -122,9 +138,9 @@
       if (response.status !== 204) {
         return response.text().then(text => {
           if (text) {
-            return Promise.reject(text);
+            return Promise.reject(new Error(text));
           } else {
-            return Promise.reject(response.status);
+            return Promise.reject(new Error(response.status));
           }
         });
       }

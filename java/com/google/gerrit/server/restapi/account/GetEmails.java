@@ -19,6 +19,7 @@ import static java.util.stream.Collectors.toList;
 
 import com.google.gerrit.extensions.common.EmailInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.account.AccountResource;
@@ -31,6 +32,11 @@ import com.google.inject.Singleton;
 import java.util.List;
 import java.util.Objects;
 
+/**
+ * REST endpoint to list the emails of an account.
+ *
+ * <p>This REST endpoint handles {@code GET /accounts/<account-identifier>/emails/} requests.
+ */
 @Singleton
 public class GetEmails implements RestReadView<AccountResource> {
   private final Provider<CurrentUser> self;
@@ -43,22 +49,23 @@ public class GetEmails implements RestReadView<AccountResource> {
   }
 
   @Override
-  public List<EmailInfo> apply(AccountResource rsrc)
+  public Response<List<EmailInfo>> apply(AccountResource rsrc)
       throws AuthException, PermissionBackendException {
     if (!self.get().hasSameAccountId(rsrc.getUser())) {
       permissionBackend.currentUser().check(GlobalPermission.MODIFY_ACCOUNT);
     }
-    return rsrc.getUser().getEmailAddresses().stream()
-        .filter(Objects::nonNull)
-        .map(e -> toEmailInfo(rsrc, e))
-        .sorted(comparing((EmailInfo e) -> e.email))
-        .collect(toList());
+    return Response.ok(
+        rsrc.getUser().getEmailAddresses().stream()
+            .filter(Objects::nonNull)
+            .map(e -> toEmailInfo(rsrc, e))
+            .sorted(comparing((EmailInfo e) -> e.email))
+            .collect(toList()));
   }
 
   private static EmailInfo toEmailInfo(AccountResource rsrc, String email) {
     EmailInfo e = new EmailInfo();
     e.email = email;
-    e.preferred(rsrc.getUser().getAccount().getPreferredEmail());
+    e.preferred(rsrc.getUser().getAccount().preferredEmail());
     return e;
   }
 }

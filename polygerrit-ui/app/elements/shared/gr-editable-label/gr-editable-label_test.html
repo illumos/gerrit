@@ -19,10 +19,12 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-editable-label</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
-<script src="../../../bower_components/iron-test-helpers/mock-interactions.js"></script>
+<script src="/bower_components/iron-test-helpers/mock-interactions.js"></script>
 
 <link rel="import" href="gr-editable-label.html">
 
@@ -59,13 +61,17 @@ limitations under the License.
     let label;
     let sandbox;
 
-    setup(() => {
+    setup(done => {
       element = fixture('basic');
       elementNoPlaceholder = fixture('no-placeholder');
 
-      input = element.$.input.$.input;
       label = element.$$('label');
       sandbox = sinon.sandbox.create();
+      flush(() => {
+        // In Polymer 2 inputElement isn't nativeInput anymore
+        input = element.$.input.$.nativeInput || element.$.input.inputElement;
+        done();
+      });
     });
 
     teardown(() => {
@@ -77,7 +83,7 @@ limitations under the License.
       assert.isFalse(element.$.dropdown.opened);
       assert.isTrue(label.classList.contains('editable'));
       assert.equal(label.textContent, 'value text');
-      const focusSpy = sandbox.spy(element.$.input.$.input, 'focus');
+      const focusSpy = sandbox.spy(input, 'focus');
       const showSpy = sandbox.spy(element, '_showDropdown');
 
       MockInteractions.tap(label);
@@ -159,7 +165,6 @@ limitations under the License.
       // Press enter:
       MockInteractions.tap(element.$.saveBtn, 13);
     });
-
 
     test('edit and then escape key', done => {
       const editedStub = sandbox.stub();

@@ -14,10 +14,11 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 -->
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 
 <link rel="import" href="../../../behaviors/docs-url-behavior/docs-url-behavior.html">
 <link rel="import" href="../../../behaviors/base-url-behavior/base-url-behavior.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../behaviors/gr-admin-nav-behavior/gr-admin-nav-behavior.html">
 <link rel="import" href="../../plugins/gr-endpoint-decorator/gr-endpoint-decorator.html">
 <link rel="import" href="../../shared/gr-dropdown/gr-dropdown.html">
@@ -45,7 +46,6 @@ limitations under the License.
       .bigTitle:hover {
         text-decoration: underline;
       }
-      /* TODO (viktard): Clean-up after chromium-style migrates to component. */
       .titleText::before {
         background-image: var(--header-icon);
         background-size: var(--header-icon-size) var(--header-icon-size);
@@ -62,7 +62,7 @@ limitations under the License.
       }
       ul {
         list-style: none;
-        padding-left: 1em;
+        padding-left: var(--spacing-l);
       }
       .links > li {
         cursor: default;
@@ -86,16 +86,16 @@ limitations under the License.
         justify-content: flex-end;
       }
       .rightItems gr-endpoint-decorator:not(:empty) {
-        margin-left: 1em;
+        margin-left: var(--spacing-l);
       }
       gr-smart-search {
         flex-grow: 1;
-        margin-left: .5em;
+        margin: 0 var(--spacing-m);
         max-width: 500px;
       }
       gr-dropdown,
       .browse {
-        padding: .6em .5em;
+        padding: var(--spacing-m);
       }
       gr-dropdown {
         --gr-dropdown-item: {
@@ -103,7 +103,7 @@ limitations under the License.
         }
       }
       .settingsButton {
-        margin-left: .5em;
+        margin-left: var(--spacing-m);
       }
       .browse {
         color: var(--header-text-color);
@@ -128,20 +128,20 @@ limitations under the License.
       .accountContainer {
         align-items: center;
         display: flex;
-        margin: 0 -.5em 0 .5em;
+        margin: 0 calc(0 - var(--spacing-m)) 0 var(--spacing-m);
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
       .loginButton, .registerButton {
-        padding: .5em 1em;
+        padding: var(--spacing-m) var(--spacing-l);
       }
       .dropdown-trigger {
         text-decoration: none;
       }
       .dropdown-content {
         background-color: var(--view-background-color);
-        box-shadow: 0 1px 5px rgba(0, 0, 0, .3);
+        box-shadow: var(--elevation-level-2);
       }
       /*
        * We are not using :host to do this, because :host has a lowest css priority
@@ -155,9 +155,12 @@ limitations under the License.
       gr-account-dropdown {
         color: var(--header-text-color);
       }
+      #mobileSearch {
+        display: none;
+      }
       @media screen and (max-width: 50em) {
         .bigTitle {
-          font-size: var(--font-size-large);
+          font-size: var(--font-size-h3);
           font-weight: var(--font-weight-bold);
         }
         gr-smart-search,
@@ -166,11 +169,14 @@ limitations under the License.
         .links > li.hideOnMobile {
           display: none;
         }
+        #mobileSearch {
+          display: inline-flex;
+        }
         .accountContainer {
-          margin-left: .5em !important;
+          margin-left: var(--spacing-m) !important;
         }
         gr-dropdown {
-          padding: .5em 0 .5em .5em;
+          padding: var(--spacing-m) 0 var(--spacing-m) var(--spacing-m);
         }
       }
     </style>
@@ -182,16 +188,16 @@ limitations under the License.
       </a>
       <ul class="links">
         <template is="dom-repeat" items="[[_links]]" as="linkGroup">
-          <li class$="[[linkGroup.class]]">
-          <gr-dropdown
-              link
-              down-arrow
-              items = [[linkGroup.links]]
-              horizontal-align="left">
-            <span class="linksTitle" id="[[linkGroup.title]]">
-              [[linkGroup.title]]
-            </span>
-          </gr-dropdown>
+          <li class$="[[_computeLinkGroupClass(linkGroup)]]">
+            <gr-dropdown
+                link
+                down-arrow
+                items = [[linkGroup.links]]
+                horizontal-align="left">
+              <span class="linksTitle" id="[[linkGroup.title]]">
+                [[linkGroup.title]]
+              </span>
+            </gr-dropdown>
           </li>
         </template>
       </ul>
@@ -206,6 +212,7 @@ limitations under the License.
             class="hideOnMobile"
             name="header-browse-source"></gr-endpoint-decorator>
         <div class="accountContainer" id="accountContainer">
+          <iron-icon id="mobileSearch" icon="gr-icons:search" on-tap='_onMobileSearchTap'></iron-icon>
           <div class$="[[_computeIsInvisible(_registerURL)]]">
             <a
                 class="registerButton"

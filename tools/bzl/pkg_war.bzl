@@ -19,11 +19,11 @@ jar_filetype = [".jar"]
 LIBS = [
     "//java/com/google/gerrit/common:version",
     "//java/com/google/gerrit/httpd/init",
-    "//lib:postgresql",
     "//lib/bouncycastle:bcpkix",
     "//lib/bouncycastle:bcprov",
     "//lib/bouncycastle:bcpg",
     "//lib/log:impl-log4j",
+    "//prolog:gerrit-prolog-common",
     "//resources:log4j-config",
 ]
 
@@ -137,14 +137,12 @@ _pkg_war = rule(
     implementation = _war_impl,
 )
 
-def pkg_war(name, ui = "ui_optdbg", context = [], doc = False, **kwargs):
+def pkg_war(name, ui = "polygerrit", context = [], doc = False, **kwargs):
     doc_ctx = []
     doc_lib = []
     ui_deps = []
-    if ui == "polygerrit" or ui == "ui_optdbg" or ui == "ui_optdbg_r":
+    if ui == "polygerrit":
         ui_deps.append("//polygerrit-ui/app:polygerrit_ui")
-    if ui and ui != "polygerrit":
-        ui_deps.append("//gerrit-gwtui:%s" % ui)
     if doc:
         doc_ctx.append("//Documentation:html")
         doc_lib.append("//Documentation:index")

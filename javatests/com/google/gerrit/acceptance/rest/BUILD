@@ -1,25 +1,10 @@
-load("@rules_java//java:defs.bzl", "java_library")
 load("//javatests/com/google/gerrit/acceptance:tests.bzl", "acceptance_tests")
 
 acceptance_tests(
     srcs = glob(["*IT.java"]),
-    group = "rest_bindings",
+    group = "rest_bindings_collection",
     labels = ["rest"],
     deps = [
-        ":util",
         "//java/com/google/gerrit/server/logging",
-    ],
-)
-
-java_library(
-    name = "util",
-    testonly = True,
-    srcs = [
-        "AbstractRestApiBindingsTest.java",
-    ],
-    visibility = ["//visibility:public"],
-    deps = [
-        "//java/com/google/gerrit/acceptance:lib",
-        "//lib/commons:lang",
     ],
 )

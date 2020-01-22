@@ -17,14 +17,14 @@ package com.google.gerrit.server.config;
 import static java.util.stream.Collectors.toList;
 
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.annotations.ExtensionPoint;
 import com.google.gerrit.extensions.api.projects.ConfigValue;
 import com.google.gerrit.extensions.api.projects.ProjectConfigEntryType;
 import com.google.gerrit.extensions.events.GitReferenceUpdatedListener;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.registration.Extension;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.project.ProjectConfig;
 import com.google.gerrit.server.project.ProjectState;
@@ -302,17 +302,21 @@ public class ProjectConfigEntry {
 
     private final GitRepositoryManager repoManager;
     private final DynamicMap<ProjectConfigEntry> pluginConfigEntries;
+    private final ProjectConfig.Factory projectConfigFactory;
 
     @Inject
     UpdateChecker(
-        GitRepositoryManager repoManager, DynamicMap<ProjectConfigEntry> pluginConfigEntries) {
+        GitRepositoryManager repoManager,
+        DynamicMap<ProjectConfigEntry> pluginConfigEntries,
+        ProjectConfig.Factory projectConfigFactory) {
       this.repoManager = repoManager;
       this.pluginConfigEntries = pluginConfigEntries;
+      this.projectConfigFactory = projectConfigFactory;
     }
 
     @Override
     public void onGitReferenceUpdated(Event event) {
-      Project.NameKey p = new Project.NameKey(event.getProjectName());
+      Project.NameKey p = Project.nameKey(event.getProjectName());
       if (!event.getRefName().equals(RefNames.REFS_CONFIG)) {
         return;
       }
@@ -361,7 +365,7 @@ public class ProjectConfigEntry {
         return null;
       }
       try (Repository repo = repoManager.openRepository(p)) {
-        ProjectConfig pc = new ProjectConfig(p);
+        ProjectConfig pc = projectConfigFactory.create(p);
         pc.load(repo, id);
         return pc;
       }

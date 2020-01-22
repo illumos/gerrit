@@ -17,50 +17,58 @@
 (function() {
   'use strict';
 
-  Polymer({
-    is: 'gr-documentation-search',
+  /**
+   * @appliesMixin Gerrit.ListViewMixin
+   * @extends Polymer.Element
+   */
+  class GrDocumentationSearch extends Polymer.mixinBehaviors( [
+    Gerrit.ListViewBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-documentation-search'; }
 
-    properties: {
+    static get properties() {
+      return {
       /**
        * URL params passed from the router.
        */
-      params: {
-        type: Object,
-        observer: '_paramsChanged',
-      },
+        params: {
+          type: Object,
+          observer: '_paramsChanged',
+        },
 
-      _path: {
-        type: String,
-        readOnly: true,
-        value: '/Documentation',
-      },
-      _documentationSearches: Array,
+        _path: {
+          type: String,
+          readOnly: true,
+          value: '/Documentation',
+        },
+        _documentationSearches: Array,
 
-      _loading: {
-        type: Boolean,
-        value: true,
-      },
-      _filter: {
-        type: String,
-        value: '',
-      },
-    },
+        _loading: {
+          type: Boolean,
+          value: true,
+        },
+        _filter: {
+          type: String,
+          value: '',
+        },
+      };
+    }
 
-    behaviors: [
-      Gerrit.ListViewBehavior,
-    ],
-
+    /** @override */
     attached() {
+      super.attached();
       this.dispatchEvent(
           new CustomEvent('title-change', {title: 'Documentation Search'}));
-    },
+    }
 
     _paramsChanged(params) {
       this._loading = true;
       this._filter = this.getFilterValue(params);
 
       return this._getDocumentationSearches(this._filter);
-    },
+    }
 
     _getDocumentationSearches(filter) {
       this._documentationSearches = [];
@@ -71,11 +79,13 @@
             this._documentationSearches = searches;
             this._loading = false;
           });
-    },
+    }
 
     _computeSearchUrl(url) {
       if (!url) { return ''; }
       return this.getBaseUrl() + '/' + url;
-    },
-  });
+    }
+  }
+
+  customElements.define(GrDocumentationSearch.is, GrDocumentationSearch);
 })();

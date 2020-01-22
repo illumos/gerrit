@@ -14,24 +14,17 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 -->
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 
-<link rel="import" href="../gr-selection-action-box/gr-selection-action-box.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../styles/shared-styles.html">
+<link rel="import" href="../gr-selection-action-box/gr-selection-action-box.html">
 
 <dom-module id="gr-diff-highlight">
   <template>
     <style include="shared-styles">
       :host {
         position: relative;
-      }
-      .contentWrapper ::content .range {
-        background-color: var(--diff-highlight-range-color);
-        display: inline;
-      }
-      .contentWrapper ::content .rangeHighlight {
-        background-color: var(--diff-highlight-range-hover-color);
-        display: inline;
       }
       gr-selection-action-box {
         /**

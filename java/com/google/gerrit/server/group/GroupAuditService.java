@@ -15,9 +15,8 @@
 package com.google.gerrit.server.group;
 
 import com.google.common.collect.ImmutableSet;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Account.Id;
-import com.google.gerrit.reviewdb.client.AccountGroup;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.server.AuditEvent;
 import java.sql.Timestamp;
 
@@ -27,7 +26,7 @@ public interface GroupAuditService {
   void dispatchAddMembers(
       Account.Id actor,
       AccountGroup.UUID updatedGroup,
-      ImmutableSet<Id> addedMembers,
+      ImmutableSet<Account.Id> addedMembers,
       Timestamp addedOn);
 
   void dispatchDeleteMembers(

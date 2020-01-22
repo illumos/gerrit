@@ -17,15 +17,15 @@ package com.google.gerrit.server.query.change;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gwtorm.server.OrmException;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
 import java.util.Arrays;
+import org.eclipse.jgit.lib.ObjectId;
 import org.junit.Test;
 
 public class RegexPathPredicateTest {
   @Test
-  public void prefixOnlyOptimization() throws OrmException {
+  public void prefixOnlyOptimization() {
     RegexPathPredicate p = predicate("^a/b/.*");
     assertTrue(p.match(change("a/b/source.c")));
     assertFalse(p.match(change("source.c")));
@@ -35,7 +35,7 @@ public class RegexPathPredicateTest {
   }
 
   @Test
-  public void prefixReducesSearchSpace() throws OrmException {
+  public void prefixReducesSearchSpace() {
     RegexPathPredicate p = predicate("^a/b/.*\\.[ch]");
     assertTrue(p.match(change("a/b/source.c")));
     assertFalse(p.match(change("a/b/source.res")));
@@ -45,7 +45,7 @@ public class RegexPathPredicateTest {
   }
 
   @Test
-  public void fileExtension_Constant() throws OrmException {
+  public void fileExtension_Constant() {
     RegexPathPredicate p = predicate("^.*\\.res");
     assertTrue(p.match(change("test.res")));
     assertTrue(p.match(change("foo/bar/test.res")));
@@ -53,7 +53,7 @@ public class RegexPathPredicateTest {
   }
 
   @Test
-  public void fileExtension_CharacterGroup() throws OrmException {
+  public void fileExtension_CharacterGroup() {
     RegexPathPredicate p = predicate("^.*\\.[ch]");
     assertTrue(p.match(change("test.c")));
     assertTrue(p.match(change("test.h")));
@@ -61,7 +61,7 @@ public class RegexPathPredicateTest {
   }
 
   @Test
-  public void endOfString() throws OrmException {
+  public void endOfString() {
     assertTrue(predicate("^a$").match(change("a")));
     assertFalse(predicate("^a$").match(change("a$")));
 
@@ -70,7 +70,7 @@ public class RegexPathPredicateTest {
   }
 
   @Test
-  public void exactMatch() throws OrmException {
+  public void exactMatch() {
     RegexPathPredicate p = predicate("^foo.c");
     assertTrue(p.match(change("foo.c")));
     assertFalse(p.match(change("foo.cc")));
@@ -81,9 +81,10 @@ public class RegexPathPredicateTest {
     return new RegexPathPredicate(pattern);
   }
 
-  private static ChangeData change(String... files) throws OrmException {
+  private static ChangeData change(String... files) {
     Arrays.sort(files);
-    ChangeData cd = ChangeData.createForTest(new Project.NameKey("project"), new Change.Id(1), 1);
+    ChangeData cd =
+        ChangeData.createForTest(Project.nameKey("project"), Change.id(1), 1, ObjectId.zeroId());
     cd.setCurrentFilePaths(Arrays.asList(files));
     return cd;
   }

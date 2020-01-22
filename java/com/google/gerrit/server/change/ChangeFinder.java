@@ -20,25 +20,25 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 import com.google.common.primitives.Ints;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.restapi.DeprecatedIdentifierException;
 import com.google.gerrit.extensions.restapi.Url;
+import com.google.gerrit.git.ObjectIds;
 import com.google.gerrit.index.IndexConfig;
 import com.google.gerrit.metrics.Counter1;
 import com.google.gerrit.metrics.Description;
 import com.google.gerrit.metrics.Field;
 import com.google.gerrit.metrics.MetricMaker;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RevId;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.cache.CacheModule;
 import com.google.gerrit.server.config.ConfigUtil;
 import com.google.gerrit.server.config.GerritServerConfig;
+import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.project.NoSuchChangeException;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.InternalChangeQuery;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Module;
 import com.google.inject.Provider;
@@ -77,7 +77,6 @@ public class ChangeFinder {
   private final IndexConfig indexConfig;
   private final Cache<Change.Id, String> changeIdProjectCache;
   private final Provider<InternalChangeQuery> queryProvider;
-  private final Provider<ReviewDb> reviewDb;
   private final ChangeNotes.Factory changeNotesFactory;
   private final Counter1<ChangeIdType> changeIdCounter;
   private final ImmutableSet<ChangeIdType> allowedIdTypes;
@@ -87,14 +86,12 @@ public class ChangeFinder {
       IndexConfig indexConfig,
       @Named(CACHE_NAME) Cache<Change.Id, String> changeIdProjectCache,
       Provider<InternalChangeQuery> queryProvider,
-      Provider<ReviewDb> reviewDb,
       ChangeNotes.Factory changeNotesFactory,
       MetricMaker metricMaker,
       @GerritServerConfig Config config) {
     this.indexConfig = indexConfig;
     this.changeIdProjectCache = changeIdProjectCache;
     this.queryProvider = queryProvider;
-    this.reviewDb = reviewDb;
     this.changeNotesFactory = changeNotesFactory;
     this.changeIdCounter =
         metricMaker.newCounter(
@@ -102,7 +99,8 @@ public class ChangeFinder {
             new Description("Total number of API calls per identifier type.")
                 .setRate()
                 .setUnit("requests"),
-            Field.ofEnum(ChangeIdType.class, "change_id_type"));
+            Field.ofEnum(ChangeIdType.class, "change_id_type", Metadata.Builder::changeIdType)
+                .build());
     List<ChangeIdType> configuredChangeIdTypes =
         ConfigUtil.getEnumList(config, "change", "api", "allowedIdentifier", ChangeIdType.ALL);
     // Ensure that PROJECT_NUMERIC_ID can't be removed
@@ -110,7 +108,7 @@ public class ChangeFinder {
     this.allowedIdTypes = ImmutableSet.copyOf(configuredChangeIdTypes);
   }
 
-  public ChangeNotes findOne(String id) throws OrmException {
+  public ChangeNotes findOne(String id) {
     List<ChangeNotes> ctls = find(id);
     if (ctls.size() != 1) {
       return null;
@@ -123,14 +121,13 @@ public class ChangeFinder {
    *
    * @param id change identifier.
    * @return possibly-empty list of notes for all matching changes; may or may not be visible.
-   * @throws OrmException if an error occurred querying the database.
    */
-  public List<ChangeNotes> find(String id) throws OrmException {
+  public List<ChangeNotes> find(String id) {
     try {
       return find(id, false);
     } catch (DeprecatedIdentifierException e) {
       // This can't happen because we don't enforce deprecation
-      throw new OrmException(e);
+      throw new StorageException(e);
     }
   }
 
@@ -141,11 +138,10 @@ public class ChangeFinder {
    * @param enforceDeprecation boolean to see if we should throw {@link
    *     DeprecatedIdentifierException} in case the identifier is deprecated
    * @return possibly-empty list of notes for all matching changes; may or may not be visible.
-   * @throws OrmException if an error occurred querying the database
    * @throws DeprecatedIdentifierException if the identifier is deprecated.
    */
   public List<ChangeNotes> find(String id, boolean enforceDeprecation)
-      throws OrmException, DeprecatedIdentifierException {
+      throws DeprecatedIdentifierException {
     if (id.isEmpty()) {
       return Collections.emptyList();
     }
@@ -166,7 +162,7 @@ public class ChangeFinder {
       Integer n = Ints.tryParse(id);
       if (n != null) {
         checkIdType(ChangeIdType.NUMERIC_ID, enforceDeprecation, n.toString());
-        return find(new Change.Id(n));
+        return find(Change.id(n));
       }
     }
 
@@ -175,7 +171,7 @@ public class ChangeFinder {
     InternalChangeQuery query = queryProvider.get().noFields();
 
     // Try commit hash
-    if (id.matches("^([0-9a-fA-F]{" + RevId.ABBREV_LEN + "," + RevId.LEN + "})$")) {
+    if (id.matches("^([0-9a-fA-F]{" + ObjectIds.ABBREV_STR_LEN + "," + ObjectIds.STR_LEN + "})$")) {
       checkIdType(ChangeIdType.COMMIT_HASH, enforceDeprecation, id);
       return asChangeNotes(query.byCommit(id));
     }
@@ -198,17 +194,16 @@ public class ChangeFinder {
     return notes;
   }
 
-  private List<ChangeNotes> fromProjectNumber(String project, int changeNumber)
-      throws OrmException {
-    Change.Id cId = new Change.Id(changeNumber);
+  private List<ChangeNotes> fromProjectNumber(String project, int changeNumber) {
+    Change.Id cId = Change.id(changeNumber);
     try {
       return ImmutableList.of(
-          changeNotesFactory.createChecked(reviewDb.get(), Project.NameKey.parse(project), cId));
+          changeNotesFactory.createChecked(Project.NameKey.parse(project), cId));
     } catch (NoSuchChangeException e) {
       return Collections.emptyList();
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       // Distinguish between a RepositoryNotFoundException (project argument invalid) and
-      // other OrmExceptions (failure in the persistence layer).
+      // other StorageExceptions (failure in the persistence layer).
       if (Throwables.getRootCause(e) instanceof RepositoryNotFoundException) {
         return Collections.emptyList();
       }
@@ -216,7 +211,7 @@ public class ChangeFinder {
     }
   }
 
-  public ChangeNotes findOne(Change.Id id) throws OrmException {
+  public ChangeNotes findOne(Change.Id id) {
     List<ChangeNotes> notes = find(id);
     if (notes.size() != 1) {
       throw new NoSuchChangeException(id);
@@ -224,7 +219,7 @@ public class ChangeFinder {
     return notes.get(0);
   }
 
-  public List<ChangeNotes> find(Change.Id id) throws OrmException {
+  public List<ChangeNotes> find(Change.Id id) {
     String project = changeIdProjectCache.getIfPresent(id);
     if (project != null) {
       return fromProjectNumber(project, id.get());
@@ -240,7 +235,7 @@ public class ChangeFinder {
     return asChangeNotes(r);
   }
 
-  private List<ChangeNotes> asChangeNotes(List<ChangeData> cds) throws OrmException {
+  private List<ChangeNotes> asChangeNotes(List<ChangeData> cds) {
     List<ChangeNotes> notes = new ArrayList<>(cds.size());
     if (!indexConfig.separateChangeSubIndexes()) {
       for (ChangeData cd : cds) {

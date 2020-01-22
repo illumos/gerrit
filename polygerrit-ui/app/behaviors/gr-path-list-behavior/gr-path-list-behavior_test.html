@@ -15,10 +15,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 <!-- Polymer included for the html import polyfill. -->
-<script src="../../bower_components/webcomponentsjs/webcomponents.min.js"></script>
-<script src="../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../test/common-test-setup.html"/>
 <title>gr-path-list-behavior</title>
+
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
 
 <link rel="import" href="gr-path-list-behavior.html">
 
@@ -52,6 +54,14 @@ limitations under the License.
       assert.equal(name('/foobarbaz'), '/foobarbaz');
       assert.equal(name('/COMMIT_MSG'), 'Commit message');
       assert.equal(name('/MERGE_LIST'), 'Merge list');
+    });
+
+    test('isMagicPath', () => {
+      const isMagic = Gerrit.PathListBehavior.isMagicPath;
+      assert.isFalse(isMagic(undefined));
+      assert.isFalse(isMagic('/foo.cc'));
+      assert.isTrue(isMagic('/COMMIT_MSG'));
+      assert.isTrue(isMagic('/MERGE_LIST'));
     });
 
     test('truncatePath with long path should add ellipsis', () => {

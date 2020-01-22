@@ -30,8 +30,8 @@ import com.google.common.collect.Multimap;
 import com.google.common.collect.MultimapBuilder;
 import com.google.common.collect.Sets;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.git.ValidationError;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -168,7 +168,7 @@ public class ProjectWatches {
         }
 
         ProjectWatchKey key =
-            ProjectWatchKey.create(new Project.NameKey(projectName), notifyValue.filter());
+            ProjectWatchKey.create(Project.nameKey(projectName), notifyValue.filter());
         if (!projectWatches.containsKey(key)) {
           projectWatches.put(key, EnumSet.noneOf(NotifyType.class));
         }
@@ -263,7 +263,7 @@ public class ProjectWatches {
     public abstract ImmutableSet<NotifyType> notifyTypes();
 
     @Override
-    public String toString() {
+    public final String toString() {
       List<NotifyType> notifyTypes = new ArrayList<>(notifyTypes());
       StringBuilder notifyValue = new StringBuilder();
       notifyValue.append(firstNonNull(filter(), FILTER_ALL)).append(" [");

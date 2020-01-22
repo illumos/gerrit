@@ -14,28 +14,38 @@
 
 package com.google.gerrit.acceptance.rest.change;
 
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allowLabel;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.blockLabel;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.labelPermissionKey;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
+
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.AcceptanceTestRequestScope.Context;
 import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.acceptance.TestAccount;
 import com.google.gerrit.acceptance.TestProjectInput;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.group.SystemGroupBackend;
+import com.google.inject.Inject;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.junit.TestRepository;
 import org.junit.Before;
 import org.junit.Test;
 
 public class ChangeOwnerIT extends AbstractDaemonTest {
+  @Inject private ProjectOperations projectOperations;
+  @Inject private RequestScopeOperations requestScopeOperations;
 
   private TestAccount user2;
 
   @Before
   public void setUp() throws Exception {
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     user2 = accountCreator.user2();
   }
 
@@ -61,22 +71,22 @@ public class ChangeOwnerIT extends AbstractDaemonTest {
 
   @Test
   public void testChangeOwner_OwnerACLGrantedOnParentProject() throws Exception {
-    setApiUser(admin);
+    requestScopeOperations.setApiUser(admin.id());
     grantApproveToChangeOwner(project);
-    Project.NameKey child = createProject("child", project);
+    Project.NameKey child = projectOperations.newProject().parent(project).create();
 
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     TestRepository<InMemoryRepository> childRepo = cloneProject(child, user);
     approve(user, createMyChange(childRepo));
   }
 
   @Test
   public void testChangeOwner_BlockedOnParentProject() throws Exception {
-    setApiUser(admin);
+    requestScopeOperations.setApiUser(admin.id());
     blockApproveForChangeOwner(project);
-    Project.NameKey child = createProject("child", project);
+    Project.NameKey child = projectOperations.newProject().parent(project).create();
 
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     grantApproveToAll(child);
     TestRepository<InMemoryRepository> childRepo = cloneProject(child, user);
     String changeId = createMyChange(childRepo);
@@ -90,11 +100,11 @@ public class ChangeOwnerIT extends AbstractDaemonTest {
 
   @Test
   public void testChangeOwner_BlockedOnParentProjectAndExclusiveAllowOnChild() throws Exception {
-    setApiUser(admin);
+    requestScopeOperations.setApiUser(admin.id());
     blockApproveForChangeOwner(project);
-    Project.NameKey child = createProject("child", project);
+    Project.NameKey child = projectOperations.newProject().parent(project).create();
 
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     grantExclusiveApproveToAll(child);
     TestRepository<InMemoryRepository> childRepo = cloneProject(child, user);
     String changeId = createMyChange(childRepo);
@@ -107,7 +117,7 @@ public class ChangeOwnerIT extends AbstractDaemonTest {
   }
 
   private void approve(TestAccount a, String changeId) throws Exception {
-    Context old = setApiUser(a);
+    Context old = requestScopeOperations.setApiUser(a.id());
     try {
       gApi.changes().id(changeId).current().review(ReviewInput.approve());
     } finally {
@@ -116,8 +126,7 @@ public class ChangeOwnerIT extends AbstractDaemonTest {
   }
 
   private void assertApproveFails(TestAccount a, String changeId) throws Exception {
-    exception.expect(AuthException.class);
-    approve(a, changeId);
+    assertThrows(AuthException.class, () -> approve(a, changeId));
   }
 
   private void grantApproveToChangeOwner(Project.NameKey project) throws Exception {
@@ -134,15 +143,28 @@ public class ChangeOwnerIT extends AbstractDaemonTest {
 
   private void grantApprove(Project.NameKey project, AccountGroup.UUID groupUUID, boolean exclusive)
       throws Exception {
-    grantLabel("Code-Review", -2, 2, project, "refs/heads/*", false, groupUUID, exclusive);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allowLabel("Code-Review").ref("refs/heads/*").group(groupUUID).range(-2, 2))
+        .setExclusiveGroup(labelPermissionKey("Code-Review").ref("refs/heads/*"), exclusive)
+        .update();
   }
 
   private void blockApproveForChangeOwner(Project.NameKey project) throws Exception {
-    blockLabel("Code-Review", -2, 2, SystemGroupBackend.CHANGE_OWNER, "refs/heads/*", project);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(
+            blockLabel("Code-Review")
+                .ref("refs/heads/*")
+                .group(SystemGroupBackend.CHANGE_OWNER)
+                .range(-2, 2))
+        .update();
   }
 
   private String createMyChange(TestRepository<InMemoryRepository> testRepo) throws Exception {
-    PushOneCommit push = pushFactory.create(db, user.getIdent(), testRepo);
+    PushOneCommit push = pushFactory.create(user.newIdent(), testRepo);
     return push.to("refs/for/master").getChangeId();
   }
 }

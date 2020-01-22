@@ -14,30 +14,35 @@
 
 package com.google.gerrit.server.mail.send;
 
-import com.google.gerrit.common.errors.EmailException;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.EmailException;
 import com.google.gerrit.extensions.api.changes.RecipientType;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 
+/**
+ * Sender that informs a user by email that they were set as assignee on a change.
+ *
+ * <p>In contrast to other change emails this email is not sent to the change authors (owner, patch
+ * set uploader, author). This is why this class extends {@link ChangeEmail} directly, instead of
+ * extending {@link ReplyToChangeSender}.
+ */
 public class SetAssigneeSender extends ChangeEmail {
   public interface Factory {
-    SetAssigneeSender create(Project.NameKey project, Change.Id id, Account.Id assignee);
+    SetAssigneeSender create(Project.NameKey project, Change.Id changeId, Account.Id assignee);
   }
 
   private final Account.Id assignee;
 
   @Inject
   public SetAssigneeSender(
-      EmailArguments ea,
+      EmailArguments args,
       @Assisted Project.NameKey project,
-      @Assisted Change.Id id,
-      @Assisted Account.Id assignee)
-      throws OrmException {
-    super(ea, "setassignee", newChangeData(ea, project, id));
+      @Assisted Change.Id changeId,
+      @Assisted Account.Id assignee) {
+    super(args, "setassignee", newChangeData(args, project, changeId));
     this.assignee = assignee;
   }
 
@@ -56,14 +61,10 @@ public class SetAssigneeSender extends ChangeEmail {
     }
   }
 
-  public String getAssigneeName() {
-    return getNameFor(assignee);
-  }
-
   @Override
   protected void setupSoyContext() {
     super.setupSoyContext();
-    soyContextEmailData.put("assigneeName", getAssigneeName());
+    soyContextEmailData.put("assigneeName", getNameFor(assignee));
   }
 
   @Override

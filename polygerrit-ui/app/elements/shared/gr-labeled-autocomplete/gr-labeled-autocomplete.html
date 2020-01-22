@@ -14,7 +14,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 -->
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 <link rel="import" href="../../shared/gr-autocomplete/gr-autocomplete.html">
 <link rel="import" href="../../../styles/shared-styles.html">
 
@@ -28,7 +28,7 @@ limitations under the License.
       #container {
         background: var(--chip-background-color);
         border-radius: 1em;
-        padding: .5em;
+        padding: var(--spacing-m);
       }
       #header {
         color: var(--deemphasized-text-color);
@@ -38,17 +38,10 @@ limitations under the License.
       #body {
         display: flex;
       }
-      gr-autocomplete {
-        height: 1.5em;
-        --gr-autocomplete: {
-          border: none;
-        }
-      }
       #trigger {
-        border-left: 1px solid var(--deemphasized-text-color);
         color: var(--deemphasized-text-color);
         cursor: pointer;
-        padding-left: .4em;
+        padding-left: var(--spacing-s);
       }
       #trigger:hover {
         color: var(--primary-text-color);
@@ -64,7 +57,7 @@ limitations under the License.
             disabled="[[disabled]]"
             placeholder="[[placeholder]]"
             borderless></gr-autocomplete>
-        <div id="trigger" on-tap="_handleTriggerTap">▼</div>
+        <div id="trigger" on-click="_handleTriggerClick">▼</div>
       </div>
     </div>
   </template>

@@ -15,6 +15,7 @@
 package com.google.gerrit.acceptance.server.rules;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth8.assertThat;
 
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.NoHttpd;
@@ -22,11 +23,10 @@ import com.google.gerrit.acceptance.PushOneCommit;
 import com.google.gerrit.common.data.LabelType;
 import com.google.gerrit.common.data.SubmitRecord;
 import com.google.gerrit.common.data.SubmitRequirement;
-import com.google.gerrit.server.project.SubmitRuleOptions;
 import com.google.gerrit.server.rules.IgnoreSelfApprovalRule;
 import com.google.inject.Inject;
-import java.util.Collection;
 import java.util.Map;
+import java.util.Optional;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.junit.TestRepository;
 import org.junit.Test;
@@ -42,11 +42,10 @@ public class IgnoreSelfApprovalRuleIT extends AbstractDaemonTest {
     PushOneCommit.Result r = createChange();
     approve(r.getChangeId());
 
-    Collection<SubmitRecord> submitRecords =
-        rule.evaluate(r.getChange(), SubmitRuleOptions.defaults());
+    Optional<SubmitRecord> submitRecord = rule.evaluate(r.getChange());
 
-    assertThat(submitRecords).hasSize(1);
-    SubmitRecord result = submitRecords.iterator().next();
+    assertThat(submitRecord).isPresent();
+    SubmitRecord result = submitRecord.get();
     assertThat(result.status).isEqualTo(SubmitRecord.Status.NOT_READY);
     assertThat(result.labels).isNotEmpty();
     assertThat(result.requirements)
@@ -63,15 +62,14 @@ public class IgnoreSelfApprovalRuleIT extends AbstractDaemonTest {
 
     // Create change as user
     TestRepository<InMemoryRepository> userTestRepo = cloneProject(project, user);
-    PushOneCommit push = pushFactory.create(db, user.getIdent(), userTestRepo);
+    PushOneCommit push = pushFactory.create(user.newIdent(), userTestRepo);
     PushOneCommit.Result r = push.to("refs/for/master");
 
     // Approve as admin
     approve(r.getChangeId());
 
-    Collection<SubmitRecord> submitRecords =
-        rule.evaluate(r.getChange(), SubmitRuleOptions.defaults());
-    assertThat(submitRecords).isEmpty();
+    Optional<SubmitRecord> submitRecord = rule.evaluate(r.getChange());
+    assertThat(submitRecord).isEmpty();
   }
 
   @Test
@@ -81,9 +79,8 @@ public class IgnoreSelfApprovalRuleIT extends AbstractDaemonTest {
     PushOneCommit.Result r = createChange();
     approve(r.getChangeId());
 
-    Collection<SubmitRecord> submitRecords =
-        rule.evaluate(r.getChange(), SubmitRuleOptions.defaults());
-    assertThat(submitRecords).isEmpty();
+    Optional<SubmitRecord> submitRecord = rule.evaluate(r.getChange());
+    assertThat(submitRecord).isEmpty();
   }
 
   private void enableRule(String labelName, boolean newState) throws Exception {

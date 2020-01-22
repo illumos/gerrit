@@ -14,27 +14,25 @@
 
 package com.google.gerrit.server.notedb;
 
-import static com.google.gerrit.server.notedb.NoteDbTable.CHANGES;
 import static java.util.Objects.requireNonNull;
 
-import com.google.auto.value.AutoValue;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.metrics.Timer1;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.server.ReviewDb;
+import com.google.gerrit.common.UsedAt;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.StorageException;
+import com.google.gerrit.metrics.Timer0;
 import com.google.gerrit.server.config.AllUsersName;
+import com.google.gerrit.server.config.GerritServerId;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.notedb.ChangeNotesCommit.ChangeNotesRevWalk;
-import com.google.gerrit.server.notedb.NoteDbChangeState.PrimaryStorage;
-import com.google.gerrit.server.notedb.rebuild.ChangeRebuilder;
 import com.google.gerrit.server.project.NoSuchChangeException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
@@ -44,92 +42,85 @@ import org.eclipse.jgit.lib.Repository;
 public abstract class AbstractChangeNotes<T> {
   @VisibleForTesting
   @Singleton
+  @UsedAt(UsedAt.Project.PLUGIN_CHECKS)
   public static class Args {
-    final GitRepositoryManager repoManager;
-    final NotesMigration migration;
-    final AllUsersName allUsers;
-    final ChangeNoteJson changeNoteJson;
-    final LegacyChangeNoteRead legacyChangeNoteRead;
-    final NoteDbMetrics metrics;
-    final Provider<ReviewDb> db;
+    // TODO(dborowitz): Some less smelly way of disabling NoteDb in tests.
+    public final AtomicBoolean failOnLoadForTest;
+    public final ChangeNoteJson changeNoteJson;
+    public final GitRepositoryManager repoManager;
+    public final AllUsersName allUsers;
+    public final NoteDbMetrics metrics;
+    public final String serverId;
 
     // Providers required to avoid dependency cycles.
 
-    // ChangeRebuilder -> ChangeNotes.Factory -> Args
-    final Provider<ChangeRebuilder> rebuilder;
-
     // ChangeNoteCache -> Args
-    final Provider<ChangeNotesCache> cache;
+    public final Provider<ChangeNotesCache> cache;
 
     @Inject
     Args(
         GitRepositoryManager repoManager,
-        NotesMigration migration,
         AllUsersName allUsers,
         ChangeNoteJson changeNoteJson,
-        LegacyChangeNoteRead legacyChangeNoteRead,
         NoteDbMetrics metrics,
-        Provider<ReviewDb> db,
-        Provider<ChangeRebuilder> rebuilder,
-        Provider<ChangeNotesCache> cache) {
+        Provider<ChangeNotesCache> cache,
+        @GerritServerId String serverId) {
+      this.failOnLoadForTest = new AtomicBoolean();
       this.repoManager = repoManager;
-      this.migration = migration;
       this.allUsers = allUsers;
-      this.legacyChangeNoteRead = legacyChangeNoteRead;
       this.changeNoteJson = changeNoteJson;
       this.metrics = metrics;
-      this.db = db;
-      this.rebuilder = rebuilder;
       this.cache = cache;
+      this.serverId = serverId;
     }
   }
 
-  @AutoValue
-  public abstract static class LoadHandle implements AutoCloseable {
-    public static LoadHandle create(ChangeNotesRevWalk walk, ObjectId id) {
+  /** An {@link AutoCloseable} for parsing a single commit into ChangeNotesCommits. */
+  public static class LoadHandle implements AutoCloseable {
+    private final Repository repo;
+    private final ObjectId id;
+    private ChangeNotesRevWalk rw;
+
+    private LoadHandle(Repository repo, @Nullable ObjectId id) {
+      this.repo = requireNonNull(repo);
+
       if (ObjectId.zeroId().equals(id)) {
         id = null;
       } else if (id != null) {
         id = id.copy();
       }
-      return new AutoValue_AbstractChangeNotes_LoadHandle(requireNonNull(walk), id);
+      this.id = id;
     }
 
-    public static LoadHandle missing() {
-      return new AutoValue_AbstractChangeNotes_LoadHandle(null, null);
+    public ChangeNotesRevWalk walk() {
+      if (rw == null) {
+        rw = ChangeNotesCommit.newRevWalk(repo);
+      }
+      return rw;
     }
 
     @Nullable
-    public abstract ChangeNotesRevWalk walk();
-
-    @Nullable
-    public abstract ObjectId id();
+    public ObjectId id() {
+      return id;
+    }
 
     @Override
     public void close() {
-      if (walk() != null) {
-        walk().close();
+      if (rw != null) {
+        rw.close();
       }
     }
   }
 
   protected final Args args;
-  protected final PrimaryStorage primaryStorage;
-  protected final boolean autoRebuild;
   private final Change.Id changeId;
 
   private ObjectId revision;
   private boolean loaded;
 
-  AbstractChangeNotes(
-      Args args, Change.Id changeId, @Nullable PrimaryStorage primaryStorage, boolean autoRebuild) {
+  protected AbstractChangeNotes(Args args, Change.Id changeId) {
     this.args = requireNonNull(args);
     this.changeId = requireNonNull(changeId);
-    this.primaryStorage = primaryStorage;
-    this.autoRebuild =
-        primaryStorage == PrimaryStorage.REVIEW_DB
-            && !args.migration.disableChangeReviewDb()
-            && autoRebuild;
   }
 
   public Change.Id getChangeId() {
@@ -141,44 +132,29 @@ public abstract class AbstractChangeNotes<T> {
     return revision;
   }
 
-  public T load() throws OrmException {
+  public T load() {
     if (loaded) {
       return self();
     }
 
-    boolean read = args.migration.readChanges();
-    if (!read && primaryStorage == PrimaryStorage.NOTE_DB) {
-      throw new OrmException("NoteDb is required to read change " + changeId);
+    if (args.failOnLoadForTest.get()) {
+      throw new StorageException("Reading from NoteDb is disabled");
     }
-    boolean readOrWrite = read || args.migration.rawWriteChangesSetting();
-    if (!readOrWrite) {
-      // Don't even open the repo if we neither write to nor read from NoteDb. It's possible that
-      // there is some garbage in the noteDbState field and/or the repo, but at this point NoteDb is
-      // completely off so it's none of our business.
-      loadDefaults();
-      return self();
-    }
-    if (args.migration.failOnLoadForTest()) {
-      throw new OrmException("Reading from NoteDb is disabled");
-    }
-    try (Timer1.Context timer = args.metrics.readLatency.start(CHANGES);
+    try (Timer0.Context timer = args.metrics.readLatency.start();
         Repository repo = args.repoManager.openRepository(getProjectName());
         // Call openHandle even if reading is disabled, to trigger
         // auto-rebuilding before this object may get passed to a ChangeUpdate.
         LoadHandle handle = openHandle(repo)) {
-      if (read) {
-        revision = handle.id();
-        onLoad(handle);
-      } else {
-        loadDefaults();
-      }
+      revision = handle.id();
+      onLoad(handle);
       loaded = true;
     } catch (ConfigInvalidException | IOException e) {
-      throw new OrmException(e);
+      throw new StorageException(e);
     }
     return self();
   }
 
+  @Nullable
   protected ObjectId readRef(Repository repo) throws IOException {
     Ref ref = repo.getRefDatabase().exactRef(getRefName());
     return ref != null ? ref.getObjectId() : null;
@@ -199,25 +175,23 @@ public abstract class AbstractChangeNotes<T> {
   }
 
   protected LoadHandle openHandle(Repository repo, ObjectId id) {
-    return LoadHandle.create(ChangeNotesCommit.newRevWalk(repo), id);
+    return new LoadHandle(repo, id);
   }
 
-  public T reload() throws NoSuchChangeException, OrmException {
+  public T reload() {
     loaded = false;
     return load();
   }
 
-  public ObjectId loadRevision() throws OrmException {
+  public ObjectId loadRevision() {
     if (loaded) {
       return getRevision();
-    } else if (!args.migration.readChanges()) {
-      return null;
     }
     try (Repository repo = args.repoManager.openRepository(getProjectName())) {
       Ref ref = repo.getRefDatabase().exactRef(getRefName());
       return ref != null ? ref.getObjectId() : null;
     } catch (IOException e) {
-      throw new OrmException(e);
+      throw new StorageException(e);
     }
   }
 

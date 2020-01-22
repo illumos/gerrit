@@ -1,6 +1,13 @@
 #!/bin/sh
 
+# DEPRECATED: This file is only used by Gerrit CI for now
+# To run eslint test on FE code, run `npm run eslint` instead.
+# `bazel run lint_test` will be changed to be an alias to
+# `npm run eslint` soon.
+
 set -ex
+
+echo "DEPRECATED: please run `npm run eslint` instead.";
 
 npm_bin=$(which npm) && true
 if [ -z "$npm_bin" ]; then
@@ -30,4 +37,4 @@ cd ${UI_PATH}
 # eslint installation.
 npm link eslint eslint-config-google eslint-plugin-html eslint-plugin-jsdoc
 
-${eslint_bin} -c ${UI_PATH}/.eslintrc.json --ext .html,.js ${UI_PATH}
+${eslint_bin} -c ${UI_PATH}/.eslintrc.json --ignore-pattern 'node_modules/' --ignore-pattern 'bower_components/' --ignore-pattern 'scripts/vendor' --ext .html,.js ${UI_PATH}

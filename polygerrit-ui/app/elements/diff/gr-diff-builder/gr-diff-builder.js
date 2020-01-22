@@ -42,11 +42,8 @@
    */
   const REGEX_TAB_OR_SURROGATE_PAIR = /\t|[\uD800-\uDBFF][\uDC00-\uDFFF]/;
 
-  function GrDiffBuilder(diff, comments, createThreadGroupFn, prefs, outputEl,
-      layers) {
+  function GrDiffBuilder(diff, prefs, outputEl, layers) {
     this._diff = diff;
-    this._comments = comments;
-    this._createThreadGroupFn = createThreadGroupFn;
     this._prefs = prefs;
     this._outputEl = outputEl;
     this.groups = [];
@@ -223,7 +220,9 @@
         // if lines are collapsed and not visible on the page yet.
         continue;
       }
-      el.parentElement.replaceChild(this._createTextEl(line, side).firstChild,
+      const lineNumberEl = this._getLineNumberEl(el, side);
+      el.parentElement.replaceChild(
+          this._createTextEl(lineNumberEl, line, side).firstChild,
           el);
     }
   };
@@ -231,60 +230,41 @@
   GrDiffBuilder.prototype.getSectionsByLineRange = function(
       startLine, endLine, opt_side) {
     return this.getGroupsByLineRange(startLine, endLine, opt_side).map(
-        group => { return group.element; });
-  };
-
-  // TODO(wyatta): Move this completely into the processor.
-  GrDiffBuilder.prototype._insertContextGroups = function(groups, lines,
-      hiddenRange) {
-    const linesBeforeCtx = lines.slice(0, hiddenRange[0]);
-    const hiddenLines = lines.slice(hiddenRange[0], hiddenRange[1]);
-    const linesAfterCtx = lines.slice(hiddenRange[1]);
-
-    if (linesBeforeCtx.length > 0) {
-      groups.push(new GrDiffGroup(GrDiffGroup.Type.BOTH, linesBeforeCtx));
-    }
-
-    const ctxLine = new GrDiffLine(GrDiffLine.Type.CONTEXT_CONTROL);
-    ctxLine.contextGroup =
-        new GrDiffGroup(GrDiffGroup.Type.BOTH, hiddenLines);
-    groups.push(new GrDiffGroup(GrDiffGroup.Type.CONTEXT_CONTROL,
-        [ctxLine]));
-
-    if (linesAfterCtx.length > 0) {
-      groups.push(new GrDiffGroup(GrDiffGroup.Type.BOTH, linesAfterCtx));
-    }
+        group => group.element);
   };
 
   GrDiffBuilder.prototype._createContextControl = function(section, line) {
-    if (!line.contextGroup || !line.contextGroup.lines.length) {
-      return null;
-    }
+    if (!line.contextGroups) return null;
+
+    const numLines =
+        line.contextGroups[line.contextGroups.length - 1].lineRange.left.end -
+        line.contextGroups[0].lineRange.left.start + 1;
+
+    if (numLines === 0) return null;
 
     const td = this._createElement('td');
-    const showPartialLinks =
-        line.contextGroup.lines.length > PARTIAL_CONTEXT_AMOUNT;
+    const showPartialLinks = numLines > PARTIAL_CONTEXT_AMOUNT;
 
     if (showPartialLinks) {
       td.appendChild(this._createContextButton(
-          GrDiffBuilder.ContextButtonType.ABOVE, section, line));
+          GrDiffBuilder.ContextButtonType.ABOVE, section, line, numLines));
       td.appendChild(document.createTextNode(' - '));
     }
 
     td.appendChild(this._createContextButton(
-        GrDiffBuilder.ContextButtonType.ALL, section, line));
+        GrDiffBuilder.ContextButtonType.ALL, section, line, numLines));
 
     if (showPartialLinks) {
       td.appendChild(document.createTextNode(' - '));
       td.appendChild(this._createContextButton(
-          GrDiffBuilder.ContextButtonType.BELOW, section, line));
+          GrDiffBuilder.ContextButtonType.BELOW, section, line, numLines));
     }
 
     return td;
   };
 
-  GrDiffBuilder.prototype._createContextButton = function(type, section, line) {
-    const contextLines = line.contextGroup.lines;
+  GrDiffBuilder.prototype._createContextButton = function(type, section, line,
+      numLines) {
     const context = PARTIAL_CONTEXT_AMOUNT;
 
     const button = this._createElement('gr-button', 'showContext');
@@ -292,20 +272,20 @@
     button.setAttribute('no-uppercase', true);
 
     let text;
-    const groups = []; // The groups that replace this one if tapped.
+    let groups = []; // The groups that replace this one if tapped.
 
     if (type === GrDiffBuilder.ContextButtonType.ALL) {
-      text = 'Show ' + contextLines.length + ' common line';
-      if (contextLines.length > 1) { text += 's'; }
-      groups.push(line.contextGroup);
+      text = 'Show ' + numLines + ' common line';
+      if (numLines > 1) { text += 's'; }
+      groups.push(...line.contextGroups);
     } else if (type === GrDiffBuilder.ContextButtonType.ABOVE) {
       text = '+' + context + '↑';
-      this._insertContextGroups(groups, contextLines,
-          [context, contextLines.length]);
+      groups = GrDiffGroup.hideInContextControl(line.contextGroups,
+          context, numLines);
     } else if (type === GrDiffBuilder.ContextButtonType.BELOW) {
       text = '+' + context + '↓';
-      this._insertContextGroups(groups, contextLines,
-          [0, contextLines.length - context]);
+      groups = GrDiffGroup.hideInContextControl(line.contextGroups,
+          0, numLines - context);
     }
 
     Polymer.dom(button).textContent = text;
@@ -314,157 +294,12 @@
       e.detail = {
         groups,
         section,
+        numLines,
       };
       // Let it bubble up the DOM tree.
     });
 
     return button;
-  };
-
-  GrDiffBuilder.prototype._getCommentsForLine = function(comments, line,
-      opt_side) {
-    function byLineNum(lineNum) {
-      return function(c) {
-        return (c.line === lineNum) ||
-               (c.line === undefined && lineNum === GrDiffLine.FILE);
-      };
-    }
-    const leftComments =
-        comments[GrDiffBuilder.Side.LEFT].filter(byLineNum(line.beforeNumber));
-    const rightComments =
-        comments[GrDiffBuilder.Side.RIGHT].filter(byLineNum(line.afterNumber));
-
-    leftComments.forEach(c => { c.__commentSide = 'left'; });
-    rightComments.forEach(c => { c.__commentSide = 'right'; });
-
-    let result;
-
-    switch (opt_side) {
-      case GrDiffBuilder.Side.LEFT:
-        result = leftComments;
-        break;
-      case GrDiffBuilder.Side.RIGHT:
-        result = rightComments;
-        break;
-      default:
-        result = leftComments.concat(rightComments);
-        break;
-    }
-
-    return result;
-  };
-
-  /**
-   * @param {Array<Object>} comments
-   * @param {string} patchForNewThreads
-   */
-  GrDiffBuilder.prototype._getThreads = function(comments, patchForNewThreads) {
-    const sortedComments = comments.slice(0).sort((a, b) => {
-      if (b.__draft && !a.__draft ) { return 0; }
-      if (a.__draft && !b.__draft ) { return 1; }
-      return util.parseDate(a.updated) - util.parseDate(b.updated);
-    });
-
-    const threads = [];
-    for (const comment of sortedComments) {
-      // If the comment is in reply to another comment, find that comment's
-      // thread and append to it.
-      if (comment.in_reply_to) {
-        const thread = threads.find(thread =>
-          thread.comments.some(c => c.id === comment.in_reply_to));
-        if (thread) {
-          thread.comments.push(comment);
-          continue;
-        }
-      }
-
-      // Otherwise, this comment starts its own thread.
-      const newThread = {
-        start_datetime: comment.updated,
-        comments: [comment],
-        commentSide: comment.__commentSide,
-        /**
-         * Determines what the patchNum of a thread should be. Use patchNum from
-         * comment if it exists, otherwise the property of the thread group.
-         * This is needed for switching between side-by-side and unified views
-         * when there are unsaved drafts.
-         */
-        patchNum: comment.patch_set || patchForNewThreads,
-        rootId: comment.id || comment.__draftID,
-      };
-      if (comment.range) {
-        newThread.range = Object.assign({}, comment.range);
-      }
-      threads.push(newThread);
-    }
-    return threads;
-  };
-
-  /**
-   * Returns the patch number that new comment threads should be attached to.
-   *
-   * @param {GrDiffLine} line The line new thread will be attached to.
-   * @param {string=} opt_side Set to LEFT to force adding it to the LEFT side -
-   *     will be ignored if the left is a parent or a merge parent
-   * @return {number} Patch set to attach the new thread to
-   */
-  GrDiffBuilder.prototype._determinePatchNumForNewThreads = function(
-      patchRange, line, opt_side) {
-    if ((line.type === GrDiffLine.Type.REMOVE ||
-         opt_side === GrDiffBuilder.Side.LEFT) &&
-        patchRange.basePatchNum !== 'PARENT' &&
-        !Gerrit.PatchSetBehavior.isMergeParent(patchRange.basePatchNum)) {
-      return patchRange.basePatchNum;
-    } else {
-      return patchRange.patchNum;
-    }
-  };
-
-  /**
-   * Returns whether the comments on the given line are on a (merge) parent.
-   *
-   * @param {string} firstCommentSide
-   * @param {{basePatchNum: number, patchNum: number}} patchRange
-   * @param {GrDiffLine} line The line the comments are on.
-   * @param {string=} opt_side
-   * @return {boolean} True iff the comments on the given line are on a (merge)
-   *    parent.
-   */
-  GrDiffBuilder.prototype._determineIsOnParent = function(
-      firstCommentSide, patchRange, line, opt_side) {
-    return ((line.type === GrDiffLine.Type.REMOVE ||
-             opt_side === GrDiffBuilder.Side.LEFT) &&
-            (patchRange.basePatchNum === 'PARENT' ||
-             Gerrit.PatchSetBehavior.isMergeParent(
-                 patchRange.basePatchNum))) ||
-          firstCommentSide === 'PARENT';
-  };
-
-  /**
-   * @param {GrDiffLine} line
-   * @param {string=} opt_side
-   * @return {!Object}
-   */
-  GrDiffBuilder.prototype._commentThreadGroupForLine = function(
-      line, opt_side) {
-    const comments =
-    this._getCommentsForLine(this._comments, line, opt_side);
-    if (!comments || comments.length === 0) {
-      return null;
-    }
-
-    const patchNum = this._determinePatchNumForNewThreads(
-        this._comments.meta.patchRange, line, opt_side);
-    const isOnParent = this._determineIsOnParent(
-        comments[0].side, this._comments.meta.patchRange, line, opt_side);
-
-    const threadGroupEl = this._createThreadGroupFn(patchNum, isOnParent,
-        opt_side);
-    threadGroupEl.threads = this._getThreads(comments, patchNum);
-    if (opt_side) {
-      threadGroupEl.setAttribute('data-side', opt_side);
-    }
-    return threadGroupEl;
   };
 
   GrDiffBuilder.prototype._createLineEl = function(
@@ -474,18 +309,22 @@
       td.classList.add(opt_class);
     }
 
-    if (line.type === GrDiffLine.Type.REMOVE) {
-      td.setAttribute('aria-label', `${number} removed`);
-    } else if (line.type === GrDiffLine.Type.ADD) {
-      td.setAttribute('aria-label', `${number} added`);
+    // Add aria-labels for valid line numbers.
+    // For unified diff, this method will be called with number set to 0 for
+    // the empty line number column for added/removed lines. This should not
+    // be announced to the screenreader.
+    if (number > 0) {
+      if (line.type === GrDiffLine.Type.REMOVE) {
+        td.setAttribute('aria-label', `${number} removed`);
+      } else if (line.type === GrDiffLine.Type.ADD) {
+        td.setAttribute('aria-label', `${number} added`);
+      }
     }
 
     if (line.type === GrDiffLine.Type.BLANK) {
       return td;
     } else if (line.type === GrDiffLine.Type.CONTEXT_CONTROL) {
       td.classList.add('contextLineNum');
-      td.setAttribute('data-value', '@@');
-      td.textContent = '@@';
     } else if (line.type === GrDiffLine.Type.BOTH || line.type === type) {
       td.classList.add('lineNum');
       td.setAttribute('data-value', number);
@@ -494,10 +333,17 @@
     return td;
   };
 
-  GrDiffBuilder.prototype._createTextEl = function(line, opt_side) {
+  GrDiffBuilder.prototype._createTextEl = function(
+      lineNumberEl, line, opt_side) {
     const td = this._createElement('td');
     if (line.type !== GrDiffLine.Type.BLANK) {
       td.classList.add('content');
+    }
+
+    // If intraline info is not available, the entire line will be
+    // considered as changed and marked as dark red / green color
+    if (!line.hasIntralineInfo) {
+      td.classList.add('no-intraline-info');
     }
     td.classList.add(line.type);
 
@@ -511,7 +357,9 @@
     }
 
     for (const layer of this.layers) {
-      layer.annotate(contentText, line);
+      if (typeof layer.annotate == 'function') {
+        layer.annotate(contentText, lineNumberEl, line);
+      }
     }
 
     td.appendChild(contentText);
@@ -728,6 +576,10 @@
         isStartOfRange ? 'startOfRange' : '');
     const shaNode = this._createElement('span', 'sha');
     shaNode.innerText = commit.id.substr(0, 7);
+    shaNode.onclick = function() {
+      location.href = '/q/' + shaNode.innerText;
+    };
+
     blameNode.appendChild(shaNode);
     blameNode.append(` on ${date} by ${commit.author}`);
     return blameNode;
@@ -750,6 +602,19 @@
       }
     }
     return blameTd;
+  };
+
+  /**
+   * Finds the line number element given the content element by walking up the
+   * DOM tree to the diff row and then querying for a .lineNum element on the
+   * requested side.
+   *
+   * TODO(brohlfs): Consolidate this with getLineEl... methods in html file.
+   */
+  GrDiffBuilder.prototype._getLineNumberEl = function(content, side) {
+    let row = content;
+    while (row && !row.classList.contains('diff-row')) row = row.parentElement;
+    return row ? row.querySelector('.lineNum.' + side) : null;
   };
 
   window.GrDiffBuilder = GrDiffBuilder;

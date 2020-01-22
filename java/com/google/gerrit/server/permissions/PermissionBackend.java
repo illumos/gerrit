@@ -18,29 +18,28 @@ import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toSet;
 
 import com.google.auto.value.AutoValue;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.data.LabelType;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.StorageException;
+import com.google.gerrit.extensions.api.access.CoreOrPluginProjectPermission;
 import com.google.gerrit.extensions.api.access.GlobalOrPluginPermission;
 import com.google.gerrit.extensions.conditions.BooleanCondition;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.ImplementedBy;
-import com.google.inject.Provider;
-import com.google.inject.util.Providers;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Iterator;
-import java.util.Map;
+import java.util.List;
 import java.util.Set;
 import org.eclipse.jgit.errors.RepositoryNotFoundException;
 import org.eclipse.jgit.lib.Ref;
@@ -71,7 +70,7 @@ import org.eclipse.jgit.lib.Repository;
  *   private final PermissionBackend permissions;
  *   private final Provider<CurrentUser> user;
  *
- *   @Inject
+ *   {@literal @}Inject
  *   Foo(PermissionBackend permissions, Provider<CurrentUser> user) {
  *     this.permissions = permissions;
  *     this.user = user;
@@ -150,42 +149,21 @@ public abstract class PermissionBackend {
     // delegates to the appropriate testOrFalse method in PermissionBackend.
   }
 
-  /** PermissionBackend with an optional per-request ReviewDb handle. */
-  public abstract static class AcceptsReviewDb<T> {
-    protected Provider<ReviewDb> db;
-
-    public T database(Provider<ReviewDb> db) {
-      if (db != null) {
-        this.db = db;
-      }
-      return self();
-    }
-
-    public T database(ReviewDb db) {
-      return database(Providers.of(requireNonNull(db, "ReviewDb")));
-    }
-
-    @SuppressWarnings("unchecked")
-    private T self() {
-      return (T) this;
-    }
-  }
-
   /** PermissionBackend scoped to a specific user. */
-  public abstract static class WithUser extends AcceptsReviewDb<WithUser> {
+  public abstract static class WithUser {
     /** Returns an instance scoped for the specified project. */
     public abstract ForProject project(Project.NameKey project);
 
     /** Returns an instance scoped for the {@code ref}, and its parent project. */
-    public ForRef ref(Branch.NameKey ref) {
-      return project(ref.getParentKey()).ref(ref.get()).database(db);
+    public ForRef ref(BranchNameKey ref) {
+      return project(ref.project()).ref(ref.branch());
     }
 
     /** Returns an instance scoped for the change, and its destination ref and project. */
     public ForChange change(ChangeData cd) {
       try {
         return ref(cd.change().getDest()).change(cd);
-      } catch (OrmException e) {
+      } catch (StorageException e) {
         return FailedPermissionBackend.change("unavailable", e);
       }
     }
@@ -290,7 +268,7 @@ public abstract class PermissionBackend {
   }
 
   /** PermissionBackend scoped to a user and project. */
-  public abstract static class ForProject extends AcceptsReviewDb<ForProject> {
+  public abstract static class ForProject {
     /** Returns the fully qualified resource path that this instance is scoped to. */
     public abstract String resourcePath();
 
@@ -300,15 +278,15 @@ public abstract class PermissionBackend {
     /** Returns an instance scoped for the change, and its destination ref and project. */
     public ForChange change(ChangeData cd) {
       try {
-        return ref(cd.change().getDest().get()).change(cd);
-      } catch (OrmException e) {
+        return ref(cd.change().getDest().branch()).change(cd);
+      } catch (StorageException e) {
         return FailedPermissionBackend.change("unavailable", e);
       }
     }
 
     /** Returns an instance scoped for the change, and its destination ref and project. */
     public ForChange change(ChangeNotes notes) {
-      return ref(notes.getChange().getDest().get()).change(notes);
+      return ref(notes.getChange().getDest().branch()).change(notes);
     }
 
     /**
@@ -317,22 +295,27 @@ public abstract class PermissionBackend {
      * stale data from the index is acceptable.
      */
     public ForChange indexedChange(ChangeData cd, ChangeNotes notes) {
-      return ref(notes.getChange().getDest().get()).indexedChange(cd, notes);
+      return ref(notes.getChange().getDest().branch()).indexedChange(cd, notes);
     }
 
     /** Verify scoped user can {@code perm}, throwing if denied. */
-    public abstract void check(ProjectPermission perm)
+    public abstract void check(CoreOrPluginProjectPermission perm)
         throws AuthException, PermissionBackendException;
 
     /** Filter {@code permSet} to permissions scoped user might be able to perform. */
-    public abstract Set<ProjectPermission> test(Collection<ProjectPermission> permSet)
+    public abstract <T extends CoreOrPluginProjectPermission> Set<T> test(Collection<T> permSet)
         throws PermissionBackendException;
 
-    public boolean test(ProjectPermission perm) throws PermissionBackendException {
-      return test(EnumSet.of(perm)).contains(perm);
+    public boolean test(CoreOrPluginProjectPermission perm) throws PermissionBackendException {
+      if (perm instanceof ProjectPermission) {
+        return test(EnumSet.of((ProjectPermission) perm)).contains(perm);
+      }
+
+      // TODO(xchangcheng): implement for plugin defined project permissions.
+      return false;
     }
 
-    public boolean testOrFalse(ProjectPermission perm) {
+    public boolean testOrFalse(CoreOrPluginProjectPermission perm) {
       try {
         return test(perm);
       } catch (PermissionBackendException e) {
@@ -341,20 +324,20 @@ public abstract class PermissionBackend {
       }
     }
 
-    public abstract BooleanCondition testCond(ProjectPermission perm);
+    public abstract BooleanCondition testCond(CoreOrPluginProjectPermission perm);
 
     /**
-     * Filter a map of references by visibility.
+     * Filter a list of references by visibility.
      *
-     * @param refs a map of references to filter.
+     * @param refs a collection of references to filter.
      * @param repo an open {@link Repository} handle for this instance's project
      * @param opts further options for filtering.
      * @return a partition of the provided refs that are visible to the user that this instance is
      *     scoped to.
      * @throws PermissionBackendException if failure consulting backend configuration.
      */
-    public abstract Map<String, Ref> filter(
-        Map<String, Ref> refs, Repository repo, RefFilterOptions opts)
+    public abstract Collection<Ref> filter(
+        Collection<Ref> refs, Repository repo, RefFilterOptions opts)
         throws PermissionBackendException;
   }
 
@@ -364,22 +347,25 @@ public abstract class PermissionBackend {
     /** Remove all NoteDb refs (refs/changes/*, refs/users/*, edit refs) from the result. */
     public abstract boolean filterMeta();
 
-    /** Separately add reachable tags. */
-    public abstract boolean filterTagsSeparately();
+    /**
+     * Select only refs with names matching prefixes per {@link
+     * org.eclipse.jgit.lib.RefDatabase#getRefsByPrefix}.
+     */
+    public abstract ImmutableList<String> prefixes();
 
     public abstract Builder toBuilder();
 
     public static Builder builder() {
       return new AutoValue_PermissionBackend_RefFilterOptions.Builder()
           .setFilterMeta(false)
-          .setFilterTagsSeparately(false);
+          .setPrefixes(Collections.singletonList(""));
     }
 
     @AutoValue.Builder
     public abstract static class Builder {
       public abstract Builder setFilterMeta(boolean val);
 
-      public abstract Builder setFilterTagsSeparately(boolean val);
+      public abstract Builder setPrefixes(List<String> prefixes);
 
       public abstract RefFilterOptions build();
     }
@@ -390,7 +376,7 @@ public abstract class PermissionBackend {
   }
 
   /** PermissionBackend scoped to a user, project and reference. */
-  public abstract static class ForRef extends AcceptsReviewDb<ForRef> {
+  public abstract static class ForRef {
     /** Returns a fully qualified resource path that this instance is scoped to. */
     public abstract String resourcePath();
 
@@ -440,7 +426,7 @@ public abstract class PermissionBackend {
   }
 
   /** PermissionBackend scoped to a user, project, reference and change. */
-  public abstract static class ForChange extends AcceptsReviewDb<ForChange> {
+  public abstract static class ForChange {
     /** Returns the fully qualified resource path that this instance is scoped to. */
     public abstract String resourcePath();
 

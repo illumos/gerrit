@@ -16,15 +16,14 @@ package com.google.gerrit.acceptance.testsuite.account;
 
 import static com.google.common.base.Preconditions.checkState;
 
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.server.Sequences;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.server.ServerInitiated;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.account.Accounts;
 import com.google.gerrit.server.account.AccountsUpdate;
 import com.google.gerrit.server.account.InternalAccountUpdate;
 import com.google.gerrit.server.account.externalids.ExternalId;
-import com.google.gwtorm.server.OrmException;
+import com.google.gerrit.server.notedb.Sequences;
 import com.google.inject.Inject;
 import java.io.IOException;
 import java.util.Optional;
@@ -50,8 +49,8 @@ public class AccountOperationsImpl implements AccountOperations {
   }
 
   @Override
-  public MoreAccountOperations account(Account.Id accountId) {
-    return new MoreAccountOperationsImpl(accountId);
+  public PerAccountOperations account(Account.Id accountId) {
+    return new PerAccountOperationsImpl(accountId);
   }
 
   @Override
@@ -62,14 +61,14 @@ public class AccountOperationsImpl implements AccountOperations {
   private Account.Id createAccount(TestAccountCreation accountCreation) throws Exception {
     AccountsUpdate.AccountUpdater accountUpdater =
         (account, updateBuilder) ->
-            fillBuilder(updateBuilder, accountCreation, account.getAccount().getId());
+            fillBuilder(updateBuilder, accountCreation, account.account().id());
     AccountState createdAccount = createAccount(accountUpdater);
-    return createdAccount.getAccount().getId();
+    return createdAccount.account().id();
   }
 
   private AccountState createAccount(AccountsUpdate.AccountUpdater accountUpdater)
-      throws OrmException, IOException, ConfigInvalidException {
-    Account.Id accountId = new Account.Id(seq.nextAccountId());
+      throws IOException, ConfigInvalidException {
+    Account.Id accountId = Account.id(seq.nextAccountId());
     return accountsUpdate.insert("Create Test Account", accountId, accountUpdater);
   }
 
@@ -100,36 +99,43 @@ public class AccountOperationsImpl implements AccountOperations {
     return builder.addExternalId(ExternalId.createUsername(username, accountId, httpPassword));
   }
 
-  private class MoreAccountOperationsImpl implements MoreAccountOperations {
+  private class PerAccountOperationsImpl implements PerAccountOperations {
     private final Account.Id accountId;
 
-    MoreAccountOperationsImpl(Account.Id accountId) {
+    PerAccountOperationsImpl(Account.Id accountId) {
       this.accountId = accountId;
     }
 
     @Override
-    public boolean exists() throws Exception {
-      return accounts.get(accountId).isPresent();
+    public boolean exists() {
+      return getAccountState(accountId).isPresent();
     }
 
     @Override
-    public TestAccount get() throws Exception {
+    public TestAccount get() {
       AccountState account =
-          accounts
-              .get(accountId)
+          getAccountState(accountId)
               .orElseThrow(
                   () -> new IllegalStateException("Tried to get non-existing test account"));
       return toTestAccount(account);
     }
 
+    private Optional<AccountState> getAccountState(Account.Id accountId) {
+      try {
+        return accounts.get(accountId);
+      } catch (IOException | ConfigInvalidException e) {
+        throw new IllegalStateException(e);
+      }
+    }
+
     private TestAccount toTestAccount(AccountState accountState) {
-      Account account = accountState.getAccount();
+      Account account = accountState.account();
       return TestAccount.builder()
-          .accountId(account.getId())
-          .preferredEmail(Optional.ofNullable(account.getPreferredEmail()))
-          .fullname(Optional.ofNullable(account.getFullName()))
-          .username(accountState.getUserName())
-          .active(accountState.getAccount().isActive())
+          .accountId(account.id())
+          .preferredEmail(Optional.ofNullable(account.preferredEmail()))
+          .fullname(Optional.ofNullable(account.fullName()))
+          .username(accountState.userName())
+          .active(accountState.account().isActive())
           .build();
     }
 
@@ -139,7 +145,7 @@ public class AccountOperationsImpl implements AccountOperations {
     }
 
     private void updateAccount(TestAccountUpdate accountUpdate)
-        throws OrmException, IOException, ConfigInvalidException {
+        throws IOException, ConfigInvalidException {
       AccountsUpdate.AccountUpdater accountUpdater =
           (account, updateBuilder) -> fillBuilder(updateBuilder, accountUpdate, accountId);
       Optional<AccountState> updatedAccount = updateAccount(accountUpdater);
@@ -147,7 +153,7 @@ public class AccountOperationsImpl implements AccountOperations {
     }
 
     private Optional<AccountState> updateAccount(AccountsUpdate.AccountUpdater accountUpdater)
-        throws OrmException, IOException, ConfigInvalidException {
+        throws IOException, ConfigInvalidException {
       return accountsUpdate.update("Update Test Account", accountId, accountUpdater);
     }
 

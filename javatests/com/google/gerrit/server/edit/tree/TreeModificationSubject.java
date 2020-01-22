@@ -21,26 +21,33 @@ import com.google.common.truth.Subject;
 import com.google.gerrit.truth.ListSubject;
 import java.util.List;
 
-public class TreeModificationSubject extends Subject<TreeModificationSubject, TreeModification> {
+public class TreeModificationSubject extends Subject {
 
   public static TreeModificationSubject assertThat(TreeModification treeModification) {
-    return assertAbout(TreeModificationSubject::new).that(treeModification);
+    return assertAbout(treeModifications()).that(treeModification);
+  }
+
+  private static Factory<TreeModificationSubject, TreeModification> treeModifications() {
+    return TreeModificationSubject::new;
   }
 
   public static ListSubject<TreeModificationSubject, TreeModification> assertThatList(
       List<TreeModification> treeModifications) {
-    return ListSubject.assertThat(treeModifications, TreeModificationSubject::assertThat)
-        .named("treeModifications");
+    return ListSubject.assertThat(treeModifications, treeModifications());
   }
+
+  private final TreeModification treeModification;
 
   private TreeModificationSubject(
       FailureMetadata failureMetadata, TreeModification treeModification) {
     super(failureMetadata, treeModification);
+    this.treeModification = treeModification;
   }
 
   public ChangeFileContentModificationSubject asChangeFileContentModification() {
     isInstanceOf(ChangeFileContentModification.class);
-    return ChangeFileContentModificationSubject.assertThat(
-        (ChangeFileContentModification) actual());
+    return check("asChangeFileContentModification()")
+        .about(ChangeFileContentModificationSubject.modifications())
+        .that((ChangeFileContentModification) treeModification);
   }
 }

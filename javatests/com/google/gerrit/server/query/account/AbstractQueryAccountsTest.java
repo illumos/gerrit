@@ -15,13 +15,17 @@
 package com.google.gerrit.server.query.account;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.common.truth.Truth8.assertThat;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static java.util.stream.Collectors.toList;
 import static org.junit.Assert.fail;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Streams;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.api.GerritApi;
 import com.google.gerrit.extensions.api.access.AccessSectionInfo;
 import com.google.gerrit.extensions.api.access.PermissionInfo;
@@ -47,9 +51,6 @@ import com.google.gerrit.index.QueryOptions;
 import com.google.gerrit.index.Schema;
 import com.google.gerrit.index.query.FieldBundle;
 import com.google.gerrit.lifecycle.LifecycleManager;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.AnonymousUser;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.GerritPersonIdent;
@@ -80,11 +81,10 @@ import com.google.gerrit.server.util.OneOffRequestContext;
 import com.google.gerrit.server.util.RequestContext;
 import com.google.gerrit.server.util.ThreadLocalRequestContext;
 import com.google.gerrit.testing.GerritServerTests;
-import com.google.gerrit.testing.InMemoryDatabase;
+import com.google.gerrit.testing.GerritTestName;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.Provider;
-import com.google.inject.util.Providers;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -96,10 +96,13 @@ import org.eclipse.jgit.lib.Repository;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Ignore;
+import org.junit.Rule;
 import org.junit.Test;
 
 @Ignore
 public abstract class AbstractQueryAccountsTest extends GerritServerTests {
+  @Rule public final GerritTestName testName = new GerritTestName();
+
   @Inject protected Accounts accounts;
 
   @Inject @ServerInitiated protected Provider<AccountsUpdate> accountsUpdate;
@@ -117,8 +120,6 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
   @Inject protected IdentifiedUser.GenericFactory userFactory;
 
   @Inject private Provider<AnonymousUser> anonymousUser;
-
-  @Inject protected InMemoryDatabase schemaFactory;
 
   @Inject protected SchemaCreator schemaCreator;
 
@@ -140,7 +141,6 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
 
   protected LifecycleManager lifecycle;
   protected Injector injector;
-  protected ReviewDb db;
   protected AccountInfo currentUserInfo;
   protected CurrentUser admin;
 
@@ -160,12 +160,10 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
   @After
   public void cleanUp() {
     lifecycle.stop();
-    db.close();
   }
 
   protected void setUpDatabase() throws Exception {
-    db = schemaFactory.open();
-    schemaCreator.create(db);
+    schemaCreator.create();
 
     Account.Id adminId = createAccount("admin", "Administrator", "admin@example.com", true);
     admin = userFactory.create(adminId);
@@ -177,32 +175,11 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
 
   protected RequestContext newRequestContext(Account.Id requestUserId) {
     final CurrentUser requestUser = userFactory.create(requestUserId);
-    return new RequestContext() {
-      @Override
-      public CurrentUser getUser() {
-        return requestUser;
-      }
-
-      @Override
-      public Provider<ReviewDb> getReviewDbProvider() {
-        return Providers.of(db);
-      }
-    };
+    return () -> requestUser;
   }
 
   protected void setAnonymous() {
-    requestContext.setContext(
-        new RequestContext() {
-          @Override
-          public CurrentUser getUser() {
-            return anonymousUser.get();
-          }
-
-          @Override
-          public Provider<ReviewDb> getReviewDbProvider() {
-            return Providers.of(db);
-          }
-        });
+    requestContext.setContext(anonymousUser::get);
   }
 
   @After
@@ -211,10 +188,6 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
       lifecycle.stop();
     }
     requestContext.setContext(null);
-    if (db != null) {
-      db.close();
-    }
-    InMemoryDatabase.drop(schemaFactory);
   }
 
   @Test
@@ -286,7 +259,7 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     addEmails(user1, secondaryEmail);
 
     AccountInfo user2 = newAccount("user");
-    requestContext.setContext(newRequestContext(new Account.Id(user2._accountId)));
+    requestContext.setContext(newRequestContext(Account.id(user2._accountId)));
 
     if (getSchemaVersion() < 5) {
       assertMissingField(AccountField.PREFERRED_EMAIL);
@@ -373,7 +346,7 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     AccountInfo user2 = newAccountWithFullName("jroe", "Jane Roe");
 
     AccountInfo user3 = newAccount("user");
-    requestContext.setContext(newRequestContext(new Account.Id(user3._accountId)));
+    requestContext.setContext(newRequestContext(Account.id(user3._accountId)));
 
     assertQuery("notexisting");
     assertQuery("Not Existing");
@@ -608,13 +581,13 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     String[] secondaryEmails = new String[] {"dfg@example.com", "hij@example.com"};
     addEmails(otherUser, secondaryEmails);
 
-    requestContext.setContext(newRequestContext(new Account.Id(user._accountId)));
+    requestContext.setContext(newRequestContext(Account.id(user._accountId)));
 
     List<AccountInfo> result = newQuery(otherUser.username).withSuggest(true).get();
     assertThat(result.get(0).secondaryEmails).isNull();
-
-    exception.expect(AuthException.class);
-    newQuery(otherUser.username).withOption(ListAccountsOption.ALL_EMAILS).get();
+    assertThrows(
+        AuthException.class,
+        () -> newQuery(otherUser.username).withOption(ListAccountsOption.ALL_EMAILS).get());
   }
 
   @Test
@@ -633,7 +606,7 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     AccountInfo user1 = newAccountWithFullName("tester", "Test Usre");
 
     // update account without reindex so that account index is stale
-    Account.Id accountId = new Account.Id(user1._accountId);
+    Account.Id accountId = Account.id(user1._accountId);
     String newName = "Test User";
     try (Repository repo = repoManager.openRepository(allUsers)) {
       MetaDataUpdate md = new MetaDataUpdate(GitReferenceUpdated.DISABLED, allUsers, repo);
@@ -658,19 +631,22 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
   public void rawDocument() throws Exception {
     AccountInfo userInfo = gApi.accounts().id(admin.getAccountId().get()).get();
 
+    Schema<AccountState> schema = indexes.getSearchIndex().getSchema();
     Optional<FieldBundle> rawFields =
         indexes
             .getSearchIndex()
             .getRaw(
-                new Account.Id(userInfo._accountId),
+                Account.id(userInfo._accountId),
                 QueryOptions.create(
-                    IndexConfig.createDefault(),
-                    0,
-                    1,
-                    indexes.getSearchIndex().getSchema().getStoredFields().keySet()));
+                    IndexConfig.createDefault(), 0, 1, schema.getStoredFields().keySet()));
 
     assertThat(rawFields).isPresent();
-    assertThat(rawFields.get().getValue(AccountField.ID)).isEqualTo(userInfo._accountId);
+    if (schema.useLegacyNumericFields()) {
+      assertThat(rawFields.get().getValue(AccountField.ID)).isEqualTo(userInfo._accountId);
+    } else {
+      assertThat(Integer.valueOf(rawFields.get().getValue(AccountField.ID_STR)))
+          .isEqualTo(userInfo._accountId);
+    }
 
     // The field EXTERNAL_ID_STATE is only supported from schema version 6.
     if (getSchemaVersion() < 6) {
@@ -728,7 +704,7 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
     in.name = name;
     in.createEmptyCommit = true;
     gApi.projects().create(in);
-    return new Project.NameKey(name);
+    return Project.nameKey(name);
   }
 
   protected void blockRead(Project.NameKey project, GroupInfo group) throws RestApiException {
@@ -783,7 +759,7 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
       return null;
     }
 
-    String suffix = getSanitizedMethodName();
+    String suffix = testName.getSanitizedMethodName();
     if (name.contains("@")) {
       return name + "." + suffix;
     }
@@ -810,7 +786,7 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
   }
 
   private void addEmails(AccountInfo account, String... emails) throws Exception {
-    Account.Id id = new Account.Id(account._accountId);
+    Account.Id id = Account.id(account._accountId);
     for (String email : emails) {
       accountManager.link(id, AuthRequest.forEmail(email));
     }
@@ -835,15 +811,15 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
       throws Exception {
     List<AccountInfo> result = query.get();
     Iterable<Integer> ids = ids(result);
-    assertThat(ids)
-        .named(format(query, result, accounts))
+    assertWithMessage(format(query, result, accounts))
+        .that(ids)
         .containsExactlyElementsIn(ids(accounts))
         .inOrder();
     return result;
   }
 
   protected void assertAccounts(List<AccountState> accounts, AccountInfo... expectedAccounts) {
-    assertThat(accounts.stream().map(a -> a.getAccount().getId().get()).collect(toList()))
+    assertThat(accounts.stream().map(a -> a.account().id().get()).collect(toList()))
         .containsExactlyElementsIn(
             Arrays.asList(expectedAccounts).stream().map(a -> a._accountId).collect(toList()));
   }
@@ -893,8 +869,8 @@ public abstract class AbstractQueryAccountsTest extends GerritServerTests {
   }
 
   protected void assertMissingField(FieldDef<AccountState, ?> field) {
-    assertThat(getSchema().hasField(field))
-        .named("schema %s has field %s", getSchemaVersion(), field.getName())
+    assertWithMessage("schema %s has field %s", getSchemaVersion(), field.getName())
+        .that(getSchema().hasField(field))
         .isFalse();
   }
 

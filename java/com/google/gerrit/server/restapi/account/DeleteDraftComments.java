@@ -15,28 +15,27 @@
 package com.google.gerrit.server.restapi.account;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
-import static com.google.gerrit.server.CommentsUtil.setCommentRevId;
+import static com.google.gerrit.server.CommentsUtil.setCommentCommitId;
 
 import com.google.common.base.CharMatcher;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Comment;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.api.accounts.DeleteDraftCommentsInput;
 import com.google.gerrit.extensions.api.accounts.DeletedDraftCommentInfo;
 import com.google.gerrit.extensions.client.ListChangesOption;
 import com.google.gerrit.extensions.common.CommentInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryParseException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Account.Id;
-import com.google.gerrit.reviewdb.client.Comment;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.CommentsUtil;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.PatchSetUtil;
@@ -58,7 +57,6 @@ import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
 import com.google.gerrit.server.update.UpdateException;
 import com.google.gerrit.server.util.time.TimeUtil;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -74,7 +72,6 @@ import java.util.Objects;
 public class DeleteDraftComments
     implements RestModifyView<AccountResource, DeleteDraftCommentsInput> {
 
-  private final Provider<ReviewDb> db;
   private final Provider<CurrentUser> userProvider;
   private final BatchUpdate.Factory batchUpdateFactory;
   private final Provider<ChangeQueryBuilder> queryBuilderProvider;
@@ -88,7 +85,6 @@ public class DeleteDraftComments
 
   @Inject
   DeleteDraftComments(
-      Provider<ReviewDb> db,
       Provider<CurrentUser> userProvider,
       Factory batchUpdateFactory,
       Provider<ChangeQueryBuilder> queryBuilderProvider,
@@ -99,7 +95,6 @@ public class DeleteDraftComments
       CommentsUtil commentsUtil,
       PatchSetUtil psUtil,
       PatchListCache patchListCache) {
-    this.db = db;
     this.userProvider = userProvider;
     this.batchUpdateFactory = batchUpdateFactory;
     this.queryBuilderProvider = queryBuilderProvider;
@@ -113,9 +108,9 @@ public class DeleteDraftComments
   }
 
   @Override
-  public ImmutableList<DeletedDraftCommentInfo> apply(
+  public Response<ImmutableList<DeletedDraftCommentInfo>> apply(
       AccountResource rsrc, DeleteDraftCommentsInput input)
-      throws RestApiException, OrmException, UpdateException {
+      throws RestApiException, UpdateException {
     CurrentUser user = userProvider.get();
     if (!user.isIdentifiedUser()) {
       throw new AuthException("Authentication required");
@@ -142,7 +137,7 @@ public class DeleteDraftComments
             .query(predicate(accountId, input))) {
       BatchUpdate update =
           updates.computeIfAbsent(
-              cd.project(), p -> batchUpdateFactory.create(db.get(), p, rsrc.getUser(), now));
+              cd.project(), p -> batchUpdateFactory.create(p, rsrc.getUser(), now));
       Op op = new Op(commentFormatter, accountId);
       update.addOp(cd.getId(), op);
       ops.add(op);
@@ -151,9 +146,10 @@ public class DeleteDraftComments
     // Currently there's no way to let some updates succeed even if others fail. Even if there were,
     // all updates from this operation only happen in All-Users and thus are fully atomic, so
     // allowing partial failure would have little value.
-    batchUpdateFactory.execute(updates.values(), BatchUpdateListener.NONE, false);
+    BatchUpdate.execute(updates.values(), BatchUpdateListener.NONE, false);
 
-    return ops.stream().map(Op::getResult).filter(Objects::nonNull).collect(toImmutableList());
+    return Response.ok(
+        ops.stream().map(Op::getResult).filter(Objects::nonNull).collect(toImmutableList()));
   }
 
   private Predicate<ChangeData> predicate(Account.Id accountId, DeleteDraftCommentsInput input)
@@ -174,22 +170,21 @@ public class DeleteDraftComments
     private final Account.Id accountId;
     private DeletedDraftCommentInfo result;
 
-    Op(CommentFormatter commentFormatter, Id accountId) {
+    Op(CommentFormatter commentFormatter, Account.Id accountId) {
       this.commentFormatter = commentFormatter;
       this.accountId = accountId;
     }
 
     @Override
     public boolean updateChange(ChangeContext ctx)
-        throws OrmException, PatchListNotAvailableException, PermissionBackendException {
+        throws PatchListNotAvailableException, PermissionBackendException {
       ImmutableList.Builder<CommentInfo> comments = ImmutableList.builder();
       boolean dirty = false;
-      for (Comment c : commentsUtil.draftByChangeAuthor(ctx.getDb(), ctx.getNotes(), accountId)) {
+      for (Comment c : commentsUtil.draftByChangeAuthor(ctx.getNotes(), accountId)) {
         dirty = true;
-        PatchSet.Id psId = new PatchSet.Id(ctx.getChange().getId(), c.key.patchSetId);
-        setCommentRevId(
-            c, patchListCache, ctx.getChange(), psUtil.get(ctx.getDb(), ctx.getNotes(), psId));
-        commentsUtil.deleteComments(ctx.getDb(), ctx.getUpdate(psId), Collections.singleton(c));
+        PatchSet.Id psId = PatchSet.id(ctx.getChange().getId(), c.key.patchSetId);
+        setCommentCommitId(c, patchListCache, ctx.getChange(), psUtil.get(ctx.getNotes(), psId));
+        commentsUtil.deleteComments(ctx.getUpdate(psId), Collections.singleton(c));
         comments.add(commentFormatter.format(c));
       }
       if (dirty) {
@@ -197,10 +192,9 @@ public class DeleteDraftComments
         result.change =
             changeJsonFactory
                 .create(ListChangesOption.SKIP_MERGEABLE)
-                .format(changeDataFactory.create(ctx.getDb(), ctx.getNotes()));
+                .format(changeDataFactory.create(ctx.getNotes()));
         result.deleted = comments.build();
       }
-      ctx.dontBumpLastUpdatedOn();
       return dirty;
     }
 

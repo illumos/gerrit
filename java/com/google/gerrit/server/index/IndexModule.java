@@ -25,6 +25,7 @@ import com.google.common.util.concurrent.MoreExecutors;
 import com.google.gerrit.extensions.events.LifecycleListener;
 import com.google.gerrit.extensions.registration.DynamicSet;
 import com.google.gerrit.index.IndexDefinition;
+import com.google.gerrit.index.IndexType;
 import com.google.gerrit.index.SchemaDefinitions;
 import com.google.gerrit.index.project.ProjectIndexCollection;
 import com.google.gerrit.index.project.ProjectIndexRewriter;
@@ -70,13 +71,8 @@ import org.eclipse.jgit.lib.Config;
  * (e.g. Lucene).
  */
 public class IndexModule extends LifecycleModule {
-  public enum IndexType {
-    LUCENE,
-    ELASTICSEARCH
-  }
-
   public static final ImmutableCollection<SchemaDefinitions<?>> ALL_SCHEMA_DEFS =
-      ImmutableList.<SchemaDefinitions<?>>of(
+      ImmutableList.of(
           AccountSchemaDefinitions.INSTANCE,
           ChangeSchemaDefinitions.INSTANCE,
           GroupSchemaDefinitions.INSTANCE,
@@ -85,7 +81,8 @@ public class IndexModule extends LifecycleModule {
   /** Type of secondary index. */
   public static IndexType getIndexType(Injector injector) {
     Config cfg = injector.getInstance(Key.get(Config.class, GerritServerConfig.class));
-    return cfg.getEnum("index", null, "type", IndexType.LUCENE);
+    String configValue = cfg != null ? cfg.getString("index", null, "type") : null;
+    return new IndexType(configValue);
   }
 
   private final int threads;
@@ -125,7 +122,7 @@ public class IndexModule extends LifecycleModule {
     factory(ChangeIndexer.Factory.class);
 
     bind(GroupIndexRewriter.class);
-    bind(GroupIndexCollection.class);
+    // GroupIndexCollection is already bound very high up in SchemaModule.
     listener().to(GroupIndexCollection.class);
     factory(GroupIndexerImpl.Factory.class);
 
@@ -160,7 +157,7 @@ public class IndexModule extends LifecycleModule {
     }
 
     Collection<IndexDefinition<?, ?, ?>> result =
-        ImmutableList.<IndexDefinition<?, ?, ?>>of(accounts, groups, changes, projects);
+        ImmutableList.of(accounts, groups, changes, projects);
     Set<String> expected =
         FluentIterable.from(ALL_SCHEMA_DEFS).transform(SchemaDefinitions::getName).toSet();
     Set<String> actual = FluentIterable.from(result).transform(IndexDefinition::getName).toSet();

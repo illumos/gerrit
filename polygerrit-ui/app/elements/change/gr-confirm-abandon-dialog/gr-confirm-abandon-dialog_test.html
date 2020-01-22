@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-confirm-abandon-dialog</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-confirm-abandon-dialog.html">
 
@@ -49,19 +51,26 @@ limitations under the License.
     test('_handleConfirmTap', () => {
       const confirmHandler = sandbox.stub();
       element.addEventListener('confirm', confirmHandler);
-      sandbox.stub(element, '_confirm');
+      sandbox.spy(element, '_handleConfirmTap');
+      sandbox.spy(element, '_confirm');
       element.$$('gr-dialog').fire('confirm');
       assert.isTrue(confirmHandler.called);
+      assert.isTrue(confirmHandler.calledOnce);
+      assert.isTrue(element._handleConfirmTap.called);
       assert.isTrue(element._confirm.called);
+      assert.isTrue(element._confirm.called);
+      assert.isTrue(element._confirm.calledOnce);
     });
 
     test('_handleCancelTap', () => {
       const cancelHandler = sandbox.stub();
       element.addEventListener('cancel', cancelHandler);
-      sandbox.stub(element, '_handleCancelTap');
+      sandbox.spy(element, '_handleCancelTap');
       element.$$('gr-dialog').fire('cancel');
       assert.isTrue(cancelHandler.called);
+      assert.isTrue(cancelHandler.calledOnce);
       assert.isTrue(element._handleCancelTap.called);
+      assert.isTrue(element._handleCancelTap.calledOnce);
     });
   });
 </script>

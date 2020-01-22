@@ -17,26 +17,21 @@ package com.google.gerrit.server.restapi.change;
 import static com.google.gerrit.extensions.conditions.BooleanCondition.and;
 
 import com.google.gerrit.extensions.webui.UiAction;
-import com.google.gerrit.reviewdb.server.ReviewDb;
-import com.google.gerrit.server.ChangeMessagesUtil;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.change.SetPrivateOp;
 import com.google.gerrit.server.permissions.PermissionBackend;
-import com.google.gerrit.server.update.RetryHelper;
+import com.google.gerrit.server.update.BatchUpdate;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 
 @Singleton
 public class DeletePrivateByPost extends DeletePrivate implements UiAction<ChangeResource> {
   @Inject
   DeletePrivateByPost(
-      Provider<ReviewDb> dbProvider,
-      RetryHelper retryHelper,
-      ChangeMessagesUtil cmUtil,
       PermissionBackend permissionBackend,
+      BatchUpdate.Factory updateFactory,
       SetPrivateOp.Factory setPrivateOpFactory) {
-    super(dbProvider, retryHelper, cmUtil, permissionBackend, setPrivateOpFactory);
+    super(permissionBackend, updateFactory, setPrivateOpFactory);
   }
 
   @Override

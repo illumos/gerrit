@@ -15,15 +15,17 @@
 package com.google.gerrit.server.edit;
 
 import com.google.common.collect.ImmutableList;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.MergeConflictException;
 import com.google.gerrit.extensions.restapi.RawInput;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.RefNames;
-import com.google.gerrit.reviewdb.server.ReviewDb;
+import com.google.gerrit.git.LockFailureException;
+import com.google.gerrit.server.ChangeUtil;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.IdentifiedUser;
@@ -43,7 +45,6 @@ import com.google.gerrit.server.project.InvalidChangeOperationException;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.util.CommitMessageUtil;
 import com.google.gerrit.server.util.time.TimeUtil;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -52,6 +53,7 @@ import java.sql.Timestamp;
 import java.util.List;
 import java.util.Optional;
 import java.util.TimeZone;
+import org.eclipse.jgit.dircache.InvalidPathException;
 import org.eclipse.jgit.lib.BatchRefUpdate;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.NullProgressMonitor;
@@ -80,7 +82,6 @@ public class ChangeEditModifier {
 
   private final TimeZone tz;
   private final ChangeIndexer indexer;
-  private final Provider<ReviewDb> reviewDb;
   private final Provider<CurrentUser> currentUser;
   private final PermissionBackend permissionBackend;
   private final ChangeEditUtil changeEditUtil;
@@ -91,14 +92,12 @@ public class ChangeEditModifier {
   ChangeEditModifier(
       @GerritPersonIdent PersonIdent gerritIdent,
       ChangeIndexer indexer,
-      Provider<ReviewDb> reviewDb,
       Provider<CurrentUser> currentUser,
       PermissionBackend permissionBackend,
       ChangeEditUtil changeEditUtil,
       PatchSetUtil patchSetUtil,
       ProjectCache projectCache) {
     this.indexer = indexer;
-    this.reviewDb = reviewDb;
     this.currentUser = currentUser;
     this.permissionBackend = permissionBackend;
     this.tz = gerritIdent.getTimeZone();
@@ -117,7 +116,7 @@ public class ChangeEditModifier {
    * @throws PermissionBackendException
    */
   public void createEdit(Repository repository, ChangeNotes notes)
-      throws AuthException, IOException, InvalidChangeOperationException, OrmException,
+      throws AuthException, IOException, InvalidChangeOperationException,
           PermissionBackendException, ResourceConflictException {
     assertCanEdit(notes);
 
@@ -128,7 +127,7 @@ public class ChangeEditModifier {
     }
 
     PatchSet currentPatchSet = lookupCurrentPatchSet(notes);
-    ObjectId patchSetCommitId = getPatchSetCommitId(currentPatchSet);
+    ObjectId patchSetCommitId = currentPatchSet.commitId();
     createEdit(repository, notes, currentPatchSet, patchSetCommitId, TimeUtil.nowTs());
   }
 
@@ -145,8 +144,8 @@ public class ChangeEditModifier {
    * @throws PermissionBackendException
    */
   public void rebaseEdit(Repository repository, ChangeNotes notes)
-      throws AuthException, InvalidChangeOperationException, IOException, OrmException,
-          MergeConflictException, PermissionBackendException, ResourceConflictException {
+      throws AuthException, InvalidChangeOperationException, IOException, MergeConflictException,
+          PermissionBackendException, ResourceConflictException {
     assertCanEdit(notes);
 
     Optional<ChangeEdit> optionalChangeEdit = lookupChangeEdit(notes);
@@ -161,14 +160,14 @@ public class ChangeEditModifier {
       throw new InvalidChangeOperationException(
           String.format(
               "Change edit for change %s is already based on latest patch set %s",
-              notes.getChangeId(), currentPatchSet.getId()));
+              notes.getChangeId(), currentPatchSet.id()));
     }
 
     rebase(repository, changeEdit, currentPatchSet);
   }
 
   private void rebase(Repository repository, ChangeEdit changeEdit, PatchSet currentPatchSet)
-      throws IOException, MergeConflictException, InvalidChangeOperationException, OrmException {
+      throws IOException, MergeConflictException, InvalidChangeOperationException {
     RevCommit currentEditCommit = changeEdit.getEditCommit();
     if (currentEditCommit.getParentCount() == 0) {
       throw new InvalidChangeOperationException(
@@ -210,7 +209,7 @@ public class ChangeEditModifier {
    * @throws BadRequestException if the commit message is malformed
    */
   public void modifyMessage(Repository repository, ChangeNotes notes, String newCommitMessage)
-      throws AuthException, IOException, UnchangedCommitMessageException, OrmException,
+      throws AuthException, IOException, UnchangedCommitMessageException,
           PermissionBackendException, BadRequestException, ResourceConflictException {
     assertCanEdit(notes);
     newCommitMessage = CommitMessageUtil.checkAndSanitizeCommitMessage(newCommitMessage);
@@ -232,7 +231,12 @@ public class ChangeEditModifier {
         createCommit(repository, basePatchSetCommit, baseTree, newCommitMessage, nowTimestamp);
 
     if (optionalChangeEdit.isPresent()) {
-      updateEdit(repository, optionalChangeEdit.get(), newEditCommit, nowTimestamp);
+      updateEdit(
+          notes.getProjectName(),
+          repository,
+          optionalChangeEdit.get(),
+          newEditCommit,
+          nowTimestamp);
     } else {
       createEdit(repository, notes, basePatchSet, newEditCommit, nowTimestamp);
     }
@@ -247,13 +251,14 @@ public class ChangeEditModifier {
    * @param filePath the path of the file whose contents should be modified
    * @param newContent the new file content
    * @throws AuthException if the user isn't authenticated or not allowed to use change edits
+   * @throws BadRequestException if the user provided bad input (e.g. invalid file paths)
    * @throws InvalidChangeOperationException if the file already had the specified content
    * @throws PermissionBackendException
    * @throws ResourceConflictException if the project state does not permit the operation
    */
   public void modifyFile(
       Repository repository, ChangeNotes notes, String filePath, RawInput newContent)
-      throws AuthException, InvalidChangeOperationException, IOException, OrmException,
+      throws AuthException, BadRequestException, InvalidChangeOperationException, IOException,
           PermissionBackendException, ResourceConflictException {
     modifyTree(repository, notes, new ChangeFileContentModification(filePath, newContent));
   }
@@ -266,12 +271,13 @@ public class ChangeEditModifier {
    * @param notes the {@link ChangeNotes} of the change whose change edit should be modified
    * @param file path of the file which should be deleted
    * @throws AuthException if the user isn't authenticated or not allowed to use change edits
+   * @throws BadRequestException if the user provided bad input (e.g. invalid file paths)
    * @throws InvalidChangeOperationException if the file does not exist
    * @throws PermissionBackendException
    * @throws ResourceConflictException if the project state does not permit the operation
    */
   public void deleteFile(Repository repository, ChangeNotes notes, String file)
-      throws AuthException, InvalidChangeOperationException, IOException, OrmException,
+      throws AuthException, BadRequestException, InvalidChangeOperationException, IOException,
           PermissionBackendException, ResourceConflictException {
     modifyTree(repository, notes, new DeleteFileModification(file));
   }
@@ -285,6 +291,7 @@ public class ChangeEditModifier {
    * @param currentFilePath the current path/name of the file
    * @param newFilePath the desired path/name of the file
    * @throws AuthException if the user isn't authenticated or not allowed to use change edits
+   * @throws BadRequestException if the user provided bad input (e.g. invalid file paths)
    * @throws InvalidChangeOperationException if the file was already renamed to the specified new
    *     name
    * @throws PermissionBackendException
@@ -292,7 +299,7 @@ public class ChangeEditModifier {
    */
   public void renameFile(
       Repository repository, ChangeNotes notes, String currentFilePath, String newFilePath)
-      throws AuthException, InvalidChangeOperationException, IOException, OrmException,
+      throws AuthException, BadRequestException, InvalidChangeOperationException, IOException,
           PermissionBackendException, ResourceConflictException {
     modifyTree(repository, notes, new RenameFileModification(currentFilePath, newFilePath));
   }
@@ -310,14 +317,14 @@ public class ChangeEditModifier {
    * @throws PermissionBackendException
    */
   public void restoreFile(Repository repository, ChangeNotes notes, String file)
-      throws AuthException, InvalidChangeOperationException, IOException, OrmException,
+      throws AuthException, BadRequestException, InvalidChangeOperationException, IOException,
           PermissionBackendException, ResourceConflictException {
     modifyTree(repository, notes, new RestoreFileModification(file));
   }
 
   private void modifyTree(
       Repository repository, ChangeNotes notes, TreeModification treeModification)
-      throws AuthException, IOException, OrmException, InvalidChangeOperationException,
+      throws AuthException, BadRequestException, IOException, InvalidChangeOperationException,
           PermissionBackendException, ResourceConflictException {
     assertCanEdit(notes);
 
@@ -335,7 +342,12 @@ public class ChangeEditModifier {
         createCommit(repository, basePatchSetCommit, newTreeId, commitMessage, nowTimestamp);
 
     if (optionalChangeEdit.isPresent()) {
-      updateEdit(repository, optionalChangeEdit.get(), newEditCommit, nowTimestamp);
+      updateEdit(
+          notes.getProjectName(),
+          repository,
+          optionalChangeEdit.get(),
+          newEditCommit,
+          nowTimestamp);
     } else {
       createEdit(repository, notes, basePatchSet, newEditCommit, nowTimestamp);
     }
@@ -362,8 +374,8 @@ public class ChangeEditModifier {
       ChangeNotes notes,
       PatchSet patchSet,
       List<TreeModification> treeModifications)
-      throws AuthException, IOException, InvalidChangeOperationException, MergeConflictException,
-          OrmException, PermissionBackendException, ResourceConflictException {
+      throws AuthException, BadRequestException, IOException, InvalidChangeOperationException,
+          MergeConflictException, PermissionBackendException, ResourceConflictException {
     assertCanEdit(notes);
 
     Optional<ChangeEdit> optionalChangeEdit = lookupChangeEdit(notes);
@@ -375,7 +387,7 @@ public class ChangeEditModifier {
     if (optionalChangeEdit.isPresent()) {
       ChangeEdit changeEdit = optionalChangeEdit.get();
       newTreeId = merge(repository, changeEdit, newTreeId);
-      if (ObjectId.equals(newTreeId, changeEdit.getEditCommit().getTree())) {
+      if (ObjectId.isEqual(newTreeId, changeEdit.getEditCommit().getTree())) {
         // Modifications are already contained in the change edit.
         return changeEdit;
       }
@@ -388,33 +400,32 @@ public class ChangeEditModifier {
         createCommit(repository, patchSetCommit, newTreeId, commitMessage, nowTimestamp);
 
     if (optionalChangeEdit.isPresent()) {
-      return updateEdit(repository, optionalChangeEdit.get(), newEditCommit, nowTimestamp);
+      return updateEdit(
+          notes.getProjectName(),
+          repository,
+          optionalChangeEdit.get(),
+          newEditCommit,
+          nowTimestamp);
     }
     return createEdit(repository, notes, patchSet, newEditCommit, nowTimestamp);
   }
 
   private void assertCanEdit(ChangeNotes notes)
-      throws AuthException, PermissionBackendException, IOException, ResourceConflictException,
-          OrmException {
+      throws AuthException, PermissionBackendException, IOException, ResourceConflictException {
     if (!currentUser.get().isIdentifiedUser()) {
       throw new AuthException("Authentication required");
     }
 
     Change c = notes.getChange();
-    if (!c.getStatus().isOpen()) {
+    if (!c.isNew()) {
       throw new ResourceConflictException(
-          String.format(
-              "change %s is %s", c.getChangeId(), c.getStatus().toString().toLowerCase()));
+          String.format("change %s is %s", c.getChangeId(), ChangeUtil.status(c)));
     }
 
     // Not allowed to edit if the current patch set is locked.
     patchSetUtil.checkPatchSetNotLocked(notes);
     try {
-      permissionBackend
-          .currentUser()
-          .database(reviewDb)
-          .change(notes)
-          .check(ChangePermission.ADD_PATCH_SET);
+      permissionBackend.currentUser().change(notes).check(ChangePermission.ADD_PATCH_SET);
       projectCache.checkedGet(notes.getProjectName()).checkStatePermitsWrite();
     } catch (AuthException denied) {
       throw new AuthException("edit not permitted", denied);
@@ -431,10 +442,10 @@ public class ChangeEditModifier {
             String.format(
                 "Only the patch set %s on which the existing change edit is based may be modified "
                     + "(specified patch set: %s)",
-                changeEdit.getBasePatchSet().getId(), patchSet.getId()));
+                changeEdit.getBasePatchSet().id(), patchSet.id()));
       }
     } else {
-      PatchSet.Id patchSetId = patchSet.getId();
+      PatchSet.Id patchSetId = patchSet.id();
       PatchSet.Id currentPatchSetId = notes.getChange().currentPatchSetId();
       if (!patchSetId.equals(currentPatchSetId)) {
         throw new InvalidChangeOperationException(
@@ -450,24 +461,23 @@ public class ChangeEditModifier {
     return changeEditUtil.byChange(notes);
   }
 
-  private PatchSet getBasePatchSet(Optional<ChangeEdit> optionalChangeEdit, ChangeNotes notes)
-      throws OrmException {
+  private PatchSet getBasePatchSet(Optional<ChangeEdit> optionalChangeEdit, ChangeNotes notes) {
     Optional<PatchSet> editBasePatchSet = optionalChangeEdit.map(ChangeEdit::getBasePatchSet);
     return editBasePatchSet.isPresent() ? editBasePatchSet.get() : lookupCurrentPatchSet(notes);
   }
 
-  private PatchSet lookupCurrentPatchSet(ChangeNotes notes) throws OrmException {
-    return patchSetUtil.current(reviewDb.get(), notes);
+  private PatchSet lookupCurrentPatchSet(ChangeNotes notes) {
+    return patchSetUtil.current(notes);
   }
 
   private static boolean isBasedOn(ChangeEdit changeEdit, PatchSet patchSet) {
     PatchSet editBasePatchSet = changeEdit.getBasePatchSet();
-    return editBasePatchSet.getId().equals(patchSet.getId());
+    return editBasePatchSet.id().equals(patchSet.id());
   }
 
   private static RevCommit lookupCommit(Repository repository, PatchSet patchSet)
       throws IOException {
-    ObjectId patchSetCommitId = getPatchSetCommitId(patchSet);
+    ObjectId patchSetCommitId = patchSet.commitId();
     return lookupCommit(repository, patchSetCommitId);
   }
 
@@ -480,12 +490,17 @@ public class ChangeEditModifier {
 
   private static ObjectId createNewTree(
       Repository repository, RevCommit baseCommit, List<TreeModification> treeModifications)
-      throws IOException, InvalidChangeOperationException {
-    TreeCreator treeCreator = new TreeCreator(baseCommit);
-    treeCreator.addTreeModifications(treeModifications);
-    ObjectId newTreeId = treeCreator.createNewTreeAndGetId(repository);
+      throws BadRequestException, IOException, InvalidChangeOperationException {
+    ObjectId newTreeId;
+    try {
+      TreeCreator treeCreator = new TreeCreator(baseCommit);
+      treeCreator.addTreeModifications(treeModifications);
+      newTreeId = treeCreator.createNewTreeAndGetId(repository);
+    } catch (InvalidPathException e) {
+      throw new BadRequestException(e.getMessage());
+    }
 
-    if (ObjectId.equals(newTreeId, baseCommit.getTree())) {
+    if (ObjectId.isEqual(newTreeId, baseCommit.getTree())) {
       throw new InvalidChangeOperationException("no changes were made");
     }
     return newTreeId;
@@ -494,7 +509,7 @@ public class ChangeEditModifier {
   private static ObjectId merge(Repository repository, ChangeEdit changeEdit, ObjectId newTreeId)
       throws IOException, MergeConflictException {
     PatchSet basePatchSet = changeEdit.getBasePatchSet();
-    ObjectId basePatchSetCommitId = getPatchSetCommitId(basePatchSet);
+    ObjectId basePatchSetCommitId = basePatchSet.commitId();
     ObjectId editCommitId = changeEdit.getEditCommit();
 
     ThreeWayMerger threeWayMerger = MergeStrategy.RESOLVE.newMerger(repository, true);
@@ -533,20 +548,22 @@ public class ChangeEditModifier {
     return user.newCommitterIdent(commitTimestamp, tz);
   }
 
-  private static ObjectId getPatchSetCommitId(PatchSet patchSet) {
-    return ObjectId.fromString(patchSet.getRevision().get());
-  }
-
   private ChangeEdit createEdit(
       Repository repository,
       ChangeNotes notes,
       PatchSet basePatchSet,
       ObjectId newEditCommitId,
       Timestamp timestamp)
-      throws IOException, OrmException {
+      throws IOException {
     Change change = notes.getChange();
     String editRefName = getEditRefName(change, basePatchSet);
-    updateReference(repository, editRefName, ObjectId.zeroId(), newEditCommitId, timestamp);
+    updateReference(
+        notes.getProjectName(),
+        repository,
+        editRefName,
+        ObjectId.zeroId(),
+        newEditCommitId,
+        timestamp);
     reindex(change);
 
     RevCommit newEditCommit = lookupCommit(repository, newEditCommitId);
@@ -555,15 +572,20 @@ public class ChangeEditModifier {
 
   private String getEditRefName(Change change, PatchSet basePatchSet) {
     IdentifiedUser me = currentUser.get().asIdentifiedUser();
-    return RefNames.refsEdit(me.getAccountId(), change.getId(), basePatchSet.getId());
+    return RefNames.refsEdit(me.getAccountId(), change.getId(), basePatchSet.id());
   }
 
   private ChangeEdit updateEdit(
-      Repository repository, ChangeEdit changeEdit, ObjectId newEditCommitId, Timestamp timestamp)
-      throws IOException, OrmException {
+      Project.NameKey projectName,
+      Repository repository,
+      ChangeEdit changeEdit,
+      ObjectId newEditCommitId,
+      Timestamp timestamp)
+      throws IOException {
     String editRefName = changeEdit.getRefName();
     RevCommit currentEditCommit = changeEdit.getEditCommit();
-    updateReference(repository, editRefName, currentEditCommit, newEditCommitId, timestamp);
+    updateReference(
+        projectName, repository, editRefName, currentEditCommit, newEditCommitId, timestamp);
     reindex(changeEdit.getChange());
 
     RevCommit newEditCommit = lookupCommit(repository, newEditCommitId);
@@ -572,6 +594,7 @@ public class ChangeEditModifier {
   }
 
   private void updateReference(
+      Project.NameKey projectName,
       Repository repository,
       String refName,
       ObjectId currentObjectId,
@@ -586,14 +609,12 @@ public class ChangeEditModifier {
     ru.setForceUpdate(true);
     try (RevWalk revWalk = new RevWalk(repository)) {
       RefUpdate.Result res = ru.update(revWalk);
+      String message = "cannot update " + ru.getName() + " in " + projectName + ": " + res;
+      if (res == RefUpdate.Result.LOCK_FAILURE) {
+        throw new LockFailureException(message, ru);
+      }
       if (res != RefUpdate.Result.NEW && res != RefUpdate.Result.FORCED) {
-        throw new IOException(
-            "cannot update "
-                + ru.getName()
-                + " in "
-                + repository.getDirectory()
-                + ": "
-                + ru.getResult());
+        throw new IOException(message);
       }
     }
   }
@@ -627,7 +648,7 @@ public class ChangeEditModifier {
     return user.newRefLogIdent(timestamp, tz);
   }
 
-  private void reindex(Change change) throws IOException, OrmException {
-    indexer.index(reviewDb.get(), change);
+  private void reindex(Change change) {
+    indexer.index(change);
   }
 }

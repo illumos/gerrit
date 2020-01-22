@@ -15,9 +15,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../behaviors/gr-access-behavior/gr-access-behavior.html">
-<link rel="import" href="../../../bower_components/paper-toggle-button/paper-toggle-button.html">
+<link rel="import" href="/bower_components/paper-toggle-button/paper-toggle-button.html">
 <link rel="import" href="../../../styles/gr-form-styles.html">
 <link rel="import" href="../../../styles/gr-menu-page-styles.html">
 <link rel="import" href="../../../styles/shared-styles.html">
@@ -31,13 +32,13 @@ limitations under the License.
     <style include="shared-styles">
       :host {
         display: block;
-        margin-bottom: .7em;
+        margin-bottom: var(--spacing-m);
       }
       .header {
         align-items: baseline;
         display: flex;
         justify-content: space-between;
-        margin: .3em .7em;
+        margin: var(--spacing-s) var(--spacing-m);
       }
       .rules {
         background: var(--table-header-background-color);
@@ -48,7 +49,7 @@ limitations under the License.
         border-bottom: 1px solid var(--border-color);
       }
       .title {
-        margin-bottom: .3em;
+        margin-bottom: var(--spacing-s);
       }
       #addRule,
       #removeBtn {
@@ -60,11 +61,11 @@ limitations under the License.
       }
       .editing #removeBtn {
         display: block;
-        margin-left: 1.5em;
+        margin-left: var(--spacing-xl);
       }
       .editing #addRule {
         display: block;
-        padding: .7em;
+        padding: var(--spacing-m);
       }
       #deletedContainer,
       .deleted #mainContainer {
@@ -75,14 +76,18 @@ limitations under the License.
         border: 1px solid var(--border-color);
         display: flex;
         justify-content: space-between;
-        padding: .7em;
+        padding: var(--spacing-m);
       }
       #mainContainer {
         display: block;
       }
     </style>
-    <style include="gr-form-styles"></style>
-    <style include="gr-menu-page-styles"></style>
+    <style include="gr-form-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
+    <style include="gr-menu-page-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <section
         id="permission"
         class$="gr-form-styles [[_computeSectionClass(editing, _deleted)]]">
@@ -100,7 +105,7 @@ limitations under the License.
             <gr-button
                 link
                 id="removeBtn"
-                on-tap="_handleRemovePermission">Remove</gr-button>
+                on-click="_handleRemovePermission">Remove</gr-button>
           </div>
         </div><!-- end header -->
         <div class="rules">
@@ -136,7 +141,7 @@ limitations under the License.
         <gr-button
             link
             id="undoRemoveBtn"
-            on-tap="_handleUndoRemove">Undo</gr-button>
+            on-click="_handleUndoRemove">Undo</gr-button>
       </div><!-- end deletedContainer -->
     </section>
     <gr-rest-api-interface id="restAPI"></gr-rest-api-interface>

@@ -14,14 +14,15 @@
 
 package com.google.gerrit.server.restapi.change;
 
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.common.EditInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
+import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestModifyView;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.change.FixResource;
 import com.google.gerrit.server.change.RevisionResource;
 import com.google.gerrit.server.edit.ChangeEdit;
@@ -34,12 +35,10 @@ import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.InvalidChangeOperationException;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectState;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import java.util.List;
-import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 
 @Singleton
@@ -67,18 +66,17 @@ public class ApplyFix implements RestModifyView<FixResource, Void> {
 
   @Override
   public Response<EditInfo> apply(FixResource fixResource, Void nothing)
-      throws AuthException, OrmException, ResourceConflictException, IOException,
+      throws AuthException, BadRequestException, ResourceConflictException, IOException,
           ResourceNotFoundException, PermissionBackendException {
     RevisionResource revisionResource = fixResource.getRevisionResource();
     Project.NameKey project = revisionResource.getProject();
     ProjectState projectState = projectCache.checkedGet(project);
     PatchSet patchSet = revisionResource.getPatchSet();
-    ObjectId patchSetCommitId = ObjectId.fromString(patchSet.getRevision().get());
 
     try (Repository repository = gitRepositoryManager.openRepository(project)) {
       List<TreeModification> treeModifications =
           fixReplacementInterpreter.toTreeModifications(
-              repository, projectState, patchSetCommitId, fixResource.getFixReplacements());
+              repository, projectState, patchSet.commitId(), fixResource.getFixReplacements());
       ChangeEdit changeEdit =
           changeEditModifier.combineWithModifiedPatchSetTree(
               repository, revisionResource.getNotes(), patchSet, treeModifications);

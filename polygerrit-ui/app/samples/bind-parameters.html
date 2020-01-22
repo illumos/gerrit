@@ -15,12 +15,14 @@
   <script>
     Polymer({
       is: 'my-bind-sample',
+
       properties: {
         computedExample: {
           type: String,
           computed: '_computeExample(revision._number)',
         },
       },
+      /** @override */
       attached() {
         this.plugin.attributeHelper(this).bind(
             'revision', this._onRevisionChanged.bind(this));

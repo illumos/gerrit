@@ -14,14 +14,13 @@
 
 package com.google.gerrit.server.mail.send;
 
-import com.google.gerrit.common.errors.EmailException;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.EmailException;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.api.changes.RecipientType;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.account.ProjectWatches.NotifyType;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 import java.util.ArrayList;
@@ -33,7 +32,7 @@ import java.util.Set;
 /** Send notice of new patch sets for reviewers. */
 public class ReplacePatchSetSender extends ReplyToChangeSender {
   public interface Factory {
-    ReplacePatchSetSender create(Project.NameKey project, Change.Id id);
+    ReplacePatchSetSender create(Project.NameKey project, Change.Id changeId);
   }
 
   private final Set<Account.Id> reviewers = new HashSet<>();
@@ -41,9 +40,8 @@ public class ReplacePatchSetSender extends ReplyToChangeSender {
 
   @Inject
   public ReplacePatchSetSender(
-      EmailArguments ea, @Assisted Project.NameKey project, @Assisted Change.Id id)
-      throws OrmException {
-    super(ea, "newpatchset", newChangeData(ea, project, id));
+      EmailArguments args, @Assisted Project.NameKey project, @Assisted Change.Id changeId) {
+    super(args, "newpatchset", newChangeData(args, project, changeId));
   }
 
   public void addReviewers(Collection<Account.Id> cc) {
@@ -63,7 +61,8 @@ public class ReplacePatchSetSender extends ReplyToChangeSender {
       //
       reviewers.remove(fromId);
     }
-    if (notify == NotifyHandling.ALL || notify == NotifyHandling.OWNER_REVIEWERS) {
+    if (notify.handling() == NotifyHandling.ALL
+        || notify.handling() == NotifyHandling.OWNER_REVIEWERS) {
       add(RecipientType.TO, reviewers);
       add(RecipientType.CC, extraCC);
     }

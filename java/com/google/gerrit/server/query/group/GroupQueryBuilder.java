@@ -20,18 +20,19 @@ import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
 import com.google.common.primitives.Ints;
 import com.google.gerrit.common.data.GroupReference;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.index.query.LimitPredicate;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryBuilder;
 import com.google.gerrit.index.query.QueryParseException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
+import com.google.gerrit.index.query.QueryRequiresAuthException;
 import com.google.gerrit.server.account.AccountResolver;
+import com.google.gerrit.server.account.AccountResolver.UnresolvableAccountException;
 import com.google.gerrit.server.account.GroupBackend;
 import com.google.gerrit.server.account.GroupBackends;
 import com.google.gerrit.server.account.GroupCache;
 import com.google.gerrit.server.group.InternalGroup;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import java.io.IOException;
 import java.util.List;
@@ -40,7 +41,7 @@ import java.util.Set;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 
 /** Parses a query string meant to be applied to group objects. */
-public class GroupQueryBuilder extends QueryBuilder<InternalGroup> {
+public class GroupQueryBuilder extends QueryBuilder<InternalGroup, GroupQueryBuilder> {
   public static final String FIELD_UUID = "uuid";
   public static final String FIELD_DESCRIPTION = "description";
   public static final String FIELD_INNAME = "inname";
@@ -68,13 +69,13 @@ public class GroupQueryBuilder extends QueryBuilder<InternalGroup> {
 
   @Inject
   GroupQueryBuilder(Arguments args) {
-    super(mydef);
+    super(mydef, null);
     this.args = args;
   }
 
   @Operator
   public Predicate<InternalGroup> uuid(String uuid) {
-    return GroupPredicates.uuid(new AccountGroup.UUID(uuid));
+    return GroupPredicates.uuid(AccountGroup.uuid(uuid));
   }
 
   @Operator
@@ -133,7 +134,7 @@ public class GroupQueryBuilder extends QueryBuilder<InternalGroup> {
 
   @Operator
   public Predicate<InternalGroup> member(String query)
-      throws QueryParseException, OrmException, ConfigInvalidException, IOException {
+      throws QueryParseException, ConfigInvalidException, IOException {
     Set<Account.Id> accounts = parseAccount(query);
     List<Predicate<InternalGroup>> predicates =
         accounts.stream().map(GroupPredicates::member).collect(toImmutableList());
@@ -156,16 +157,19 @@ public class GroupQueryBuilder extends QueryBuilder<InternalGroup> {
   }
 
   private Set<Account.Id> parseAccount(String nameOrEmail)
-      throws QueryParseException, OrmException, IOException, ConfigInvalidException {
-    Set<Account.Id> foundAccounts = args.accountResolver.findAll(nameOrEmail);
-    if (foundAccounts.isEmpty()) {
-      throw error("User " + nameOrEmail + " not found");
+      throws QueryParseException, IOException, ConfigInvalidException {
+    try {
+      return args.accountResolver.resolve(nameOrEmail).asNonEmptyIdSet();
+    } catch (UnresolvableAccountException e) {
+      if (e.isSelf()) {
+        throw new QueryRequiresAuthException(e.getMessage(), e);
+      }
+      throw new QueryParseException(e.getMessage(), e);
     }
-    return foundAccounts;
   }
 
   private AccountGroup.UUID parseGroup(String groupNameOrUuid) throws QueryParseException {
-    Optional<InternalGroup> group = args.groupCache.get(new AccountGroup.UUID(groupNameOrUuid));
+    Optional<InternalGroup> group = args.groupCache.get(AccountGroup.uuid(groupNameOrUuid));
     if (group.isPresent()) {
       return group.get().getGroupUUID();
     }

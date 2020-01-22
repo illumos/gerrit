@@ -16,12 +16,13 @@ package com.google.gerrit.server.update;
 
 import static java.util.Objects.requireNonNull;
 
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.server.ReviewDb;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.AccountState;
+import com.google.gerrit.server.change.NotifyResolver;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.TimeZone;
@@ -77,16 +78,6 @@ public interface Context {
   TimeZone getTimeZone();
 
   /**
-   * Get the ReviewDb database.
-   *
-   * <p>Callers should not manage transactions or call mutating methods on the Changes table.
-   * Mutations on other tables (including other entities in the change entity group) are fine.
-   *
-   * @return open database instance.
-   */
-  ReviewDb getDb();
-
-  /**
    * Get the user performing the update.
    *
    * <p>In the current implementation, this is always an {@link IdentifiedUser} or {@link
@@ -97,11 +88,16 @@ public interface Context {
   CurrentUser getUser();
 
   /**
-   * Get the order in which operations are executed in this update.
+   * Get the notification settings configured by the caller.
    *
-   * @return order of operations.
+   * <p>If there are multiple changes in a batch, they may have different settings. For example, WIP
+   * changes may have reduced {@code NotifyHandling} levels, and may be in a batch with non-WIP
+   * changes.
+   *
+   * @param changeId change ID
+   * @return notification settings.
    */
-  Order getOrder();
+  NotifyResolver.Result getNotify(Change.Id changeId);
 
   /**
    * Get the identified user performing the update.
@@ -118,7 +114,7 @@ public interface Context {
   /**
    * Get the account of the user performing the update.
    *
-   * <p>Convenience method for {@code getIdentifiedUser().getAccount()}.
+   * <p>Convenience method for {@code getIdentifiedUser().account()}.
    *
    * @see CurrentUser#asIdentifiedUser()
    * @return account.

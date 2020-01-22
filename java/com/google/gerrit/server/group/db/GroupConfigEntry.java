@@ -15,7 +15,7 @@
 package com.google.gerrit.server.group.db;
 
 import com.google.common.base.Strings;
-import com.google.gerrit.reviewdb.client.AccountGroup;
+import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.server.group.InternalGroup;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.lib.Config;
@@ -25,7 +25,7 @@ import org.eclipse.jgit.lib.Config;
  *
  * <p>Each property knows how to read and write its value from/to a JGit {@link Config} file.
  *
- * <p><strong>Warning: </strong>This class is a low-level API for properties of groups in NoteDb. It
+ * <p><strong>Warning:</strong> This class is a low-level API for properties of groups in NoteDb. It
  * may only be used by {@link GroupConfig}. Other classes should use {@link InternalGroupUpdate} to
  * modify the properties of a group.
  */
@@ -45,7 +45,7 @@ enum GroupConfigEntry {
             String.format(
                 "ID of the group %s must not be negative, found %d", groupUuid.get(), id));
       }
-      group.setId(new AccountGroup.Id(id));
+      group.setId(AccountGroup.id(id));
     }
 
     @Override
@@ -77,7 +77,7 @@ enum GroupConfigEntry {
       // the NoteDb migration converted such groups faithfully, so we need to be able to read them
       // back here.
       name = Strings.nullToEmpty(name);
-      group.setNameKey(new AccountGroup.NameKey(name));
+      group.setNameKey(AccountGroup.nameKey(name));
     }
 
     @Override
@@ -135,7 +135,7 @@ enum GroupConfigEntry {
         throw new ConfigInvalidException(
             String.format("Owner UUID of the group %s must be defined", groupUuid.get()));
       }
-      group.setOwnerGroupUUID(new AccountGroup.UUID(ownerGroupUuid));
+      group.setOwnerGroupUUID(AccountGroup.uuid(ownerGroupUuid));
     }
 
     @Override

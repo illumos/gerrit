@@ -15,13 +15,15 @@
 package com.google.gerrit.acceptance.api.plugin;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.stream.Collectors.toList;
 
 import com.google.common.collect.ImmutableList;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
-import com.google.gerrit.acceptance.GerritConfig;
 import com.google.gerrit.acceptance.NoHttpd;
+import com.google.gerrit.acceptance.config.GerritConfig;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.common.RawInputUtil;
 import com.google.gerrit.extensions.api.plugins.InstallPluginInput;
 import com.google.gerrit.extensions.api.plugins.PluginApi;
@@ -33,6 +35,8 @@ import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
 import com.google.gerrit.extensions.restapi.RawInput;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.RestApiException;
+import com.google.gerrit.server.plugins.MandatoryPluginsCollection;
+import com.google.inject.Inject;
 import java.util.List;
 import org.junit.Test;
 
@@ -48,6 +52,9 @@ public class PluginIT extends AbstractDaemonTest {
   private static final ImmutableList<String> PLUGINS =
       ImmutableList.of(
           "plugin-a.js", "plugin-b.html", "plugin-c.js", "plugin-d.html", "plugin_e.js");
+
+  @Inject private RequestScopeOperations requestScopeOperations;
+  @Inject private MandatoryPluginsCollection mandatoryPluginsCollection;
 
   @Test
   @GerritConfig(name = "plugins.allowRemoteAdmin", value = "true")
@@ -94,7 +101,13 @@ public class PluginIT extends AbstractDaemonTest {
     assertBadRequest(list().regex(".*in-b").prefix("a"));
     assertBadRequest(list().substring(".*in-b").prefix("a"));
 
-    // Disable
+    // Disable mandatory
+    mandatoryPluginsCollection.add("plugin_e");
+    assertThrows(MethodNotAllowedException.class, () -> gApi.plugins().name("plugin_e").disable());
+    api = gApi.plugins().name("plugin_e");
+    assertThat(api.get().disabled).isNull();
+
+    // Disable non-mandatory
     api = gApi.plugins().name("plugin-a");
     api.disable();
     api = gApi.plugins().name("plugin-a");
@@ -112,13 +125,8 @@ public class PluginIT extends AbstractDaemonTest {
     deprecatedInput();
 
     // Non-admin cannot disable
-    setApiUser(user);
-    try {
-      gApi.plugins().name("plugin-a").disable();
-      fail("Expected AuthException");
-    } catch (AuthException expected) {
-      // Expected
-    }
+    requestScopeOperations.setApiUser(user.id());
+    assertThrows(AuthException.class, () -> gApi.plugins().name("plugin-a").disable());
   }
 
   @SuppressWarnings("deprecation")
@@ -132,15 +140,16 @@ public class PluginIT extends AbstractDaemonTest {
 
   @Test
   public void installNotAllowed() throws Exception {
-    exception.expect(MethodNotAllowedException.class);
-    exception.expectMessage("remote plugin administration is disabled");
-    gApi.plugins().install("test.js", new InstallPluginInput());
+    MethodNotAllowedException thrown =
+        assertThrows(
+            MethodNotAllowedException.class,
+            () -> gApi.plugins().install("test.js", new InstallPluginInput()));
+    assertThat(thrown).hasMessageThat().contains("remote plugin administration is disabled");
   }
 
   @Test
   public void getNonExistingThrowsNotFound() throws Exception {
-    exception.expect(ResourceNotFoundException.class);
-    gApi.plugins().name("does-not-exist");
+    assertThrows(ResourceNotFoundException.class, () -> gApi.plugins().name("does-not-exist"));
   }
 
   private ListRequest list() throws RestApiException {
@@ -166,11 +175,6 @@ public class PluginIT extends AbstractDaemonTest {
   }
 
   private void assertBadRequest(ListRequest req) throws Exception {
-    try {
-      req.get();
-      fail("Expected BadRequestException");
-    } catch (BadRequestException e) {
-      // Expected
-    }
+    assertThrows(BadRequestException.class, () -> req.get());
   }
 }

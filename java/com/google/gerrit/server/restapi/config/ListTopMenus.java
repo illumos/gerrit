@@ -14,30 +14,30 @@
 
 package com.google.gerrit.server.restapi.config;
 
-import com.google.gerrit.extensions.registration.DynamicSet;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.extensions.webui.TopMenu;
+import com.google.gerrit.extensions.webui.TopMenu.MenuEntry;
 import com.google.gerrit.server.config.ConfigResource;
+import com.google.gerrit.server.plugincontext.PluginSetContext;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.util.ArrayList;
 import java.util.List;
 
 @Singleton
-class ListTopMenus implements RestReadView<ConfigResource> {
-  private final DynamicSet<TopMenu> extensions;
+public class ListTopMenus implements RestReadView<ConfigResource> {
+  private final PluginSetContext<TopMenu> extensions;
 
   @Inject
-  ListTopMenus(DynamicSet<TopMenu> extensions) {
+  ListTopMenus(PluginSetContext<TopMenu> extensions) {
     this.extensions = extensions;
   }
 
   @Override
-  public List<TopMenu.MenuEntry> apply(ConfigResource resource) {
+  public Response<List<MenuEntry>> apply(ConfigResource resource) {
     List<TopMenu.MenuEntry> entries = new ArrayList<>();
-    for (TopMenu extension : extensions) {
-      entries.addAll(extension.getEntries());
-    }
-    return entries;
+    extensions.runEach(extension -> entries.addAll(extension.getEntries()));
+    return Response.ok(entries).caching(ConfigResource.DEFAULT_CACHE_CONTROL);
   }
 }

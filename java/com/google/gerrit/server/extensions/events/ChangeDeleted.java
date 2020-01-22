@@ -15,18 +15,19 @@
 package com.google.gerrit.server.extensions.events;
 
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
 import com.google.gerrit.extensions.common.AccountInfo;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.events.ChangeDeletedListener;
-import com.google.gerrit.reviewdb.client.Change;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.plugincontext.PluginSetContext;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import java.sql.Timestamp;
 
+/** Helper class to fire an event when a change has been deleted. */
 @Singleton
 public class ChangeDeleted {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
@@ -47,11 +48,12 @@ public class ChangeDeleted {
     try {
       Event event = new Event(util.changeInfo(change), util.accountInfo(deleter), when);
       listeners.runEach(l -> l.onChangeDeleted(event));
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       logger.atSevere().withCause(e).log("Couldn't fire event");
     }
   }
 
+  /** Event to be fired when a change has been deleted. */
   private static class Event extends AbstractChangeEvent implements ChangeDeletedListener.Event {
     Event(ChangeInfo change, AccountInfo deleter, Timestamp when) {
       super(change, deleter, when, NotifyHandling.ALL);

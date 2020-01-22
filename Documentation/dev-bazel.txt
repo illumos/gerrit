@@ -1,4 +1,16 @@
+:linkattrs:
 = Gerrit Code Review - Building with Bazel
+
+[[summary]]
+== TL;DR
+
+If you have the prerequisites, running
+
+```
+  $ bazel build gerrit
+```
+
+should generate a .war file under `bazel-bin/gerrit.war`.
 
 [[installation]]
 == Prerequisites
@@ -8,9 +20,10 @@ To build Gerrit from source, you need:
 * A Linux or macOS system (Windows is not supported at this time)
 * A JDK for Java 8|9|10|11|...
 * Python 2 or 3
-* Node.js
-* link:https://www.bazel.io/versions/master/docs/install.html[Bazel] directly
-or through link:https://github.com/bazelbuild/bazelisk[Bazelisk]
+* link:https://github.com/nodesource/distributions/blob/master/README.md[Node.js (including npm),role=external,window=_blank]
+* Bower (`sudo npm install -g bower`)
+* link:https://docs.bazel.build/versions/master/install.html[Bazel,role=external,window=_blank] directly
+or through link:https://github.com/bazelbuild/bazelisk[Bazelisk,role=external,window=_blank]
 * Maven
 * zip, unzip
 * gcc
@@ -18,17 +31,31 @@ or through link:https://github.com/bazelbuild/bazelisk[Bazelisk]
 [[java]]
 === Java
 
-[[java-10]]
-==== Java 10 support
+==== MacOS
 
-Java 10 is supported through vanilla java toolchain
-link:https://docs.bazel.build/versions/master/toolchains.html[Bazel option].
-To build Gerrit with Java 10 and newer, specify vanilla java toolchain and
+On MacOS, ensure that "Java for MacOS X 10.5 Update 4" (or higher) is installed
+and that `JAVA_HOME` is set to the
+link:install.html#Requirements[required Java version].
+
+Java installations can typically be found in
+"/System/Library/Frameworks/JavaVM.framework/Versions".
+
+To check the installed version of Java, open a terminal window and run:
+
+`java -version`
+
+[[java-13]]
+==== Java 13 support
+
+Java 13 (and newer) is supported through vanilla java toolchain
+link:https://docs.bazel.build/versions/master/toolchains.html[Bazel option,role=external,window=_blank].
+To build Gerrit with Java 13 and newer, specify vanilla java toolchain and
 provide the path to JDK home:
 
 ```
   $ bazel build \
-    --define=ABSOLUTE_JAVABASE=<path-to-java-10> \
+    --define=ABSOLUTE_JAVABASE=<path-to-java-13> \
+    --javabase=@bazel_tools//tools/jdk:absolute_javabase \
     --host_javabase=@bazel_tools//tools/jdk:absolute_javabase \
     --host_java_toolchain=@bazel_tools//tools/jdk:toolchain_vanilla \
     --java_toolchain=@bazel_tools//tools/jdk:toolchain_vanilla \
@@ -40,7 +67,7 @@ bazel test runs the test using the target javabase:
 
 ```
   $ bazel test \
-    --define=ABSOLUTE_JAVABASE=<path-to-java-10> \
+    --define=ABSOLUTE_JAVABASE=<path-to-java-13> \
     --javabase=@bazel_tools//tools/jdk:absolute_javabase \
     --host_javabase=@bazel_tools//tools/jdk:absolute_javabase \
     --host_java_toolchain=@bazel_tools//tools/jdk:toolchain_vanilla \
@@ -53,7 +80,7 @@ they could be added to ~/.bazelrc resource file:
 
 ```
 $ cat << EOF > ~/.bazelrc
-> build --define=ABSOLUTE_JAVABASE=<path-to-java-10>
+> build --define=ABSOLUTE_JAVABASE=<path-to-java-13>
 > build --javabase=@bazel_tools//tools/jdk:absolute_javabase
 > build --host_javabase=@bazel_tools//tools/jdk:absolute_javabase
 > build --host_java_toolchain=@bazel_tools//tools/jdk:toolchain_vanilla
@@ -64,51 +91,35 @@ $ cat << EOF > ~/.bazelrc
 Now, invoking Bazel with just `bazel build :release` would include
 all those options.
 
-Note that the follow option must be added to `container.javaOptions`
-in `$gerrit_site/etc/gerrit.config` to run Gerrit with Java 10|11|...:
+[[java-11]]
+==== Java 11 support
 
-```
-[container]
-  javaOptions = --add-opens=jdk.management/com.sun.management.internal=ALL-UNNAMED
-```
-
-[[java-9]]
-==== Java 9 support
-
-Java 9 is supported through alternative java toolchain
+Java 11 is supported through alternative java toolchain
 link:https://docs.bazel.build/versions/master/toolchains.html[Bazel option].
-The Java 9 support is backwards compatible. Java 8 is still the default.
-To build Gerrit with Java 9, specify JDK 9 java toolchain:
+To build Gerrit with Java 11, specify JDK 11 java toolchain:
 
 ```
   $ bazel build \
-      --host_java_toolchain=@bazel_tools//tools/jdk:toolchain_java9 \
-      --java_toolchain=@bazel_tools//tools/jdk:toolchain_java9 \
+      --host_javabase=@bazel_tools//tools/jdk:remote_jdk11 \
+      --javabase=@bazel_tools//tools/jdk:remote_jdk11 \
+      --host_java_toolchain=@bazel_tools//tools/jdk:toolchain_java11 \
+      --java_toolchain=@bazel_tools//tools/jdk:toolchain_java11 \
       :release
 ```
 
-Note that the follow option must be added to `container.javaOptions`
-in `$gerrit_site/etc/gerrit.config` to run Gerrit with Java 9:
-
-```
-[container]
-  javaOptions = --add-opens=jdk.management/com.sun.management.internal=ALL-UNNAMED
-```
+=== Node.js and npm packages
+See link:https://gerrit.googlesource.com/gerrit/+/master/polygerrit-ui/README.md#installing-node_js-and-npm-packages[Installing Node.js and npm packages,role=external,window=_blank].
 
 [[build]]
 == Building on the Command Line
 
 === Gerrit Development WAR File
 
-To build the Gerrit web application that includes the PolyGerrit UI:
+To build the Gerrit web application:
 
 ----
   bazel build gerrit
 ----
-
-[NOTE]
-PolyGerrit UI may require additional tools (such as npm). Please read
-the polygerrit-ui/README.md for more info.
 
 The output executable WAR will be placed in:
 
@@ -119,8 +130,8 @@ The output executable WAR will be placed in:
 [[release]]
 === Gerrit Release WAR File
 
-To build the Gerrit web application that includes the GWT UI, the
-PolyGerrit UI, core plugins and documentation:
+To build the Gerrit web application that includes the PolyGerrit UI,
+core plugins and documentation:
 
 ----
   bazel build release
@@ -134,7 +145,7 @@ The output executable WAR will be placed in:
 
 === Headless Mode
 
-To build Gerrit in headless mode, i.e. without the PolyGerrit and GWT
+To build Gerrit in headless mode, i.e. without the PolyGerrit UI:
 Web UI:
 
 ----
@@ -149,7 +160,7 @@ The output executable WAR will be placed in:
 
 === Extension and Plugin API JAR Files
 
-To build the extension, plugin and GWT API JAR files:
+To build the extension, plugin and acceptance-framework JAR files:
 
 ----
   bazel build api
@@ -162,7 +173,8 @@ Java docs will be placed in:
   bazel-bin/api.zip
 ----
 
-Install {extension,plugin,gwt}-api to the local maven repository:
+Install {extension,plugin,acceptance-framework}-api to the local
+maven repository:
 
 ----
   tools/maven/api.sh install
@@ -207,19 +219,12 @@ The output JAR file will be be placed in:
 Note that when building an individual plugin, the `core.zip` package
 is not regenerated.
 
-To build with all Error Prone warnings activated, run:
-
-----
-  bazel build --java_toolchain //tools:error_prone_warnings_toolchain //...
-----
-
-
 [[IDEs]]
 == Using an IDE.
 
 === IntelliJ
 
-The Gerrit build works with Bazel's link:https://ij.bazel.io[IntelliJ plugin].
+The Gerrit build works with Bazel's link:https://ij.bazel.build[IntelliJ plugin,role=external,window=_blank].
 Please follow the instructions on <<dev-intellij#,IntelliJ Setup>>.
 
 === Eclipse
@@ -239,7 +244,7 @@ and then follow the link:dev-eclipse.html#setup[setup instructions].
 If an updated classpath is needed, the Eclipse project can be
 refreshed and missing dependency JARs can be downloaded by running
 `project.py` again. For IntelliJ, you need to click the `Sync Project
-with BUILD Files` button of link:https://ij.bazel.io[IntelliJ plugin].
+with BUILD Files` button of link:https://ij.bazel.build[Bazel plugin,role=external,window=_blank].
 
 [[documentation]]
 === Documentation
@@ -293,31 +298,6 @@ To run a specific test group, e.g. the rest-account test group:
   bazel test //javatests/com/google/gerrit/acceptance/rest/account:rest_account
 ----
 
-To run the tests against NoteDb backend with write
-to NoteDb, but not read from it:
-
-----
-  bazel test --test_env=GERRIT_NOTEDB=WRITE //...
-----
-
-Write and read from NoteDb:
-
-----
-  bazel test --test_env=GERRIT_NOTEDB=READ_WRITE //...
-----
-
-Primary storage NoteDb:
-
-----
-  bazel test --test_env=GERRIT_NOTEDB=PRIMARY //...
-----
-
-Primary storage NoteDb and ReviewDb disabled:
-
-----
-  bazel test --test_env=GERRIT_NOTEDB=ON //...
-----
-
 To run only tests that do not use SSH:
 
 ----
@@ -334,6 +314,12 @@ To exclude tests that require a Docker host:
 
 ----
   bazel test --test_tag_filters=-docker //...
+----
+
+To exclude tests that require very recent git client version:
+
+----
+  bazel test --test_tag_filters=-git-protocol-v2 //...
 ----
 
 To ignore cached test results:
@@ -356,6 +342,7 @@ The following values are currently supported for the group name:
 * edit
 * elastic
 * git
+* git-protocol-v2
 * notedb
 * pgm
 * rest
@@ -367,17 +354,17 @@ The following values are currently supported for the group name:
 
 Successfully running the Elasticsearch tests requires Docker, and
 may require setting the local virtual memory on
-link:https://www.elastic.co/guide/en/elasticsearch/reference/current/vm-max-map-count.html[linux] and
-link:https://www.elastic.co/guide/en/elasticsearch/reference/current/docker.html#_set_vm_max_map_count_to_at_least_262144[macOS].
+link:https://www.elastic.co/guide/en/elasticsearch/reference/current/vm-max-map-count.html[linux,role=external,window=_blank] and
+link:https://www.elastic.co/guide/en/elasticsearch/reference/current/docker.html#_set_vm_max_map_count_to_at_least_262144[macOS,role=external,window=_blank].
 
-On macOS, if using link:https://docs.docker.com/docker-for-mac/[Docker Desktop],
+On macOS, if using link:https://docs.docker.com/docker-for-mac/[Docker Desktop,role=external,window=_blank],
 the effective memory value can be set in the Preferences, under the Advanced tab.
 The default value usually does not suffice and is causing premature container exits.
 That default is currently 2 GB and should be set to at least 5 (GB).
 
 If Docker is not available, the Elasticsearch tests will be skipped.
 Note that Bazel currently does not show
-link:https://github.com/bazelbuild/bazel/issues/3476[the skipped tests].
+link:https://github.com/bazelbuild/bazel/issues/3476[the skipped tests,role=external,window=_blank].
 
 == Dependencies
 
@@ -412,16 +399,16 @@ repository has precedence.
 
 == Building against unpublished Maven JARs
 
-To build against unpublished Maven JARs, like gwtorm or PrologCafe, the custom
-JARs must be installed in the local Maven repository (`mvn clean install`) and
+To build against unpublished Maven JARs, like PrologCafe, the custom JARs must
+be installed in the local Maven repository (`mvn clean install`) and
 `maven_jar()` must be updated to point to the `MAVEN_LOCAL` Maven repository for
 that artifact:
 
 [source,python]
 ----
  maven_jar(
-   name = 'gwtorm',
-   artifact = 'gwtorm:gwtorm:42',
+   name = 'prolog-runtime',
+   artifact = 'com.googlecode.prolog-cafe:prolog-runtime:42',
    repository = MAVEN_LOCAL,
  )
 ----
@@ -468,11 +455,18 @@ And corresponding WORKSPACE excerpt:
  )
 ----
 
-[[consume-jgit-from-development-tree]]
+== Building against SNAPSHOT Maven JARs
 
-To consume the JGit dependency from the development tree, edit
-`lib/jgit/jgit.bzl` setting LOCAL_JGIT_REPO to a directory holding a
-JGit repository.
+To build against SNAPSHOT Maven JARs, the complete SNAPSHOT version must be used:
+
+[source,python]
+----
+ maven_jar(
+   name = "pac4j-core",
+   artifact = "org.pac4j:pac4j-core:3.5.0-SNAPSHOT-20190112.120241-16",
+   sha1 = "da2b1cb68a8f87bfd40813179abd368de9f3a746",
+ )
+----
 
 [[bazel-local-caches]]
 
@@ -483,7 +477,7 @@ To accelerate builds, several caches are activated per default:
 * ~/.gerritcodereview/bazel-cache/cas
 
 Currently none of these caches have a maximum size limit. See
-link:https://github.com/bazelbuild/bazel/issues/5139[this bazel issue] for
+link:https://github.com/bazelbuild/bazel/issues/5139[this bazel issue,role=external,window=_blank] for
 details. Users should watch the cache sizes and clean them manually if
 necessary.
 
@@ -494,7 +488,7 @@ Parts of the PolyGerrit build require running NPM-based JavaScript programs as
 "binaries". We don't attempt to resolve and download NPM dependencies at build
 time, but instead use pre-built bundles of the NPM binary along with all its
 dependencies. Some packages on
-link:https://docs.npmjs.com/misc/registry[registry.npmjs.org] come with their
+link:https://docs.npmjs.com/misc/registry[registry.npmjs.org,role=external,window=_blank] come with their
 dependencies bundled, but this is the exception rather than the rule. More
 commonly, to add a new binary to this list, you will need to bundle the binary
 yourself.
@@ -522,7 +516,7 @@ its transitive dependencies. We can only legally distribute a bundle via our
 storage bucket if the licenses allow us to do so. As long as all of the listed
 license are allowed by
 link:https://opensource.google.com/docs/thirdparty/licenses/[Google's
-standards]. Any `by_exception_only`, commercial, prohibited, or unlisted
+standards,role=external,window=_blank]. Any `by_exception_only`, commercial, prohibited, or unlisted
 licenses are not allowed; otherwise, it is ok to distribute the source. If in
 doubt, contact a maintainer who is a Googler.
 
@@ -547,7 +541,7 @@ This creates a file named `$package-$version.tgz` in your working directory.
 
 Any project maintainer can upload this file to the
 link:https://console.cloud.google.com/storage/browser/gerrit-maven/npm-packages[storage
-bucket].
+bucket,role=external,window=_blank].
 
 Finally, add the new binary to the build process:
 ----

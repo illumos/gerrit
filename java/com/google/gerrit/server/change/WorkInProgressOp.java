@@ -14,44 +14,36 @@
 
 package com.google.gerrit.server.change;
 
-import com.google.common.base.MoreObjects;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableListMultimap;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.ChangeMessage;
+import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.extensions.api.changes.NotifyHandling;
-import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.ChangeMessage;
-import com.google.gerrit.reviewdb.client.PatchSet;
+import com.google.gerrit.extensions.common.InputWithMessage;
 import com.google.gerrit.server.ChangeMessagesUtil;
-import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.extensions.events.WorkInProgressStateChanged;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.notedb.ChangeUpdate;
-import com.google.gerrit.server.permissions.GlobalPermission;
-import com.google.gerrit.server.permissions.PermissionBackend;
-import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gerrit.server.permissions.ProjectPermission;
 import com.google.gerrit.server.update.BatchUpdateOp;
 import com.google.gerrit.server.update.ChangeContext;
 import com.google.gerrit.server.update.Context;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 
 /* Set work in progress or ready for review state on a change */
 public class WorkInProgressOp implements BatchUpdateOp {
-  public static class Input {
-    @Nullable public String message;
-
+  public static class Input extends InputWithMessage {
     @Nullable public NotifyHandling notify;
 
-    public Input() {}
+    public Input() {
+      this(null);
+    }
 
-    public Input(String message) {
-      this.message = message;
+    public Input(@Nullable String message) {
+      super(message);
     }
   }
 
@@ -59,42 +51,14 @@ public class WorkInProgressOp implements BatchUpdateOp {
     WorkInProgressOp create(boolean workInProgress, Input in);
   }
 
-  public static void checkPermissions(
-      PermissionBackend permissionBackend, CurrentUser user, Change change)
-      throws PermissionBackendException, AuthException {
-    if (!user.isIdentifiedUser()) {
-      throw new AuthException("Authentication required");
-    }
-
-    if (change.getOwner().equals(user.asIdentifiedUser().getAccountId())) {
-      return;
-    }
-
-    try {
-      permissionBackend.currentUser().check(GlobalPermission.ADMINISTRATE_SERVER);
-      return;
-    } catch (AuthException e) {
-      // Skip.
-    }
-
-    try {
-      permissionBackend
-          .user(user)
-          .project(change.getProject())
-          .check(ProjectPermission.WRITE_CONFIG);
-    } catch (AuthException exp) {
-      throw new AuthException("not allowed to toggle work in progress");
-    }
-  }
-
   private final ChangeMessagesUtil cmUtil;
   private final EmailReviewComments.Factory email;
   private final PatchSetUtil psUtil;
   private final boolean workInProgress;
   private final Input in;
-  private final NotifyHandling notify;
   private final WorkInProgressStateChanged stateChanged;
 
+  private boolean sendEmail = true;
   private Change change;
   private ChangeNotes notes;
   private PatchSet ps;
@@ -114,16 +78,17 @@ public class WorkInProgressOp implements BatchUpdateOp {
     this.stateChanged = stateChanged;
     this.workInProgress = workInProgress;
     this.in = in;
-    notify =
-        MoreObjects.firstNonNull(
-            in.notify, workInProgress ? NotifyHandling.NONE : NotifyHandling.ALL);
+  }
+
+  public void suppressEmail() {
+    this.sendEmail = false;
   }
 
   @Override
-  public boolean updateChange(ChangeContext ctx) throws OrmException {
+  public boolean updateChange(ChangeContext ctx) {
     change = ctx.getChange();
     notes = ctx.getNotes();
-    ps = psUtil.get(ctx.getDb(), ctx.getNotes(), change.currentPatchSetId());
+    ps = psUtil.get(ctx.getNotes(), change.currentPatchSetId());
     ChangeUpdate update = ctx.getUpdate(change.currentPatchSetId());
     change.setWorkInProgress(workInProgress);
     if (!change.hasReviewStarted() && !workInProgress) {
@@ -135,7 +100,7 @@ public class WorkInProgressOp implements BatchUpdateOp {
     return true;
   }
 
-  private void addMessage(ChangeContext ctx, ChangeUpdate update) throws OrmException {
+  private void addMessage(ChangeContext ctx, ChangeUpdate update) {
     Change c = ctx.getChange();
     StringBuilder buf =
         new StringBuilder(c.isWorkInProgress() ? "Set Work In Progress" : "Set Ready For Review");
@@ -154,19 +119,21 @@ public class WorkInProgressOp implements BatchUpdateOp {
                 ? ChangeMessagesUtil.TAG_SET_WIP
                 : ChangeMessagesUtil.TAG_SET_READY);
 
-    cmUtil.addChangeMessage(ctx.getDb(), update, cmsg);
+    cmUtil.addChangeMessage(update, cmsg);
   }
 
   @Override
   public void postUpdate(Context ctx) {
     stateChanged.fire(change, ps, ctx.getAccount(), ctx.getWhen());
-    if (workInProgress || notify.ordinal() < NotifyHandling.OWNER_REVIEWERS.ordinal()) {
+    NotifyResolver.Result notify = ctx.getNotify(change.getId());
+    if (workInProgress
+        || notify.handling().compareTo(NotifyHandling.OWNER_REVIEWERS) < 0
+        || !sendEmail) {
       return;
     }
     email
         .create(
             notify,
-            ImmutableListMultimap.of(),
             notes,
             ps,
             ctx.getIdentifiedUser(),

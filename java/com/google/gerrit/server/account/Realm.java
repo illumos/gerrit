@@ -14,8 +14,8 @@
 
 package com.google.gerrit.server.account;
 
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.client.AccountFieldName;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.externalids.ExternalId;
 import java.io.IOException;
@@ -24,6 +24,12 @@ import java.util.Set;
 import javax.naming.NamingException;
 import javax.security.auth.login.LoginException;
 
+/**
+ * Interface between Gerrit and an account system.
+ *
+ * <p>This interface provides the glue layer between the Gerrit and external account/authentication
+ * systems (eg. LDAP, OpenID).
+ */
 public interface Realm {
   /** Can the end-user modify this field of their own account? */
   boolean allowsEdit(AccountFieldName field);

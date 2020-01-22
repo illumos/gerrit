@@ -16,8 +16,8 @@ package com.google.gerrit.server.patch;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-import com.google.gerrit.common.errors.NoSuchEntityException;
-import com.google.gerrit.reviewdb.client.Patch;
+import com.google.gerrit.entities.Patch;
+import com.google.gerrit.exceptions.NoSuchEntityException;
 import java.io.IOException;
 import org.eclipse.jgit.errors.CorruptObjectException;
 import org.eclipse.jgit.errors.IncorrectObjectTypeException;
@@ -39,6 +39,15 @@ public class PatchFile {
   private final RevTree aTree;
   private final RevTree bTree;
 
+  // Full text of both sides of the file. For standard files, these are not directly reconstructable
+  // from the PatchListEntry, which comes from the PatchListCache and only contains the diff between
+  // the two blobs. This is intentional, to avoid storing entire large blobs in the cache. For
+  // regular files, the full text is initialized from the repo lazily only when necessary, e.g. in
+  // getLine. Although it's a safe assumption that any caller constructing a PatchSet will want to
+  // read some content, we don't know in advance which side they are interested in.
+  //
+  // For special files like COMMIT_MSG, the full text is loaded eagerly during the constructor.
+  // TODO(dborowitz): I see why the logic is different, but I don't see why it needs to be eager.
   private Text a;
   private Text b;
 

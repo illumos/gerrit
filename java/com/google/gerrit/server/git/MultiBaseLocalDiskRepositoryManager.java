@@ -16,8 +16,8 @@ package com.google.gerrit.server.git;
 
 import static com.google.common.base.Preconditions.checkState;
 
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.lifecycle.LifecycleModule;
-import com.google.gerrit.reviewdb.client.Project.NameKey;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.config.RepositoryConfig;
 import com.google.gerrit.server.config.SitePaths;
@@ -26,6 +26,12 @@ import com.google.inject.Singleton;
 import java.nio.file.Path;
 import org.eclipse.jgit.lib.Config;
 
+/**
+ * RepositoryManager that looks up repos stored across directories.
+ *
+ * <p>Each repository has a path configured in Gerrit server config, repository.NAME.basePath,
+ * indicating where the repo can be found
+ */
 @Singleton
 public class MultiBaseLocalDiskRepositoryManager extends LocalDiskRepositoryManager {
 
@@ -54,7 +60,7 @@ public class MultiBaseLocalDiskRepositoryManager extends LocalDiskRepositoryMana
   }
 
   @Override
-  public Path getBasePath(NameKey name) {
+  public Path getBasePath(Project.NameKey name) {
     Path alternateBasePath = config.getBasePath(name);
     return alternateBasePath != null ? alternateBasePath : super.getBasePath(name);
   }

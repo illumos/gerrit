@@ -15,11 +15,10 @@
 package com.google.gerrit.sshd;
 
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.RestApiException;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.change.ChangeFinder;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.notedb.ChangeNotes;
@@ -30,7 +29,6 @@ import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.restapi.change.ChangesCollection;
 import com.google.gerrit.sshd.BaseCommand.UnloggedFailure;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -41,7 +39,6 @@ import java.util.Map;
 public class ChangeArgumentParser {
   private final ChangesCollection changesCollection;
   private final ChangeFinder changeFinder;
-  private final ReviewDb db;
   private final ChangeNotes.Factory changeNotesFactory;
   private final PermissionBackend permissionBackend;
 
@@ -49,24 +46,22 @@ public class ChangeArgumentParser {
   ChangeArgumentParser(
       ChangesCollection changesCollection,
       ChangeFinder changeFinder,
-      ReviewDb db,
       ChangeNotes.Factory changeNotesFactory,
       PermissionBackend permissionBackend) {
     this.changesCollection = changesCollection;
     this.changeFinder = changeFinder;
-    this.db = db;
     this.changeNotesFactory = changeNotesFactory;
     this.permissionBackend = permissionBackend;
   }
 
   public void addChange(String id, Map<Change.Id, ChangeResource> changes)
-      throws UnloggedFailure, OrmException, PermissionBackendException, IOException {
+      throws UnloggedFailure, PermissionBackendException, IOException {
     addChange(id, changes, null);
   }
 
   public void addChange(
       String id, Map<Change.Id, ChangeResource> changes, @Nullable ProjectState projectState)
-      throws UnloggedFailure, OrmException, PermissionBackendException, IOException {
+      throws UnloggedFailure, PermissionBackendException, IOException {
     addChange(id, changes, projectState, true);
   }
 
@@ -75,7 +70,7 @@ public class ChangeArgumentParser {
       Map<Change.Id, ChangeResource> changes,
       @Nullable ProjectState projectState,
       boolean useIndex)
-      throws UnloggedFailure, OrmException, PermissionBackendException, IOException {
+      throws UnloggedFailure, PermissionBackendException, IOException {
     List<ChangeNotes> matched = useIndex ? changeFinder.find(id) : changeFromNotesFactory(id);
     List<ChangeNotes> toAdd = new ArrayList<>(changes.size());
     boolean canMaintainServer;
@@ -98,7 +93,7 @@ public class ChangeArgumentParser {
         }
 
         try {
-          permissionBackend.currentUser().change(notes).database(db).check(ChangePermission.READ);
+          permissionBackend.currentUser().change(notes).check(ChangePermission.READ);
           toAdd.add(notes);
         } catch (AuthException e) {
           // Do nothing.
@@ -121,13 +116,13 @@ public class ChangeArgumentParser {
     changes.put(cId, changeResource);
   }
 
-  private List<ChangeNotes> changeFromNotesFactory(String id) throws OrmException, UnloggedFailure {
-    return changeNotesFactory.create(db, parseId(id));
+  private List<ChangeNotes> changeFromNotesFactory(String id) throws UnloggedFailure {
+    return changeNotesFactory.create(parseId(id));
   }
 
   private List<Change.Id> parseId(String id) throws UnloggedFailure {
     try {
-      return Arrays.asList(new Change.Id(Integer.parseInt(id)));
+      return Arrays.asList(Change.id(Integer.parseInt(id)));
     } catch (NumberFormatException e) {
       throw new UnloggedFailure(2, "Invalid change ID " + id, e);
     }

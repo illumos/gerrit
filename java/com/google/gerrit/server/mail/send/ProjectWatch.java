@@ -19,12 +19,12 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.data.GroupDescription;
 import com.google.gerrit.common.data.GroupReference;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryParseException;
 import com.google.gerrit.mail.Address;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.account.AccountState;
@@ -35,7 +35,6 @@ import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.ChangeQueryBuilder;
 import com.google.gerrit.server.query.change.SingleGroupUser;
-import com.google.gwtorm.server.OrmException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -62,15 +61,13 @@ public class ProjectWatch {
   }
 
   /** Returns all watchers that are relevant */
-  public final Watchers getWatchers(NotifyType type, boolean includeWatchersFromNotifyConfig)
-      throws OrmException {
+  public final Watchers getWatchers(NotifyType type, boolean includeWatchersFromNotifyConfig) {
     Watchers matching = new Watchers();
     Set<Account.Id> projectWatchers = new HashSet<>();
 
     for (AccountState a : args.accountQueryProvider.get().byWatchedProject(project)) {
-      Account.Id accountId = a.getAccount().getId();
-      for (Map.Entry<ProjectWatchKey, ImmutableSet<NotifyType>> e :
-          a.getProjectWatches().entrySet()) {
+      Account.Id accountId = a.account().id();
+      for (Map.Entry<ProjectWatchKey, ImmutableSet<NotifyType>> e : a.projectWatches().entrySet()) {
         if (project.equals(e.getKey().project())
             && add(matching, accountId, e.getKey(), e.getValue(), type)) {
           // We only want to prevent matching All-Projects if this filter hits
@@ -80,10 +77,9 @@ public class ProjectWatch {
     }
 
     for (AccountState a : args.accountQueryProvider.get().byWatchedProject(args.allProjectsName)) {
-      for (Map.Entry<ProjectWatchKey, ImmutableSet<NotifyType>> e :
-          a.getProjectWatches().entrySet()) {
+      for (Map.Entry<ProjectWatchKey, ImmutableSet<NotifyType>> e : a.projectWatches().entrySet()) {
         if (args.allProjectsName.equals(e.getKey().project())) {
-          Account.Id accountId = a.getAccount().getId();
+          Account.Id accountId = a.account().id();
           if (!projectWatchers.contains(accountId)) {
             add(matching, accountId, e.getKey(), e.getValue(), type);
           }
@@ -99,9 +95,9 @@ public class ProjectWatch {
       for (NotifyConfig nc : state.getConfig().getNotifyConfigs()) {
         if (nc.isNotify(type)) {
           try {
-            add(matching, nc);
+            add(matching, state.getNameKey(), nc);
           } catch (QueryParseException e) {
-            logger.atWarning().log(
+            logger.atInfo().log(
                 "Project %s has invalid notify %s filter \"%s\": %s",
                 state.getName(), nc.getName(), nc.getFilter(), e.getMessage());
           }
@@ -148,17 +144,27 @@ public class ProjectWatch {
     }
   }
 
-  private void add(Watchers matching, NotifyConfig nc) throws OrmException, QueryParseException {
-    for (GroupReference ref : nc.getGroups()) {
-      CurrentUser user = new SingleGroupUser(ref.getUUID());
+  private void add(Watchers matching, Project.NameKey projectName, NotifyConfig nc)
+      throws QueryParseException {
+    logger.atFine().log("Checking watchers for notify config %s from project %s", nc, projectName);
+    for (GroupReference groupRef : nc.getGroups()) {
+      CurrentUser user = new SingleGroupUser(groupRef.getUUID());
       if (filterMatch(user, nc.getFilter())) {
-        deliverToMembers(matching.list(nc.getHeader()), ref.getUUID());
+        deliverToMembers(matching.list(nc.getHeader()), groupRef.getUUID());
+        logger.atFine().log("Added watchers for group %s", groupRef);
+      } else {
+        logger.atFine().log("The filter did not match for group %s; skip notification", groupRef);
       }
     }
 
     if (!nc.getAddresses().isEmpty()) {
       if (filterMatch(null, nc.getFilter())) {
         matching.list(nc.getHeader()).emails.addAll(nc.getAddresses());
+        logger.atFine().log("Added watchers for these addresses: %s", nc.getAddresses());
+      } else {
+        logger.atFine().log(
+            "The filter did not match; skip notification for these addresses: %s",
+            nc.getAddresses());
       }
     }
   }
@@ -174,19 +180,24 @@ public class ProjectWatch {
       AccountGroup.UUID uuid = q.remove(q.size() - 1);
       GroupDescription.Basic group = args.groupBackend.get(uuid);
       if (group == null) {
+        logger.atFine().log("group %s not found, skip notification", uuid);
         continue;
       }
       if (!Strings.isNullOrEmpty(group.getEmailAddress())) {
         // If the group has an email address, do not expand membership.
         matching.emails.add(new Address(group.getEmailAddress()));
+        logger.atFine().log(
+            "notify group email address %s; skip expanding to members", group.getEmailAddress());
         continue;
       }
 
       if (!(group instanceof GroupDescription.Internal)) {
         // Non-internal groups cannot be expanded by the server.
+        logger.atFine().log("group %s is not an internal group, skip notification", uuid);
         continue;
       }
 
+      logger.atFine().log("adding the members of group %s as watchers", uuid);
       GroupDescription.Internal ig = (GroupDescription.Internal) group;
       matching.accounts.addAll(ig.getMembers());
       for (AccountGroup.UUID m : ig.getSubgroups()) {
@@ -202,10 +213,10 @@ public class ProjectWatch {
       Account.Id accountId,
       ProjectWatchKey key,
       Set<NotifyType> watchedTypes,
-      NotifyType type)
-      throws OrmException {
-    IdentifiedUser user = args.identifiedUserFactory.create(accountId);
+      NotifyType type) {
+    logger.atFine().log("Checking project watch %s of account %s", key, accountId);
 
+    IdentifiedUser user = args.identifiedUserFactory.create(accountId);
     try {
       if (filterMatch(user, key.filter())) {
         // If we are set to notify on this type, add the user.
@@ -213,23 +224,26 @@ public class ProjectWatch {
         if (watchedTypes.contains(type)) {
           matching.bcc.accounts.add(accountId);
         }
+        logger.atFine().log("Added account %s as watcher", accountId);
         return true;
       }
+      logger.atFine().log("The filter did not match for account %s; skip notification", accountId);
     } catch (QueryParseException e) {
       // Ignore broken filter expressions.
+      logger.atInfo().log(
+          "Account %s has invalid filter in project watch %s: %s", accountId, key, e.getMessage());
     }
     return false;
   }
 
-  private boolean filterMatch(CurrentUser user, String filter)
-      throws OrmException, QueryParseException {
+  private boolean filterMatch(CurrentUser user, String filter) throws QueryParseException {
     ChangeQueryBuilder qb;
     Predicate<ChangeData> p = null;
 
     if (user == null) {
-      qb = args.queryBuilder.asUser(args.anonymousUser);
+      qb = args.queryBuilder.get().asUser(args.anonymousUser.get());
     } else {
-      qb = args.queryBuilder.asUser(user);
+      qb = args.queryBuilder.get().asUser(user);
       p = qb.is_visible();
     }
 

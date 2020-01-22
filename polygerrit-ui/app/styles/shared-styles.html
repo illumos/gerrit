@@ -17,7 +17,9 @@ limitations under the License.
 <dom-module id="shared-styles">
   <template>
     <style>
+
       /* CSS reset */
+
       html, body, button, div, span, applet, object, iframe, h1, h2, h3,
       h4, h5, h6, p, blockquote, pre, a, abbr, acronym, address, big, cite,
       code, del, dfn, em, img, ins, kbd, q, s, samp, small, strike, strong, sub,
@@ -33,14 +35,34 @@ limitations under the License.
         padding: 0;
         vertical-align: baseline;
       }
-      input,
-      iron-autogrow-textarea {
+      *::after,
+      *::before {
+        box-sizing: border-box;
+      }
+      input {
         background-color: inherit;
         border: 1px solid var(--border-color);
+        border-radius: var(--border-radius);
         box-sizing: border-box;
         color: var(--primary-text-color);
         margin: 0;
+        padding: var(--spacing-s);
+      }
+      iron-autogrow-textarea {
+        background-color: inherit;
+        color: var(--primary-text-color);
+        border: 1px solid var(--border-color);
+        border-radius: var(--border-radius);
         padding: 0;
+        box-sizing: border-box;
+        /* iron-autogrow-textarea has a "-webkit-appearance: textarea" :host
+           css rule, which prevents overriding the border color. Clear that. */
+        -webkit-appearance: none;
+
+        --iron-autogrow-textarea: {
+          box-sizing: border-box;
+          padding: var(--spacing-s);
+        };
       }
       a {
         color: var(--link-color);
@@ -50,9 +72,6 @@ limitations under the License.
       select,
       button {
         font: inherit;
-      }
-      body {
-        line-height: 1;
       }
       ol, ul {
         list-style: none;
@@ -69,25 +88,42 @@ limitations under the License.
         border-collapse: collapse;
         border-spacing: 0;
       }
-      /* Other Shared Styles*/
-      h1 {
-        font-size: 2rem;
-        font-weight: var(--font-weight-bold);
+
+      /* Fonts */
+
+      .font-normal {
+        font-size: var(--font-size-normal);
+        font-weight: var(--font-weight-normal);
+        line-height: var(--line-height-normal);
       }
-      h2 {
-        font-size: 1.5rem;
-        font-weight: var(--font-weight-bold);
+      .font-small {
+        font-size: var(--font-size-small);
+        font-weight: var(--font-weight-normal);
+        line-height: var(--line-height-small);
       }
-      h3 {
-        font-size: 1.17em;
+      h1, .font-h1 {
+        font-size: var(--font-size-h1);
         font-weight: var(--font-weight-bold);
+        line-height: var(--line-height-h1);
+      }
+      h2, .font-h2 {
+        font-size: var(--font-size-h2);
+        font-weight: var(--font-weight-bold);
+        line-height: var(--line-height-h2);
+      }
+      h3, .font-h3 {
+        font-size: var(--font-size-h3);
+        font-weight: var(--font-weight-bold);
+        line-height: var(--line-height-h3);
       }
       iron-icon {
         color: var(--deemphasized-text-color);
         --iron-icon-height: 20px;
         --iron-icon-width: 20px;
       }
+
       /* Stopgap solution until we remove hidden$ attributes. */
+
       [hidden] {
         display: none !important;
       }
@@ -103,11 +139,18 @@ limitations under the License.
         --paper-toggle-button-checked-bar-color: var(--link-color);
         --paper-toggle-button-checked-button-color: var(--link-color);
       }
+      paper-tabs {
+        --paper-tab-content-focused: {
+          /* paper-tabs uses 700 here, which can look awkward */
+          font-weight: var(--font-weight-normal);
+        };
+        --paper-tab-content-unselected: {
+          /* paper-tabs uses 0.8 here, but we want to control the color directly */
+          opacity: 1;
+          color: var(--deemphasized-text-color);
+        };      }
       strong {
         font-weight: var(--font-weight-bold);
-      }
-      :host {
-        color: var(--primary-text-color);
       }
     </style>
   </template>

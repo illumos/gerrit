@@ -14,7 +14,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 -->
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 <link rel="import" href="../../../styles/shared-styles.html">
 <link rel="import" href="../../core/gr-navigation/gr-navigation.html">
 <link rel="import" href="../../shared/gr-rest-api-interface/gr-rest-api-interface.html">
@@ -24,7 +25,7 @@ limitations under the License.
     <style include="shared-styles">
       :host {
         display: block;
-        margin-bottom: 2em;
+        margin-bottom: var(--spacing-xxl);
       }
       .loading #dashboards,
       #loadingContainer {
@@ -34,7 +35,9 @@ limitations under the License.
         display: block;
       }
     </style>
-    <style include="gr-table-styles"></style>
+    <style include="gr-table-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <table id="list" class$="genericList [[_computeLoadingClass(_loading)]]">
       <tr class="headerRow">
         <th class="topHeader">Dashboard name</th>

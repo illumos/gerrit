@@ -15,7 +15,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
 <link rel="import" href="../../../styles/shared-styles.html">
 
 <dom-module id="gr-tooltip">
@@ -26,7 +26,7 @@ limitations under the License.
         --gr-tooltip-arrow-center-offset: 0;
 
         background-color: var(--tooltip-background-color);
-        box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
+        box-shadow: var(--elevation-level-2);
         color: var(--tooltip-text-color);
         font-size: var(--font-size-small);
         position: absolute;
@@ -34,7 +34,7 @@ limitations under the License.
         max-width: var(--tooltip-max-width);
       }
       :host .tooltip {
-        padding: .5em .85em;
+        padding: var(--spacing-m) var(--spacing-l);
       }
       :host .arrowPositionBelow,
       :host([position-below]) .arrowPositionAbove  {
@@ -54,11 +54,11 @@ limitations under the License.
       }
       .arrowPositionAbove {
         border-top: var(--gr-tooltip-arrow-size) solid var(--tooltip-background-color);
-        bottom: -var(--gr-tooltip-arrow-size);
+        bottom: calc(-1 * var(--gr-tooltip-arrow-size));
       }
       .arrowPositionBelow {
         border-bottom: var(--gr-tooltip-arrow-size) solid var(--tooltip-background-color);
-        top: -var(--gr-tooltip-arrow-size);
+        top: calc(-1 * var(--gr-tooltip-arrow-size));
       }
     </style>
     <div class="tooltip">

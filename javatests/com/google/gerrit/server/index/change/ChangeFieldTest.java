@@ -15,6 +15,7 @@
 package com.google.gerrit.server.index.change;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.stream.Collectors.toList;
 
@@ -23,12 +24,11 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Table;
 import com.google.gerrit.common.data.SubmitRecord;
 import com.google.gerrit.common.data.SubmitRequirement;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
 import com.google.gerrit.server.ReviewerSet;
 import com.google.gerrit.server.notedb.ReviewerStateInternal;
 import com.google.gerrit.server.util.time.TimeUtil;
-import com.google.gerrit.testing.GerritBaseTests;
 import com.google.gerrit.testing.TestTimeUtil;
 import java.sql.Timestamp;
 import java.util.Collections;
@@ -38,7 +38,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
-public class ChangeFieldTest extends GerritBaseTests {
+public class ChangeFieldTest {
   @Before
   public void setUp() {
     TestTimeUtil.resetWithClockStep(1, TimeUnit.SECONDS);
@@ -53,9 +53,9 @@ public class ChangeFieldTest extends GerritBaseTests {
   public void reviewerFieldValues() {
     Table<ReviewerStateInternal, Account.Id, Timestamp> t = HashBasedTable.create();
     Timestamp t1 = TimeUtil.nowTs();
-    t.put(ReviewerStateInternal.REVIEWER, new Account.Id(1), t1);
+    t.put(ReviewerStateInternal.REVIEWER, Account.id(1), t1);
     Timestamp t2 = TimeUtil.nowTs();
-    t.put(ReviewerStateInternal.CC, new Account.Id(2), t2);
+    t.put(ReviewerStateInternal.CC, Account.id(2), t2);
     ReviewerSet reviewers = ReviewerSet.fromTable(t);
 
     List<String> values = ChangeField.getReviewerFieldValues(reviewers);
@@ -63,7 +63,7 @@ public class ChangeFieldTest extends GerritBaseTests {
         .containsExactly(
             "REVIEWER,1", "REVIEWER,1," + t1.getTime(), "CC,2", "CC,2," + t2.getTime());
 
-    assertThat(ChangeField.parseReviewerFieldValues(new Change.Id(1), values)).isEqualTo(reviewers);
+    assertThat(ChangeField.parseReviewerFieldValues(Change.id(1), values)).isEqualTo(reviewers);
   }
 
   @Test
@@ -75,7 +75,7 @@ public class ChangeFieldTest extends GerritBaseTests {
                         SubmitRecord.Status.OK,
                         label(SubmitRecord.Label.Status.MAY, "Label-1", null),
                         label(SubmitRecord.Label.Status.OK, "Label-2", 1))),
-                new Account.Id(1)))
+                Account.id(1)))
         .containsExactly("OK", "MAY,label-1", "OK,label-2", "OK,label-2,0", "OK,label-2,1");
   }
 
@@ -142,7 +142,7 @@ public class ChangeFieldTest extends GerritBaseTests {
     l.status = status;
     l.label = label;
     if (appliedBy != null) {
-      l.appliedBy = new Account.Id(appliedBy);
+      l.appliedBy = Account.id(appliedBy);
     }
     return l;
   }
@@ -153,8 +153,8 @@ public class ChangeFieldTest extends GerritBaseTests {
         ChangeField.storedSubmitRecords(recordList).stream()
             .map(s -> new String(s, UTF_8))
             .collect(toList());
-    assertThat(ChangeField.parseSubmitRecords(stored))
-        .named("JSON %s" + stored)
+    assertWithMessage("JSON %s" + stored)
+        .that(ChangeField.parseSubmitRecords(stored))
         .isEqualTo(recordList);
   }
 }

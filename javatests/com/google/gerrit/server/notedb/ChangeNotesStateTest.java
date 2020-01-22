@@ -16,11 +16,8 @@ package com.google.gerrit.server.notedb;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.extensions.proto.ProtoTruth.assertThat;
-import static com.google.gerrit.reviewdb.server.ReviewDbCodecs.APPROVAL_CODEC;
-import static com.google.gerrit.reviewdb.server.ReviewDbCodecs.MESSAGE_CODEC;
-import static com.google.gerrit.reviewdb.server.ReviewDbCodecs.PATCH_SET_CODEC;
-import static com.google.gerrit.server.cache.serialize.ProtoCacheSerializers.toByteString;
-import static com.google.gerrit.server.cache.testing.SerializedClassSubject.assertThatSerializedClass;
+import static com.google.gerrit.proto.testing.SerializedClassSubject.assertThatSerializedClass;
+import static com.google.gerrit.server.notedb.ChangeNotesState.Serializer.toByteString;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
@@ -30,48 +27,49 @@ import com.google.common.collect.ImmutableTable;
 import com.google.common.collect.Iterables;
 import com.google.gerrit.common.data.SubmitRecord;
 import com.google.gerrit.common.data.SubmitRequirement;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.ChangeMessage;
+import com.google.gerrit.entities.Comment;
+import com.google.gerrit.entities.LabelId;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.PatchSetApproval;
+import com.google.gerrit.entities.converter.ChangeMessageProtoConverter;
+import com.google.gerrit.entities.converter.PatchSetApprovalProtoConverter;
+import com.google.gerrit.entities.converter.PatchSetProtoConverter;
 import com.google.gerrit.mail.Address;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.ChangeMessage;
-import com.google.gerrit.reviewdb.client.Comment;
-import com.google.gerrit.reviewdb.client.LabelId;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.PatchSetApproval;
-import com.google.gerrit.reviewdb.client.RevId;
+import com.google.gerrit.server.AssigneeStatusUpdate;
 import com.google.gerrit.server.ReviewerByEmailSet;
 import com.google.gerrit.server.ReviewerSet;
 import com.google.gerrit.server.ReviewerStatusUpdate;
 import com.google.gerrit.server.cache.proto.Cache.ChangeNotesStateProto;
+import com.google.gerrit.server.cache.proto.Cache.ChangeNotesStateProto.AssigneeStatusUpdateProto;
 import com.google.gerrit.server.cache.proto.Cache.ChangeNotesStateProto.ChangeColumnsProto;
 import com.google.gerrit.server.cache.proto.Cache.ChangeNotesStateProto.ReviewerByEmailSetEntryProto;
 import com.google.gerrit.server.cache.proto.Cache.ChangeNotesStateProto.ReviewerSetEntryProto;
 import com.google.gerrit.server.cache.proto.Cache.ChangeNotesStateProto.ReviewerStatusUpdateProto;
-import com.google.gerrit.server.cache.serialize.ProtoCacheSerializers.ObjectIdConverter;
+import com.google.gerrit.server.cache.serialize.ObjectIdConverter;
 import com.google.gerrit.server.notedb.ChangeNotesState.ChangeColumns;
 import com.google.gerrit.server.notedb.ChangeNotesState.Serializer;
-import com.google.gwtorm.client.KeyUtil;
-import com.google.gwtorm.server.StandardKeyEncoder;
 import com.google.inject.TypeLiteral;
 import com.google.protobuf.ByteString;
 import java.lang.reflect.Type;
 import java.sql.Timestamp;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 import org.eclipse.jgit.lib.ObjectId;
 import org.junit.Before;
 import org.junit.Test;
 
 public class ChangeNotesStateTest {
-  static {
-    KeyUtil.setEncoderImpl(new StandardKeyEncoder());
-  }
-
-  private static final Change.Id ID = new Change.Id(123);
+  private static final Change.Id ID = Change.id(123);
   private static final ObjectId SHA =
       ObjectId.fromString("1234567812345678123456781234567812345678");
   private static final ByteString SHA_BYTES = ObjectIdConverter.create().toByteString(SHA);
   private static final String CHANGE_KEY = "Iabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd";
+  private static final String DEFAULT_SERVER_ID = UUID.randomUUID().toString();
 
   private ChangeColumns cols;
   private ChangeColumnsProto colsProto;
@@ -80,10 +78,10 @@ public class ChangeNotesStateTest {
   public void setUp() throws Exception {
     cols =
         ChangeColumns.builder()
-            .changeKey(new Change.Key(CHANGE_KEY))
+            .changeKey(Change.key(CHANGE_KEY))
             .createdOn(new Timestamp(123456L))
             .lastUpdatedOn(new Timestamp(234567L))
-            .owner(new Account.Id(1000))
+            .owner(Account.id(1000))
             .branch("refs/heads/master")
             .subject("Test change")
             .isPrivate(false)
@@ -103,7 +101,7 @@ public class ChangeNotesStateTest {
         newBuilder()
             .columns(
                 cols.toBuilder()
-                    .changeKey(new Change.Key("Ieeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"))
+                    .changeKey(Change.key("Ieeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"))
                     .build())
             .build(),
         ChangeNotesStateProto.newBuilder()
@@ -139,7 +137,7 @@ public class ChangeNotesStateTest {
   @Test
   public void serializeOwner() throws Exception {
     assertRoundTrip(
-        newBuilder().columns(cols.toBuilder().owner(new Account.Id(7777)).build()).build(),
+        newBuilder().columns(cols.toBuilder().owner(Account.id(7777)).build()).build(),
         ChangeNotesStateProto.newBuilder()
             .setMetaId(SHA_BYTES)
             .setChangeId(ID.get())
@@ -173,7 +171,7 @@ public class ChangeNotesStateTest {
   public void serializeCurrentPatchSetId() throws Exception {
     assertRoundTrip(
         newBuilder()
-            .columns(cols.toBuilder().currentPatchSetId(new PatchSet.Id(ID, 2)).build())
+            .columns(cols.toBuilder().currentPatchSetId(PatchSet.id(ID, 2)).build())
             .build(),
         ChangeNotesStateProto.newBuilder()
             .setMetaId(SHA_BYTES)
@@ -246,17 +244,6 @@ public class ChangeNotesStateTest {
   }
 
   @Test
-  public void serializeAssignee() throws Exception {
-    assertRoundTrip(
-        newBuilder().columns(cols.toBuilder().assignee(new Account.Id(2000)).build()).build(),
-        ChangeNotesStateProto.newBuilder()
-            .setMetaId(SHA_BYTES)
-            .setChangeId(ID.get())
-            .setColumns(colsProto.toBuilder().setAssignee(2000).setHasAssignee(true))
-            .build());
-  }
-
-  @Test
   public void serializeStatus() throws Exception {
     assertRoundTrip(
         newBuilder().columns(cols.toBuilder().status(Change.Status.MERGED).build()).build(),
@@ -303,26 +290,11 @@ public class ChangeNotesStateTest {
   @Test
   public void serializeRevertOf() throws Exception {
     assertRoundTrip(
-        newBuilder().columns(cols.toBuilder().revertOf(new Change.Id(999)).build()).build(),
+        newBuilder().columns(cols.toBuilder().revertOf(Change.id(999)).build()).build(),
         ChangeNotesStateProto.newBuilder()
             .setMetaId(SHA_BYTES)
             .setChangeId(ID.get())
             .setColumns(colsProto.toBuilder().setRevertOf(999).setHasRevertOf(true))
-            .build());
-  }
-
-  @Test
-  public void serializePastAssignees() throws Exception {
-    assertRoundTrip(
-        newBuilder()
-            .pastAssignees(ImmutableSet.of(new Account.Id(2002), new Account.Id(2001)))
-            .build(),
-        ChangeNotesStateProto.newBuilder()
-            .setMetaId(SHA_BYTES)
-            .setChangeId(ID.get())
-            .setColumns(colsProto)
-            .addPastAssignee(2002)
-            .addPastAssignee(2001)
             .build());
   }
 
@@ -341,25 +313,29 @@ public class ChangeNotesStateTest {
 
   @Test
   public void serializePatchSets() throws Exception {
-    PatchSet ps1 = new PatchSet(new PatchSet.Id(ID, 1));
-    ps1.setUploader(new Account.Id(2000));
-    ps1.setRevision(new RevId("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
-    ps1.setCreatedOn(cols.createdOn());
-    ByteString ps1Bytes = toByteString(ps1, PATCH_SET_CODEC);
+    PatchSet ps1 =
+        PatchSet.builder()
+            .id(PatchSet.id(ID, 1))
+            .commitId(ObjectId.fromString("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
+            .uploader(Account.id(2000))
+            .createdOn(cols.createdOn())
+            .build();
+    ByteString ps1Bytes = toByteString(ps1, PatchSetProtoConverter.INSTANCE);
     assertThat(ps1Bytes.size()).isEqualTo(66);
 
-    PatchSet ps2 = new PatchSet(new PatchSet.Id(ID, 2));
-    ps2.setUploader(new Account.Id(3000));
-    ps2.setRevision(new RevId("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
-    ps2.setCreatedOn(cols.lastUpdatedOn());
-    ByteString ps2Bytes = toByteString(ps2, PATCH_SET_CODEC);
+    PatchSet ps2 =
+        PatchSet.builder()
+            .id(PatchSet.id(ID, 2))
+            .commitId(ObjectId.fromString("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"))
+            .uploader(Account.id(3000))
+            .createdOn(cols.lastUpdatedOn())
+            .build();
+    ByteString ps2Bytes = toByteString(ps2, PatchSetProtoConverter.INSTANCE);
     assertThat(ps2Bytes.size()).isEqualTo(66);
     assertThat(ps2Bytes).isNotEqualTo(ps1Bytes);
 
     assertRoundTrip(
-        newBuilder()
-            .patchSets(ImmutableMap.of(ps2.getId(), ps2, ps1.getId(), ps1).entrySet())
-            .build(),
+        newBuilder().patchSets(ImmutableMap.of(ps2.id(), ps2, ps1.id(), ps1).entrySet()).build(),
         ChangeNotesStateProto.newBuilder()
             .setMetaId(SHA_BYTES)
             .setChangeId(ID.get())
@@ -372,28 +348,31 @@ public class ChangeNotesStateTest {
   @Test
   public void serializeApprovals() throws Exception {
     PatchSetApproval a1 =
-        new PatchSetApproval(
-            new PatchSetApproval.Key(
-                new PatchSet.Id(ID, 1), new Account.Id(2001), new LabelId("Code-Review")),
-            (short) 1,
-            new Timestamp(1212L));
-    ByteString a1Bytes = toByteString(a1, APPROVAL_CODEC);
+        PatchSetApproval.builder()
+            .key(
+                PatchSetApproval.key(
+                    PatchSet.id(ID, 1), Account.id(2001), LabelId.create("Code-Review")))
+            .value(1)
+            .granted(new Timestamp(1212L))
+            .build();
+    ByteString a1Bytes = toByteString(a1, PatchSetApprovalProtoConverter.INSTANCE);
     assertThat(a1Bytes.size()).isEqualTo(43);
 
     PatchSetApproval a2 =
-        new PatchSetApproval(
-            new PatchSetApproval.Key(
-                new PatchSet.Id(ID, 1), new Account.Id(2002), new LabelId("Verified")),
-            (short) -1,
-            new Timestamp(3434L));
-    ByteString a2Bytes = toByteString(a2, APPROVAL_CODEC);
+        PatchSetApproval.builder()
+            .key(
+                PatchSetApproval.key(
+                    PatchSet.id(ID, 1), Account.id(2002), LabelId.create("Verified")))
+            .value(-1)
+            .granted(new Timestamp(3434L))
+            .build();
+    ByteString a2Bytes = toByteString(a2, PatchSetApprovalProtoConverter.INSTANCE);
     assertThat(a2Bytes.size()).isEqualTo(49);
     assertThat(a2Bytes).isNotEqualTo(a1Bytes);
 
     assertRoundTrip(
         newBuilder()
-            .approvals(
-                ImmutableListMultimap.of(a2.getPatchSetId(), a2, a1.getPatchSetId(), a1).entries())
+            .approvals(ImmutableListMultimap.of(a2.patchSetId(), a2, a1.patchSetId(), a1).entries())
             .build(),
         ChangeNotesStateProto.newBuilder()
             .setMetaId(SHA_BYTES)
@@ -411,11 +390,8 @@ public class ChangeNotesStateTest {
             .reviewers(
                 ReviewerSet.fromTable(
                     ImmutableTable.<ReviewerStateInternal, Account.Id, Timestamp>builder()
-                        .put(ReviewerStateInternal.CC, new Account.Id(2001), new Timestamp(1212L))
-                        .put(
-                            ReviewerStateInternal.REVIEWER,
-                            new Account.Id(2002),
-                            new Timestamp(3434L))
+                        .put(ReviewerStateInternal.CC, Account.id(2001), new Timestamp(1212L))
+                        .put(ReviewerStateInternal.REVIEWER, Account.id(2002), new Timestamp(3434L))
                         .build()))
             .build(),
         ChangeNotesStateProto.newBuilder()
@@ -508,11 +484,8 @@ public class ChangeNotesStateTest {
             .pendingReviewers(
                 ReviewerSet.fromTable(
                     ImmutableTable.<ReviewerStateInternal, Account.Id, Timestamp>builder()
-                        .put(ReviewerStateInternal.CC, new Account.Id(2001), new Timestamp(1212L))
-                        .put(
-                            ReviewerStateInternal.REVIEWER,
-                            new Account.Id(2002),
-                            new Timestamp(3434L))
+                        .put(ReviewerStateInternal.CC, Account.id(2001), new Timestamp(1212L))
+                        .put(ReviewerStateInternal.REVIEWER, Account.id(2002), new Timestamp(3434L))
                         .build()))
             .build(),
         ChangeNotesStateProto.newBuilder()
@@ -569,9 +542,7 @@ public class ChangeNotesStateTest {
   @Test
   public void serializeAllPastReviewers() throws Exception {
     assertRoundTrip(
-        newBuilder()
-            .allPastReviewers(ImmutableList.of(new Account.Id(2002), new Account.Id(2001)))
-            .build(),
+        newBuilder().allPastReviewers(ImmutableList.of(Account.id(2002), Account.id(2001))).build(),
         ChangeNotesStateProto.newBuilder()
             .setMetaId(SHA_BYTES)
             .setChangeId(ID.get())
@@ -589,13 +560,13 @@ public class ChangeNotesStateTest {
                 ImmutableList.of(
                     ReviewerStatusUpdate.create(
                         new Timestamp(1212L),
-                        new Account.Id(1000),
-                        new Account.Id(2002),
+                        Account.id(1000),
+                        Account.id(2002),
                         ReviewerStateInternal.CC),
                     ReviewerStatusUpdate.create(
                         new Timestamp(3434L),
-                        new Account.Id(1000),
-                        new Account.Id(2001),
+                        Account.id(1000),
+                        Account.id(2001),
                         ReviewerStateInternal.REVIEWER)))
             .build(),
         ChangeNotesStateProto.newBuilder()
@@ -614,6 +585,35 @@ public class ChangeNotesStateTest {
                     .setUpdatedBy(1000)
                     .setReviewer(2001)
                     .setState("REVIEWER"))
+            .build());
+  }
+
+  @Test
+  public void serializeAssigneeUpdates() throws Exception {
+    assertRoundTrip(
+        newBuilder()
+            .assigneeUpdates(
+                ImmutableList.of(
+                    AssigneeStatusUpdate.create(
+                        new Timestamp(1212L), Account.id(1000), Optional.of(Account.id(2001))),
+                    AssigneeStatusUpdate.create(
+                        new Timestamp(3434L), Account.id(1000), Optional.empty())))
+            .build(),
+        ChangeNotesStateProto.newBuilder()
+            .setMetaId(SHA_BYTES)
+            .setChangeId(ID.get())
+            .setColumns(colsProto)
+            .addAssigneeUpdate(
+                AssigneeStatusUpdateProto.newBuilder()
+                    .setDate(1212L)
+                    .setUpdatedBy(1000)
+                    .setCurrentAssignee(2001)
+                    .setHasCurrentAssignee(true))
+            .addAssigneeUpdate(
+                AssigneeStatusUpdateProto.newBuilder()
+                    .setDate(3434L)
+                    .setUpdatedBy(1000)
+                    .setHasCurrentAssignee(false))
             .build());
   }
 
@@ -640,20 +640,20 @@ public class ChangeNotesStateTest {
   public void serializeChangeMessages() throws Exception {
     ChangeMessage m1 =
         new ChangeMessage(
-            new ChangeMessage.Key(ID, "uuid1"),
-            new Account.Id(1000),
+            ChangeMessage.key(ID, "uuid1"),
+            Account.id(1000),
             new Timestamp(1212L),
-            new PatchSet.Id(ID, 1));
-    ByteString m1Bytes = toByteString(m1, MESSAGE_CODEC);
+            PatchSet.id(ID, 1));
+    ByteString m1Bytes = toByteString(m1, ChangeMessageProtoConverter.INSTANCE);
     assertThat(m1Bytes.size()).isEqualTo(35);
 
     ChangeMessage m2 =
         new ChangeMessage(
-            new ChangeMessage.Key(ID, "uuid2"),
-            new Account.Id(2000),
+            ChangeMessage.key(ID, "uuid2"),
+            Account.id(2000),
             new Timestamp(3434L),
-            new PatchSet.Id(ID, 2));
-    ByteString m2Bytes = toByteString(m2, MESSAGE_CODEC);
+            PatchSet.id(ID, 2));
+    ByteString m2Bytes = toByteString(m2, ChangeMessageProtoConverter.INSTANCE);
     assertThat(m2Bytes.size()).isEqualTo(35);
     assertThat(m2Bytes).isNotEqualTo(m1Bytes);
 
@@ -673,31 +673,30 @@ public class ChangeNotesStateTest {
     Comment c1 =
         new Comment(
             new Comment.Key("uuid1", "file1", 1),
-            new Account.Id(1001),
+            Account.id(1001),
             new Timestamp(1212L),
             (short) 1,
             "message 1",
             "serverId",
             false);
-    c1.setRevId(new RevId("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+    c1.setCommitId(ObjectId.fromString("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
     String c1Json = Serializer.GSON.toJson(c1);
 
     Comment c2 =
         new Comment(
             new Comment.Key("uuid2", "file2", 2),
-            new Account.Id(1002),
+            Account.id(1002),
             new Timestamp(3434L),
             (short) 2,
             "message 2",
             "serverId",
             true);
-    c2.setRevId(new RevId("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
+    c2.setCommitId(ObjectId.fromString("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
     String c2Json = Serializer.GSON.toJson(c2);
 
     assertRoundTrip(
         newBuilder()
-            .publishedComments(
-                ImmutableListMultimap.of(new RevId(c2.revId), c2, new RevId(c1.revId), c1))
+            .publishedComments(ImmutableListMultimap.of(c2.getCommitId(), c2, c1.getCommitId(), c1))
             .build(),
         ChangeNotesStateProto.newBuilder()
             .setMetaId(SHA_BYTES)
@@ -709,15 +708,14 @@ public class ChangeNotesStateTest {
   }
 
   @Test
-  public void serializeReadOnlyUntil() throws Exception {
+  public void serializeUpdateCount() throws Exception {
     assertRoundTrip(
-        newBuilder().readOnlyUntil(new Timestamp(1212L)).build(),
+        newBuilder().updateCount(234).build(),
         ChangeNotesStateProto.newBuilder()
             .setMetaId(SHA_BYTES)
             .setChangeId(ID.get())
             .setColumns(colsProto)
-            .setReadOnlyUntil(1212L)
-            .setHasReadOnlyUntil(true)
+            .setUpdateCount(234)
             .build());
   }
 
@@ -728,8 +726,8 @@ public class ChangeNotesStateTest {
             ImmutableMap.<String, Type>builder()
                 .put("metaId", ObjectId.class)
                 .put("changeId", Change.Id.class)
+                .put("serverId", String.class)
                 .put("columns", ChangeColumns.class)
-                .put("pastAssignees", new TypeLiteral<ImmutableSet<Account.Id>>() {}.getType())
                 .put("hashtags", new TypeLiteral<ImmutableSet<String>>() {}.getType())
                 .put(
                     "patchSets",
@@ -746,12 +744,15 @@ public class ChangeNotesStateTest {
                 .put(
                     "reviewerUpdates",
                     new TypeLiteral<ImmutableList<ReviewerStatusUpdate>>() {}.getType())
+                .put(
+                    "assigneeUpdates",
+                    new TypeLiteral<ImmutableList<AssigneeStatusUpdate>>() {}.getType())
                 .put("submitRecords", new TypeLiteral<ImmutableList<SubmitRecord>>() {}.getType())
                 .put("changeMessages", new TypeLiteral<ImmutableList<ChangeMessage>>() {}.getType())
                 .put(
                     "publishedComments",
-                    new TypeLiteral<ImmutableListMultimap<RevId, Comment>>() {}.getType())
-                .put("readOnlyUntil", Timestamp.class)
+                    new TypeLiteral<ImmutableListMultimap<ObjectId, Comment>>() {}.getType())
+                .put("updateCount", int.class)
                 .build());
   }
 
@@ -770,12 +771,12 @@ public class ChangeNotesStateTest {
                 .put("topic", String.class)
                 .put("originalSubject", String.class)
                 .put("submissionId", String.class)
-                .put("assignee", Account.Id.class)
                 .put("status", Change.Status.class)
                 .put("isPrivate", boolean.class)
                 .put("workInProgress", boolean.class)
                 .put("reviewStarted", boolean.class)
                 .put("revertOf", Change.Id.class)
+                .put("cherryPickOf", PatchSet.Id.class)
                 .put("toBuilder", ChangeNotesState.ChangeColumns.Builder.class)
                 .build());
   }
@@ -783,36 +784,37 @@ public class ChangeNotesStateTest {
   @Test
   public void patchSetFields() throws Exception {
     assertThatSerializedClass(PatchSet.class)
-        .hasFields(
+        .hasAutoValueMethods(
             ImmutableMap.<String, Type>builder()
                 .put("id", PatchSet.Id.class)
-                .put("revision", RevId.class)
+                .put("commitId", ObjectId.class)
                 .put("uploader", Account.Id.class)
                 .put("createdOn", Timestamp.class)
-                .put("groups", String.class)
-                .put("pushCertificate", String.class)
-                .put("description", String.class)
+                .put("groups", new TypeLiteral<ImmutableList<String>>() {}.getType())
+                .put("pushCertificate", new TypeLiteral<Optional<String>>() {}.getType())
+                .put("description", new TypeLiteral<Optional<String>>() {}.getType())
                 .build());
   }
 
   @Test
   public void patchSetApprovalFields() throws Exception {
     assertThatSerializedClass(PatchSetApproval.Key.class)
-        .hasFields(
+        .hasAutoValueMethods(
             ImmutableMap.<String, Type>builder()
                 .put("patchSetId", PatchSet.Id.class)
                 .put("accountId", Account.Id.class)
-                .put("categoryId", LabelId.class)
+                .put("labelId", LabelId.class)
                 .build());
     assertThatSerializedClass(PatchSetApproval.class)
-        .hasFields(
+        .hasAutoValueMethods(
             ImmutableMap.<String, Type>builder()
                 .put("key", PatchSetApproval.Key.class)
                 .put("value", short.class)
                 .put("granted", Timestamp.class)
-                .put("tag", String.class)
+                .put("tag", new TypeLiteral<Optional<String>>() {}.getType())
                 .put("realAccountId", Account.Id.class)
                 .put("postSubmit", boolean.class)
+                .put("toBuilder", PatchSetApproval.Builder.class)
                 .build());
   }
 
@@ -851,6 +853,19 @@ public class ChangeNotesStateTest {
   }
 
   @Test
+  public void assigneeStatusUpdateMethods() throws Exception {
+    assertThatSerializedClass(AssigneeStatusUpdate.class)
+        .hasAutoValueMethods(
+            ImmutableMap.of(
+                "date",
+                Timestamp.class,
+                "updatedBy",
+                Account.Id.class,
+                "currentAssignee",
+                new TypeLiteral<Optional<Account.Id>>() {}.getType()));
+  }
+
+  @Test
   public void submitRecordFields() throws Exception {
     assertThatSerializedClass(SubmitRecord.class)
         .hasFields(
@@ -880,7 +895,7 @@ public class ChangeNotesStateTest {
   @Test
   public void changeMessageFields() throws Exception {
     assertThatSerializedClass(ChangeMessage.Key.class)
-        .hasFields(ImmutableMap.of("changeId", Change.Id.class, "uuid", String.class));
+        .hasAutoValueMethods(ImmutableMap.of("changeId", Change.Id.class, "uuid", String.class));
     assertThatSerializedClass(ChangeMessage.class)
         .hasFields(
             ImmutableMap.<String, Type>builder()
@@ -924,8 +939,20 @@ public class ChangeNotesStateTest {
                 .put("revId", String.class)
                 .put("serverId", String.class)
                 .put("unresolved", boolean.class)
-                .put("legacyFormat", boolean.class)
                 .build());
+  }
+
+  @Test
+  public void serializeServerId() throws Exception {
+    assertRoundTrip(
+        newBuilder().serverId(DEFAULT_SERVER_ID).build(),
+        ChangeNotesStateProto.newBuilder()
+            .setMetaId(SHA_BYTES)
+            .setChangeId(ID.get())
+            .setServerId(DEFAULT_SERVER_ID)
+            .setHasServerId(true)
+            .setColumns(colsProto.toBuilder())
+            .build());
   }
 
   private static ChangeNotesStateProto toProto(ChangeNotesState state) throws Exception {

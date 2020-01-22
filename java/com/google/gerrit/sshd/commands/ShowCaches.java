@@ -47,11 +47,11 @@ import java.text.SimpleDateFormat;
 import java.util.Collection;
 import java.util.Date;
 import java.util.Map;
-import java.util.Map.Entry;
 import org.apache.sshd.common.io.IoAcceptor;
 import org.apache.sshd.common.io.IoSession;
 import org.apache.sshd.common.io.mina.MinaSession;
 import org.apache.sshd.server.Environment;
+import org.apache.sshd.server.channel.ChannelSession;
 import org.kohsuke.args4j.Option;
 
 /** Show the current cache states. */
@@ -98,7 +98,7 @@ final class ShowCaches extends SshCommand {
   private int nw;
 
   @Override
-  public void start(Environment env) throws IOException {
+  public void start(ChannelSession channel, Environment env) throws IOException {
     String s = env.getEnv().get(Environment.ENV_COLUMNS);
     if (s != null && !s.isEmpty()) {
       try {
@@ -107,11 +107,11 @@ final class ShowCaches extends SshCommand {
         columns = 80;
       }
     }
-    super.start(env);
+    super.start(channel, env);
   }
 
   @Override
-  protected void run() throws UnloggedFailure {
+  protected void run() throws Failure {
     nw = columns - 50;
     Date now = new Date();
     stdout.format(
@@ -162,31 +162,36 @@ final class ShowCaches extends SshCommand {
     }
     stdout.print("+---------------------+---------+---------+\n");
 
-    Collection<CacheInfo> caches = getCaches();
-    printMemoryCoreCaches(caches);
-    printMemoryPluginCaches(caches);
-    printDiskCaches(caches);
-    stdout.print('\n');
-
-    boolean showJvm;
     try {
-      permissionBackend.user(self).check(GlobalPermission.MAINTAIN_SERVER);
-      showJvm = true;
-    } catch (AuthException | PermissionBackendException e) {
-      // Silently ignore and do not display detailed JVM information.
-      showJvm = false;
-    }
-    if (showJvm) {
-      sshSummary();
+      Collection<CacheInfo> caches = getCaches();
+      printMemoryCoreCaches(caches);
+      printMemoryPluginCaches(caches);
+      printDiskCaches(caches);
+      stdout.print('\n');
 
-      SummaryInfo summary = getSummary.setGc(gc).setJvm(showJVM).apply(new ConfigResource());
-      taskSummary(summary.taskSummary);
-      memSummary(summary.memSummary);
-      threadSummary(summary.threadSummary);
-
-      if (showJVM && summary.jvmSummary != null) {
-        jvmSummary(summary.jvmSummary);
+      boolean showJvm;
+      try {
+        permissionBackend.user(self).check(GlobalPermission.MAINTAIN_SERVER);
+        showJvm = true;
+      } catch (AuthException | PermissionBackendException e) {
+        // Silently ignore and do not display detailed JVM information.
+        showJvm = false;
       }
+      if (showJvm) {
+        sshSummary();
+
+        SummaryInfo summary =
+            getSummary.setGc(gc).setJvm(showJVM).apply(new ConfigResource()).value();
+        taskSummary(summary.taskSummary);
+        memSummary(summary.memSummary);
+        threadSummary(summary.threadSummary);
+
+        if (showJVM && summary.jvmSummary != null) {
+          jvmSummary(summary.jvmSummary);
+        }
+      }
+    } catch (Exception e) {
+      throw new Failure(1, "unavailable", e);
     }
 
     stdout.flush();
@@ -194,7 +199,8 @@ final class ShowCaches extends SshCommand {
 
   private Collection<CacheInfo> getCaches() {
     @SuppressWarnings("unchecked")
-    Map<String, CacheInfo> caches = (Map<String, CacheInfo>) listCaches.apply(new ConfigResource());
+    Map<String, CacheInfo> caches =
+        (Map<String, CacheInfo>) listCaches.apply(new ConfigResource()).value();
     for (Map.Entry<String, CacheInfo> entry : caches.entrySet()) {
       CacheInfo cache = entry.getValue();
       cache.name = entry.getKey();
@@ -267,7 +273,7 @@ final class ShowCaches extends SshCommand {
         stdout.print(String.format(" %14s", s.name()));
       }
       stdout.print('\n');
-      for (Entry<String, Map<Thread.State, Integer>> e : threadSummary.counts.entrySet()) {
+      for (Map.Entry<String, Map<Thread.State, Integer>> e : threadSummary.counts.entrySet()) {
         stdout.print(String.format("  %-22s", e.getKey()));
         for (Thread.State s : Thread.State.values()) {
           stdout.print(String.format(" %14d", nullToZero(e.getValue().get(s))));

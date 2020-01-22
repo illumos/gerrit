@@ -15,6 +15,8 @@
 package com.google.gerrit.acceptance.server.project;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allowLabel;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.labelPermissionKey;
 import static com.google.gerrit.common.data.LabelFunction.ANY_WITH_BLOCK;
 import static com.google.gerrit.common.data.LabelFunction.MAX_NO_BLOCK;
 import static com.google.gerrit.common.data.LabelFunction.MAX_WITH_BLOCK;
@@ -24,77 +26,50 @@ import static com.google.gerrit.extensions.client.ListChangesOption.DETAILED_LAB
 import static com.google.gerrit.extensions.client.ListChangesOption.LABELS;
 import static com.google.gerrit.extensions.client.ListChangesOption.SUBMITTABLE;
 import static com.google.gerrit.server.group.SystemGroupBackend.ANONYMOUS_USERS;
-import static com.google.gerrit.server.project.testing.Util.category;
-import static com.google.gerrit.server.project.testing.Util.value;
+import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
+import static com.google.gerrit.server.project.testing.TestLabels.label;
+import static com.google.gerrit.server.project.testing.TestLabels.value;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 
 import com.google.gerrit.acceptance.AbstractDaemonTest;
+import com.google.gerrit.acceptance.ExtensionRegistry;
+import com.google.gerrit.acceptance.ExtensionRegistry.Registration;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.PushOneCommit;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.common.data.LabelFunction;
 import com.google.gerrit.common.data.LabelType;
-import com.google.gerrit.common.data.Permission;
 import com.google.gerrit.extensions.api.changes.AddReviewerInput;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
 import com.google.gerrit.extensions.common.ChangeInfo;
 import com.google.gerrit.extensions.common.LabelInfo;
 import com.google.gerrit.extensions.events.CommentAddedListener;
-import com.google.gerrit.extensions.registration.DynamicSet;
-import com.google.gerrit.extensions.registration.RegistrationHandle;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.server.group.SystemGroupBackend;
 import com.google.gerrit.server.project.ProjectConfig;
-import com.google.gerrit.server.project.testing.Util;
 import com.google.inject.Inject;
 import java.util.Arrays;
-import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
 @NoHttpd
 public class CustomLabelIT extends AbstractDaemonTest {
 
-  @Inject private DynamicSet<CommentAddedListener> source;
+  @Inject private ProjectOperations projectOperations;
+  @Inject private ExtensionRegistry extensionRegistry;
 
   private final LabelType label =
-      category("CustomLabel", value(1, "Positive"), value(0, "No score"), value(-1, "Negative"));
+      label("CustomLabel", value(1, "Positive"), value(0, "No score"), value(-1, "Negative"));
 
-  private final LabelType P = category("CustomLabel2", value(1, "Positive"), value(0, "No score"));
-
-  private RegistrationHandle eventListenerRegistration;
-  private CommentAddedListener.Event lastCommentAddedEvent;
+  private final LabelType P = label("CustomLabel2", value(1, "Positive"), value(0, "No score"));
 
   @Before
   public void setUp() throws Exception {
-    try (ProjectConfigUpdate u = updateProject(project)) {
-      AccountGroup.UUID anonymousUsers = systemGroupBackend.getGroup(ANONYMOUS_USERS).getUUID();
-      Util.allow(
-          u.getConfig(),
-          Permission.forLabel(label.getName()),
-          -1,
-          1,
-          anonymousUsers,
-          "refs/heads/*");
-      Util.allow(
-          u.getConfig(), Permission.forLabel(P.getName()), 0, 1, anonymousUsers, "refs/heads/*");
-      u.save();
-    }
-
-    eventListenerRegistration =
-        source.add(
-            "gerrit",
-            new CommentAddedListener() {
-              @Override
-              public void onCommentAdded(Event event) {
-                lastCommentAddedEvent = event;
-              }
-            });
-  }
-
-  @After
-  public void cleanup() {
-    eventListenerRegistration.remove();
-    db.close();
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allowLabel(label.getName()).ref("refs/heads/*").group(ANONYMOUS_USERS).range(-1, 1))
+        .add(allowLabel(P.getName()).ref("refs/heads/*").group(ANONYMOUS_USERS).range(0, 1))
+        .update();
   }
 
   @Test
@@ -181,28 +156,41 @@ public class CustomLabelIT extends AbstractDaemonTest {
     assertThat(q.blocking).isTrue();
   }
 
+  private static class TestListener implements CommentAddedListener {
+    public CommentAddedListener.Event lastCommentAddedEvent;
+
+    @Override
+    public void onCommentAdded(Event event) {
+      lastCommentAddedEvent = event;
+    }
+  }
+
   @Test
   public void customLabelAnyWithBlock_Addreviewer_ZeroVote() throws Exception {
-    P.setFunction(ANY_WITH_BLOCK);
-    saveLabelConfig();
-    PushOneCommit.Result r = createChange();
-    AddReviewerInput in = new AddReviewerInput();
-    in.reviewer = user.email;
-    gApi.changes().id(r.getChangeId()).addReviewer(in);
+    TestListener testListener = new TestListener();
+    try (Registration registration = extensionRegistry.newRegistration().add(testListener)) {
+      P.setFunction(ANY_WITH_BLOCK);
+      saveLabelConfig();
+      PushOneCommit.Result r = createChange();
+      AddReviewerInput in = new AddReviewerInput();
+      in.reviewer = user.email();
+      gApi.changes().id(r.getChangeId()).addReviewer(in);
 
-    ReviewInput input = new ReviewInput().label(P.getName(), 0);
-    input.message = "foo";
+      ReviewInput input = new ReviewInput().label(P.getName(), 0);
+      input.message = "foo";
 
-    revision(r).review(input);
-    ChangeInfo c = getWithLabels(r);
-    LabelInfo q = c.labels.get(P.getName());
-    assertThat(q.all).hasSize(2);
-    assertThat(q.approved).isNull();
-    assertThat(q.recommended).isNull();
-    assertThat(q.disliked).isNull();
-    assertThat(q.rejected).isNull();
-    assertThat(q.blocking).isNull();
-    assertThat(lastCommentAddedEvent.getComment()).isEqualTo("Patch Set 1:\n\n" + input.message);
+      revision(r).review(input);
+      ChangeInfo c = getWithLabels(r);
+      LabelInfo q = c.labels.get(P.getName());
+      assertThat(q.all).hasSize(1);
+      assertThat(q.approved).isNull();
+      assertThat(q.recommended).isNull();
+      assertThat(q.disliked).isNull();
+      assertThat(q.rejected).isNull();
+      assertThat(q.blocking).isNull();
+      assertThat(testListener.lastCommentAddedEvent.getComment())
+          .isEqualTo("Patch Set 1:\n\n" + input.message);
+    }
   }
 
   @Test
@@ -274,15 +262,17 @@ public class CustomLabelIT extends AbstractDaemonTest {
     assertPermitted(info, P.getName(), 0, 1);
     assertPermitted(info, label.getName());
 
-    ReviewInput in = new ReviewInput();
-    in.label(P.getName(), P.getMax().getValue());
-    revision(r).review(in);
+    ReviewInput postSubmitReview1 = new ReviewInput();
+    postSubmitReview1.label(P.getName(), P.getMax().getValue());
+    revision(r).review(postSubmitReview1);
 
-    in = new ReviewInput();
-    in.label(label.getName(), label.getMax().getValue());
-    exception.expect(ResourceConflictException.class);
-    exception.expectMessage("Voting on labels disallowed after submit: " + label.getName());
-    revision(r).review(in);
+    ReviewInput postSubmitReview2 = new ReviewInput();
+    postSubmitReview2.label(label.getName(), label.getMax().getValue());
+    ResourceConflictException thrown =
+        assertThrows(ResourceConflictException.class, () -> revision(r).review(postSubmitReview2));
+    assertThat(thrown)
+        .hasMessageThat()
+        .contains("Voting on labels disallowed after submit: " + label.getName());
   }
 
   @Test
@@ -298,11 +288,11 @@ public class CustomLabelIT extends AbstractDaemonTest {
         value(-1, "I would prefer this is not merged as is"),
         value(-2, "This shall not be merged"));
 
-    AccountGroup.UUID registered = SystemGroupBackend.REGISTERED_USERS;
-    try (ProjectConfigUpdate u = updateProject(project)) {
-      Util.allow(u.getConfig(), Permission.forLabel(testLabel), -2, +2, registered, "refs/heads/*");
-      u.save();
-    }
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allowLabel(testLabel).ref("refs/heads/*").group(REGISTERED_USERS).range(-2, +2))
+        .update();
 
     PushOneCommit.Result result = createChange();
     String changeId = result.getChangeId();
@@ -320,11 +310,12 @@ public class CustomLabelIT extends AbstractDaemonTest {
     assertThat(gApi.changes().id(changeId).get().submittable).isTrue();
 
     // Update admin's permitted range for 'Test-Label' to be -1...+1.
-    try (ProjectConfigUpdate u = updateProject(project)) {
-      Util.remove(u.getConfig(), Permission.forLabel(testLabel), registered, "refs/heads/*");
-      Util.allow(u.getConfig(), Permission.forLabel(testLabel), -1, +1, registered, "refs/heads/*");
-      u.save();
-    }
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .remove(labelPermissionKey(testLabel).ref("refs/heads/*").group(REGISTERED_USERS))
+        .add(allowLabel(testLabel).ref("refs/heads/*").group(REGISTERED_USERS).range(-1, +1))
+        .update();
 
     // Verify admin doesn't have +2 permission any more.
     assertPermitted(gApi.changes().id(changeId).get(), testLabel, -1, 0, 1);

@@ -17,14 +17,14 @@ package com.google.gerrit.sshd.commands;
 import static java.util.stream.Collectors.toList;
 
 import com.google.gerrit.common.data.GlobalCapability;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
 import com.google.gerrit.extensions.annotations.RequiresCapability;
 import com.google.gerrit.extensions.api.groups.GroupInput;
 import com.google.gerrit.extensions.common.GroupInfo;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.TopLevelResource;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
 import com.google.gerrit.server.group.GroupResource;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.restapi.group.AddMembers;
@@ -33,7 +33,6 @@ import com.google.gerrit.server.restapi.group.CreateGroup;
 import com.google.gerrit.server.restapi.group.GroupsCollection;
 import com.google.gerrit.sshd.CommandMetaData;
 import com.google.gerrit.sshd.SshCommand;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import java.io.IOException;
 import java.util.HashSet;
@@ -102,8 +101,7 @@ final class CreateGroupCommand extends SshCommand {
 
   @Override
   protected void run()
-      throws Failure, OrmException, IOException, ConfigInvalidException,
-          PermissionBackendException {
+      throws Failure, IOException, ConfigInvalidException, PermissionBackendException {
     try {
       GroupResource rsrc = createGroup();
 
@@ -116,12 +114,13 @@ final class CreateGroupCommand extends SshCommand {
       }
     } catch (RestApiException e) {
       throw die(e);
+    } catch (Exception e) {
+      throw new Failure(1, "unavailable", e);
     }
   }
 
   private GroupResource createGroup()
-      throws RestApiException, OrmException, IOException, ConfigInvalidException,
-          PermissionBackendException {
+      throws RestApiException, IOException, ConfigInvalidException, PermissionBackendException {
     GroupInput input = new GroupInput();
     input.description = groupDescription;
     input.visibleToAll = visibleToAll;
@@ -131,13 +130,14 @@ final class CreateGroupCommand extends SshCommand {
     }
 
     GroupInfo group =
-        createGroup.apply(TopLevelResource.INSTANCE, IdString.fromDecoded(groupName), input);
+        createGroup
+            .apply(TopLevelResource.INSTANCE, IdString.fromDecoded(groupName), input)
+            .value();
     return groups.parse(TopLevelResource.INSTANCE, IdString.fromUrl(group.id));
   }
 
   private void addMembers(GroupResource rsrc)
-      throws RestApiException, OrmException, IOException, ConfigInvalidException,
-          PermissionBackendException {
+      throws RestApiException, IOException, ConfigInvalidException, PermissionBackendException {
     AddMembers.Input input =
         AddMembers.Input.fromMembers(
             initialMembers.stream().map(Object::toString).collect(toList()));
@@ -145,8 +145,7 @@ final class CreateGroupCommand extends SshCommand {
   }
 
   private void addSubgroups(GroupResource rsrc)
-      throws RestApiException, OrmException, IOException, ConfigInvalidException,
-          PermissionBackendException {
+      throws RestApiException, IOException, ConfigInvalidException, PermissionBackendException {
     AddSubgroups.Input input =
         AddSubgroups.Input.fromGroups(
             initialGroups.stream().map(AccountGroup.UUID::get).collect(toList()));

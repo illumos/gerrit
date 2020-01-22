@@ -14,18 +14,18 @@
 
 package com.google.gerrit.elasticsearch;
 
-import static com.google.gerrit.server.index.account.AccountField.ID;
-
+import com.google.common.collect.ImmutableSet;
 import com.google.gerrit.elasticsearch.ElasticMapping.MappingProperties;
 import com.google.gerrit.elasticsearch.bulk.BulkRequest;
 import com.google.gerrit.elasticsearch.bulk.IndexRequest;
 import com.google.gerrit.elasticsearch.bulk.UpdateRequest;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.index.QueryOptions;
 import com.google.gerrit.index.Schema;
 import com.google.gerrit.index.query.DataSource;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryParseException;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountState;
 import com.google.gerrit.server.config.SitePaths;
@@ -38,7 +38,6 @@ import com.google.gson.JsonObject;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.assistedinject.Assisted;
-import java.io.IOException;
 import java.util.Set;
 import org.apache.http.HttpStatus;
 import org.elasticsearch.client.Response;
@@ -73,27 +72,35 @@ public class ElasticAccountIndex extends AbstractElasticIndex<Account.Id, Accoun
   }
 
   @Override
-  public void replace(AccountState as) throws IOException {
+  public void replace(AccountState as) {
     BulkRequest bulk =
         new IndexRequest(getId(as), indexName, type, client.adapter())
-            .add(new UpdateRequest<>(schema, as));
+            .add(new UpdateRequest<>(schema, as, ImmutableSet.of()));
 
     String uri = getURI(type, BULK);
     Response response = postRequest(uri, bulk, getRefreshParam());
     int statusCode = response.getStatusLine().getStatusCode();
     if (statusCode != HttpStatus.SC_OK) {
-      throw new IOException(
+      throw new StorageException(
           String.format(
               "Failed to replace account %s in index %s: %s",
-              as.getAccount().getId(), indexName, statusCode));
+              as.account().id(), indexName, statusCode));
     }
   }
 
   @Override
   public DataSource<AccountState> getSource(Predicate<AccountState> p, QueryOptions opts)
       throws QueryParseException {
-    JsonArray sortArray = getSortArray(AccountField.ID.getName());
-    return new ElasticQuerySource(p, opts.filterFields(IndexUtils::accountFields), type, sortArray);
+    JsonArray sortArray =
+        getSortArray(
+            schema.useLegacyNumericFields()
+                ? AccountField.ID.getName()
+                : AccountField.ID_STR.getName());
+    return new ElasticQuerySource(
+        p,
+        opts.filterFields(o -> IndexUtils.accountFields(o, schema.useLegacyNumericFields())),
+        type,
+        sortArray);
   }
 
   @Override
@@ -108,7 +115,7 @@ public class ElasticAccountIndex extends AbstractElasticIndex<Account.Id, Accoun
 
   @Override
   protected String getId(AccountState as) {
-    return as.getAccount().getId().toString();
+    return as.account().id().toString();
   }
 
   @Override
@@ -118,7 +125,15 @@ public class ElasticAccountIndex extends AbstractElasticIndex<Account.Id, Accoun
       source = json.getAsJsonObject().get("fields");
     }
 
-    Account.Id id = new Account.Id(source.getAsJsonObject().get(ID.getName()).getAsInt());
+    Account.Id id =
+        Account.id(
+            source
+                .getAsJsonObject()
+                .get(
+                    schema.useLegacyNumericFields()
+                        ? AccountField.ID.getName()
+                        : AccountField.ID_STR.getName())
+                .getAsInt());
     // Use the AccountCache rather than depending on any stored fields in the document (of which
     // there shouldn't be any). The most expensive part to compute anyway is the effective group
     // IDs, and we don't have a good way to reindex when those change.

@@ -14,15 +14,16 @@
 
 package com.google.gerrit.server.restapi.account;
 
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.client.GeneralPreferencesInfo;
 import com.google.gerrit.extensions.config.DownloadScheme;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.registration.Extension;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestReadView;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountResource;
@@ -34,6 +35,17 @@ import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 
+/**
+ * REST endpoint to get the general preferences of an account.
+ *
+ * <p>This REST endpoint handles {@code GET /accounts/<account-identifier>/preferences} requests.
+ *
+ * <p>Diff preferences can be retrieved by {@link GetDiffPreferences} and edit preferences can be
+ * retrieved by {@link GetEditPreferences}.
+ *
+ * <p>Default general preferences that apply for all accounts can be retrieved by {@link
+ * com.google.gerrit.server.restapi.config.GetPreferences}.
+ */
 @Singleton
 public class GetPreferences implements RestReadView<AccountResource> {
   private final Provider<CurrentUser> self;
@@ -54,7 +66,7 @@ public class GetPreferences implements RestReadView<AccountResource> {
   }
 
   @Override
-  public GeneralPreferencesInfo apply(AccountResource rsrc)
+  public Response<GeneralPreferencesInfo> apply(AccountResource rsrc)
       throws RestApiException, PermissionBackendException {
     if (!self.get().hasSameAccountId(rsrc.getUser())) {
       permissionBackend.currentUser().check(GlobalPermission.MODIFY_ACCOUNT);
@@ -64,9 +76,9 @@ public class GetPreferences implements RestReadView<AccountResource> {
     GeneralPreferencesInfo preferencesInfo =
         accountCache
             .get(id)
-            .map(AccountState::getGeneralPreferences)
+            .map(AccountState::generalPreferences)
             .orElseThrow(() -> new ResourceNotFoundException(IdString.fromDecoded(id.toString())));
-    return unsetDownloadSchemeIfUnsupported(preferencesInfo);
+    return Response.ok(unsetDownloadSchemeIfUnsupported(preferencesInfo));
   }
 
   private GeneralPreferencesInfo unsetDownloadSchemeIfUnsupported(

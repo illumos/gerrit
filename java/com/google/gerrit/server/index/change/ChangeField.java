@@ -15,6 +15,8 @@
 package com.google.gerrit.server.index.change;
 
 import static com.google.common.base.MoreObjects.firstNonNull;
+import static com.google.common.collect.ImmutableList.toImmutableList;
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.gerrit.index.FieldDef.exact;
 import static com.google.gerrit.index.FieldDef.fullText;
 import static com.google.gerrit.index.FieldDef.intRange;
@@ -22,10 +24,8 @@ import static com.google.gerrit.index.FieldDef.integer;
 import static com.google.gerrit.index.FieldDef.prefix;
 import static com.google.gerrit.index.FieldDef.storedOnly;
 import static com.google.gerrit.index.FieldDef.timestamp;
-import static com.google.gerrit.reviewdb.server.ReviewDbCodecs.APPROVAL_CODEC;
-import static com.google.gerrit.reviewdb.server.ReviewDbCodecs.CHANGE_CODEC;
-import static com.google.gerrit.reviewdb.server.ReviewDbCodecs.PATCH_SET_CODEC;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.stream.Collectors.joining;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toSet;
 
@@ -39,28 +39,32 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Table;
 import com.google.common.flogger.FluentLogger;
+import com.google.common.io.Files;
 import com.google.common.primitives.Longs;
 import com.google.gerrit.common.data.SubmitRecord;
 import com.google.gerrit.common.data.SubmitRequirement;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.ChangeMessage;
+import com.google.gerrit.entities.PatchSetApproval;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.entities.converter.ChangeProtoConverter;
+import com.google.gerrit.entities.converter.PatchSetApprovalProtoConverter;
+import com.google.gerrit.entities.converter.PatchSetProtoConverter;
+import com.google.gerrit.entities.converter.ProtoConverter;
 import com.google.gerrit.index.FieldDef;
 import com.google.gerrit.index.RefState;
 import com.google.gerrit.index.SchemaUtil;
+import com.google.gerrit.json.OutputFormat;
 import com.google.gerrit.mail.Address;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.ChangeMessage;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.PatchSetApproval;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
-import com.google.gerrit.server.OutputFormat;
+import com.google.gerrit.proto.Protos;
 import com.google.gerrit.server.ReviewerByEmailSet;
 import com.google.gerrit.server.ReviewerSet;
 import com.google.gerrit.server.StarredChangesUtil;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.index.change.StalenessChecker.RefStatePattern;
 import com.google.gerrit.server.notedb.ChangeNotes;
-import com.google.gerrit.server.notedb.NoteDbChangeState.PrimaryStorage;
 import com.google.gerrit.server.notedb.ReviewerStateInternal;
 import com.google.gerrit.server.notedb.RobotCommentNotes;
 import com.google.gerrit.server.project.SubmitRuleOptions;
@@ -68,11 +72,6 @@ import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.ChangeQueryBuilder;
 import com.google.gerrit.server.query.change.ChangeStatusPredicate;
 import com.google.gson.Gson;
-import com.google.gwtorm.protobuf.ProtobufCodec;
-import com.google.gwtorm.server.OrmException;
-import com.google.protobuf.CodedOutputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -108,6 +107,9 @@ public class ChangeField {
   public static final FieldDef<ChangeData, Integer> LEGACY_ID =
       integer("legacy_id").stored().build(cd -> cd.getId().get());
 
+  public static final FieldDef<ChangeData, String> LEGACY_ID_STR =
+      exact("legacy_id_str").stored().build(cd -> String.valueOf(cd.getId().get()));
+
   /** Newer style Change-Id key. */
   public static final FieldDef<ChangeData, String> ID =
       prefix(ChangeQueryBuilder.FIELD_CHANGE_ID).build(changeGetter(c -> c.getKey().get()));
@@ -129,7 +131,7 @@ public class ChangeField {
 
   /** Reference (aka branch) the change will submit onto. */
   public static final FieldDef<ChangeData, String> REF =
-      exact(ChangeQueryBuilder.FIELD_REF).build(changeGetter(c -> c.getDest().get()));
+      exact(ChangeQueryBuilder.FIELD_REF).build(changeGetter(c -> c.getDest().branch()));
 
   /** Topic, a short annotation on the branch. */
   public static final FieldDef<ChangeData, String> EXACT_TOPIC =
@@ -153,13 +155,8 @@ public class ChangeField {
       exact(ChangeQueryBuilder.FIELD_FILE)
           .buildRepeatable(cd -> firstNonNull(cd.currentFilePaths(), ImmutableList.of()));
 
-  public static Set<String> getFileParts(ChangeData cd) throws OrmException {
-    List<String> paths;
-    try {
-      paths = cd.currentFilePaths();
-    } catch (IOException e) {
-      throw new OrmException(e);
-    }
+  public static Set<String> getFileParts(ChangeData cd) {
+    List<String> paths = cd.currentFilePaths();
 
     Splitter s = Splitter.on('/').omitEmptyStrings();
     Set<String> r = new HashSet<>();
@@ -186,9 +183,109 @@ public class ChangeField {
   public static final FieldDef<ChangeData, Iterable<String>> FILE_PART =
       exact(ChangeQueryBuilder.FIELD_FILEPART).buildRepeatable(ChangeField::getFileParts);
 
+  /** File extensions of each file modified in the current patch set. */
+  public static final FieldDef<ChangeData, Iterable<String>> EXTENSION =
+      exact(ChangeQueryBuilder.FIELD_EXTENSION).buildRepeatable(ChangeField::getExtensions);
+
+  public static Set<String> getExtensions(ChangeData cd) {
+    return extensions(cd).collect(toSet());
+  }
+
+  /**
+   * File extensions of each file modified in the current patch set as a sorted list. The purpose of
+   * this field is to allow matching changes that only touch files with certain file extensions.
+   */
+  public static final FieldDef<ChangeData, String> ONLY_EXTENSIONS =
+      exact(ChangeQueryBuilder.FIELD_ONLY_EXTENSIONS).build(ChangeField::getAllExtensionsAsList);
+
+  public static String getAllExtensionsAsList(ChangeData cd) {
+    return extensions(cd).distinct().sorted().collect(joining(","));
+  }
+
+  /**
+   * Returns a stream with all file extensions that are used by files in the given change. A file
+   * extension is defined as the portion of the filename following the final `.`. Files with no `.`
+   * in their name have no extension. For them an empty string is returned as part of the stream.
+   *
+   * <p>If the change contains multiple files with the same extension the extension is returned
+   * multiple times in the stream (once per file).
+   */
+  private static Stream<String> extensions(ChangeData cd) {
+    return cd.currentFilePaths().stream()
+        // Use case-insensitive file extensions even though other file fields are case-sensitive.
+        // If we want to find "all Java files", we want to match both .java and .JAVA, even if we
+        // normally care about case sensitivity. (Whether we should change the existing file/path
+        // predicates to be case insensitive is a separate question.)
+        .map(f -> Files.getFileExtension(f).toLowerCase(Locale.US));
+  }
+
+  /** Footers from the commit message of the current patch set. */
+  public static final FieldDef<ChangeData, Iterable<String>> FOOTER =
+      exact(ChangeQueryBuilder.FIELD_FOOTER).buildRepeatable(ChangeField::getFooters);
+
+  public static Set<String> getFooters(ChangeData cd) {
+    return cd.commitFooters().stream()
+        .map(f -> f.toString().toLowerCase(Locale.US))
+        .collect(toSet());
+  }
+
+  /** Folders that are touched by the current patch set. */
+  public static final FieldDef<ChangeData, Iterable<String>> DIRECTORY =
+      exact(ChangeQueryBuilder.FIELD_DIRECTORY).buildRepeatable(ChangeField::getDirectories);
+
+  public static Set<String> getDirectories(ChangeData cd) {
+    List<String> paths = cd.currentFilePaths();
+
+    Splitter s = Splitter.on('/').omitEmptyStrings();
+    Set<String> r = new HashSet<>();
+    for (String path : paths) {
+      StringBuilder directory = new StringBuilder();
+      r.add(directory.toString());
+      String nextPart = null;
+      for (String part : s.split(path)) {
+        if (nextPart != null) {
+          r.add(nextPart);
+
+          if (directory.length() > 0) {
+            directory.append("/");
+          }
+          directory.append(nextPart);
+
+          String intermediateDir = directory.toString();
+          int i = intermediateDir.indexOf('/');
+          while (i >= 0) {
+            r.add(intermediateDir);
+            intermediateDir = intermediateDir.substring(i + 1);
+            i = intermediateDir.indexOf('/');
+          }
+        }
+        nextPart = part;
+      }
+    }
+    return r;
+  }
+
   /** Owner/creator of the change. */
   public static final FieldDef<ChangeData, Integer> OWNER =
       integer(ChangeQueryBuilder.FIELD_OWNER).build(changeGetter(c -> c.getOwner().get()));
+
+  /** References the source change number that this change was cherry-picked from. */
+  public static final FieldDef<ChangeData, Integer> CHERRY_PICK_OF_CHANGE =
+      integer(ChangeQueryBuilder.FIELD_CHERRY_PICK_OF_CHANGE)
+          .build(
+              cd ->
+                  cd.change().getCherryPickOf() != null
+                      ? cd.change().getCherryPickOf().changeId().get()
+                      : null);
+
+  /** References the source change patch-set that this change was cherry-picked from. */
+  public static final FieldDef<ChangeData, Integer> CHERRY_PICK_OF_PATCHSET =
+      integer(ChangeQueryBuilder.FIELD_CHERRY_PICK_OF_PATCHSET)
+          .build(
+              cd ->
+                  cd.change().getCherryPickOf() != null
+                      ? cd.change().getCherryPickOf().get()
+                      : null);
 
   /** The user assigned to the change. */
   public static final FieldDef<ChangeData, Integer> ASSIGNEE =
@@ -298,7 +395,7 @@ public class ChangeField {
         continue;
       }
 
-      Long l = Longs.tryParse(v.substring(i2 + 1, v.length()));
+      Long l = Longs.tryParse(v.substring(i2 + 1));
       if (l == null) {
         logger.atWarning().log(
             "Failed to parse timestamp of reviewer field from change %s: %s", changeId.get(), v);
@@ -351,7 +448,7 @@ public class ChangeField {
         continue;
       }
 
-      Long l = Longs.tryParse(v.substring(i2 + 1, v.length()));
+      Long l = Longs.tryParse(v.substring(i2 + 1));
       if (l == null) {
         logger.atWarning().log(
             "Failed to parse timestamp of reviewer by email field from change %s: %s",
@@ -373,14 +470,8 @@ public class ChangeField {
   public static final FieldDef<ChangeData, Iterable<String>> EXACT_COMMIT =
       exact(ChangeQueryBuilder.FIELD_EXACTCOMMIT).buildRepeatable(ChangeField::getRevisions);
 
-  private static Set<String> getRevisions(ChangeData cd) throws OrmException {
-    Set<String> revisions = new HashSet<>();
-    for (PatchSet ps : cd.patchSets()) {
-      if (ps.getRevision() != null) {
-        revisions.add(ps.getRevision().get());
-      }
-    }
-    return revisions;
+  private static ImmutableSet<String> getRevisions(ChangeData cd) {
+    return cd.patchSets().stream().map(ps -> ps.commitId().name()).collect(toImmutableSet());
   }
 
   /** Tracking id extracted from a footer. */
@@ -392,37 +483,35 @@ public class ChangeField {
   public static final FieldDef<ChangeData, Iterable<String>> LABEL =
       exact("label2").buildRepeatable(cd -> getLabels(cd, true));
 
-  private static Iterable<String> getLabels(ChangeData cd, boolean owners) throws OrmException {
+  private static Iterable<String> getLabels(ChangeData cd, boolean owners) {
     Set<String> allApprovals = new HashSet<>();
     Set<String> distinctApprovals = new HashSet<>();
     for (PatchSetApproval a : cd.currentApprovals()) {
-      if (a.getValue() != 0 && !a.isLegacySubmit()) {
-        allApprovals.add(formatLabel(a.getLabel(), a.getValue(), a.getAccountId()));
-        if (owners && cd.change().getOwner().equals(a.getAccountId())) {
-          allApprovals.add(
-              formatLabel(a.getLabel(), a.getValue(), ChangeQueryBuilder.OWNER_ACCOUNT_ID));
+      if (a.value() != 0 && !a.isLegacySubmit()) {
+        allApprovals.add(formatLabel(a.label(), a.value(), a.accountId()));
+        if (owners && cd.change().getOwner().equals(a.accountId())) {
+          allApprovals.add(formatLabel(a.label(), a.value(), ChangeQueryBuilder.OWNER_ACCOUNT_ID));
         }
-        distinctApprovals.add(formatLabel(a.getLabel(), a.getValue()));
+        distinctApprovals.add(formatLabel(a.label(), a.value()));
       }
     }
     allApprovals.addAll(distinctApprovals);
     return allApprovals;
   }
 
-  public static Set<String> getAuthorParts(ChangeData cd) throws OrmException, IOException {
+  public static Set<String> getAuthorParts(ChangeData cd) {
     return SchemaUtil.getPersonParts(cd.getAuthor());
   }
 
-  public static Set<String> getAuthorNameAndEmail(ChangeData cd) throws OrmException, IOException {
+  public static Set<String> getAuthorNameAndEmail(ChangeData cd) {
     return getNameAndEmail(cd.getAuthor());
   }
 
-  public static Set<String> getCommitterParts(ChangeData cd) throws OrmException, IOException {
+  public static Set<String> getCommitterParts(ChangeData cd) {
     return SchemaUtil.getPersonParts(cd.getCommitter());
   }
 
-  public static Set<String> getCommitterNameAndEmail(ChangeData cd)
-      throws OrmException, IOException {
+  public static Set<String> getCommitterNameAndEmail(ChangeData cd) {
     return getNameAndEmail(cd.getCommitter());
   }
 
@@ -469,12 +558,14 @@ public class ChangeField {
 
   /** Serialized change object, used for pre-populating results. */
   public static final FieldDef<ChangeData, byte[]> CHANGE =
-      storedOnly("_change").build(changeGetter(CHANGE_CODEC::encodeToByteArray));
+      storedOnly("_change")
+          .build(changeGetter(change -> toProto(ChangeProtoConverter.INSTANCE, change)));
 
   /** Serialized approvals for the current patch set, used for pre-populating results. */
   public static final FieldDef<ChangeData, Iterable<byte[]>> APPROVAL =
       storedOnly("_approval")
-          .buildRepeatable(cd -> toProtos(APPROVAL_CODEC, cd.currentApprovals()));
+          .buildRepeatable(
+              cd -> toProtos(PatchSetApprovalProtoConverter.INSTANCE, cd.currentApprovals()));
 
   public static String formatLabel(String label, int value) {
     return formatLabel(label, value, null);
@@ -508,10 +599,14 @@ public class ChangeField {
                           cd.messages().stream().map(ChangeMessage::getMessage))
                       .collect(toSet()));
 
-  /** Number of unresolved comments of the change. */
+  /** Number of unresolved comment threads of the change, including robot comments. */
   public static final FieldDef<ChangeData, Integer> UNRESOLVED_COMMENT_COUNT =
       intRange(ChangeQueryBuilder.FIELD_UNRESOLVED_COMMENT_COUNT)
           .build(ChangeData::unresolvedCommentCount);
+
+  /** Total number of published inline comments of the change, including robot comments. */
+  public static final FieldDef<ChangeData, Integer> TOTAL_COMMENT_COUNT =
+      intRange("total_comments").build(ChangeData::totalCommentCount);
 
   /** Whether the change is mergeable. */
   public static final FieldDef<ChangeData, String> MERGEABLE =
@@ -587,12 +682,12 @@ public class ChangeField {
   public static final FieldDef<ChangeData, Iterable<String>> GROUP =
       exact(ChangeQueryBuilder.FIELD_GROUP)
           .buildRepeatable(
-              cd ->
-                  cd.patchSets().stream().flatMap(ps -> ps.getGroups().stream()).collect(toSet()));
+              cd -> cd.patchSets().stream().flatMap(ps -> ps.groups().stream()).collect(toSet()));
 
   /** Serialized patch set object, used for pre-populating results. */
   public static final FieldDef<ChangeData, Iterable<byte[]>> PATCH_SET =
-      storedOnly("_patch_set").buildRepeatable(cd -> toProtos(PATCH_SET_CODEC, cd.patchSets()));
+      storedOnly("_patch_set")
+          .buildRepeatable(cd -> toProtos(PatchSetProtoConverter.INSTANCE, cd.patchSets()));
 
   /** Users who have edits on this change. */
   public static final FieldDef<ChangeData, Iterable<Integer>> EDITBY =
@@ -693,7 +788,7 @@ public class ChangeField {
           SubmitRecord.Label srl = new SubmitRecord.Label();
           srl.label = label.label;
           srl.status = label.status;
-          srl.appliedBy = label.appliedBy != null ? new Account.Id(label.appliedBy) : null;
+          srl.appliedBy = label.appliedBy != null ? Account.id(label.appliedBy) : null;
           rec.labels.add(srl);
         }
       }
@@ -751,7 +846,7 @@ public class ChangeField {
     return storedSubmitRecords(cd.submitRecords(opts));
   }
 
-  public static List<String> formatSubmitRecordValues(ChangeData cd) throws OrmException {
+  public static List<String> formatSubmitRecordValues(ChangeData cd) {
     return formatSubmitRecordValues(
         cd.submitRecords(SUBMIT_RULE_OPTIONS_STRICT), cd.change().getOwner());
   }
@@ -798,19 +893,17 @@ public class ChangeField {
                     .values()
                     .forEach(r -> result.add(RefState.of(r.ref()).toByteArray(allUsers(cd))));
 
-                if (PrimaryStorage.of(cd.change()) == PrimaryStorage.NOTE_DB) {
-                  ChangeNotes notes = cd.notes();
-                  result.add(
-                      RefState.create(notes.getRefName(), notes.getMetaId()).toByteArray(project));
-                  notes.getRobotComments(); // Force loading robot comments.
-                  RobotCommentNotes robotNotes = notes.getRobotCommentNotes();
-                  result.add(
-                      RefState.create(robotNotes.getRefName(), robotNotes.getMetaId())
-                          .toByteArray(project));
-                  cd.draftRefs()
-                      .values()
-                      .forEach(r -> result.add(RefState.of(r).toByteArray(allUsers(cd))));
-                }
+                ChangeNotes notes = cd.notes();
+                result.add(
+                    RefState.create(notes.getRefName(), notes.getMetaId()).toByteArray(project));
+                notes.getRobotComments(); // Force loading robot comments.
+                RobotCommentNotes robotNotes = notes.getRobotCommentNotes();
+                result.add(
+                    RefState.create(robotNotes.getRefName(), robotNotes.getMetaId())
+                        .toByteArray(project));
+                cd.draftRefs()
+                    .values()
+                    .forEach(r -> result.add(RefState.of(r).toByteArray(allUsers(cd))));
 
                 return result;
               });
@@ -835,15 +928,13 @@ public class ChangeField {
                 result.add(
                     RefStatePattern.create(RefNames.refsStarredChangesPrefix(id) + "*")
                         .toByteArray(allUsers(cd)));
-                if (PrimaryStorage.of(cd.change()) == PrimaryStorage.NOTE_DB) {
-                  result.add(
-                      RefStatePattern.create(RefNames.refsDraftCommentsPrefix(id) + "*")
-                          .toByteArray(allUsers(cd)));
-                }
+                result.add(
+                    RefStatePattern.create(RefNames.refsDraftCommentsPrefix(id) + "*")
+                        .toByteArray(allUsers(cd)));
                 return result;
               });
 
-  private static String getTopic(ChangeData cd) throws OrmException {
+  private static String getTopic(ChangeData cd) {
     Change c = cd.change();
     if (c == null) {
       return null;
@@ -851,22 +942,12 @@ public class ChangeField {
     return firstNonNull(c.getTopic(), "");
   }
 
-  private static <T> List<byte[]> toProtos(ProtobufCodec<T> codec, Collection<T> objs)
-      throws OrmException {
-    List<byte[]> result = Lists.newArrayListWithCapacity(objs.size());
-    ByteArrayOutputStream out = new ByteArrayOutputStream(256);
-    try {
-      for (T obj : objs) {
-        out.reset();
-        CodedOutputStream cos = CodedOutputStream.newInstance(out);
-        codec.encode(obj, cos);
-        cos.flush();
-        result.add(out.toByteArray());
-      }
-    } catch (IOException e) {
-      throw new OrmException(e);
-    }
-    return result;
+  private static <T> List<byte[]> toProtos(ProtoConverter<?, T> converter, Collection<T> objects) {
+    return objects.stream().map(object -> toProto(converter, object)).collect(toImmutableList());
+  }
+
+  private static <T> byte[] toProto(ProtoConverter<?, T> converter, T object) {
+    return Protos.toByteArray(converter.toProto(object));
   }
 
   private static <T> FieldDef.Getter<ChangeData, T> changeGetter(Function<Change, T> func) {

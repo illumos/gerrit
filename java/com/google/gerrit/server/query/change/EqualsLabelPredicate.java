@@ -16,12 +16,11 @@ package com.google.gerrit.server.query.change;
 
 import com.google.gerrit.common.data.LabelType;
 import com.google.gerrit.common.data.LabelTypes;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.extensions.restapi.AuthException;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSetApproval;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.IdentifiedUser;
 import com.google.gerrit.server.index.change.ChangeField;
 import com.google.gerrit.server.permissions.ChangePermission;
@@ -29,15 +28,12 @@ import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectState;
-import com.google.gwtorm.server.OrmException;
-import com.google.inject.Provider;
 import java.io.IOException;
 
 public class EqualsLabelPredicate extends ChangeIndexPredicate {
   protected final ProjectCache projectCache;
   protected final PermissionBackend permissionBackend;
   protected final IdentifiedUser.GenericFactory userFactory;
-  protected final Provider<ReviewDb> dbProvider;
   protected final String label;
   protected final int expVal;
   protected final Account.Id account;
@@ -49,7 +45,6 @@ public class EqualsLabelPredicate extends ChangeIndexPredicate {
     this.permissionBackend = args.permissionBackend;
     this.projectCache = args.projectCache;
     this.userFactory = args.userFactory;
-    this.dbProvider = args.dbProvider;
     this.group = args.group;
     this.label = label;
     this.expVal = expVal;
@@ -57,7 +52,7 @@ public class EqualsLabelPredicate extends ChangeIndexPredicate {
   }
 
   @Override
-  public boolean match(ChangeData object) throws OrmException {
+  public boolean match(ChangeData object) {
     Change c = object.change();
     if (c == null) {
       // The change has disappeared.
@@ -65,7 +60,7 @@ public class EqualsLabelPredicate extends ChangeIndexPredicate {
       return false;
     }
 
-    ProjectState project = projectCache.get(c.getDest().getParentKey());
+    ProjectState project = projectCache.get(c.getDest().project());
     if (project == null) {
       // The project has disappeared.
       //
@@ -81,7 +76,7 @@ public class EqualsLabelPredicate extends ChangeIndexPredicate {
     for (PatchSetApproval p : object.currentApprovals()) {
       if (labelType.matches(p)) {
         hasVote = true;
-        if (match(object, p.getValue(), p.getAccountId())) {
+        if (match(object, p.value(), p.accountId())) {
           return true;
         }
       }
@@ -123,8 +118,7 @@ public class EqualsLabelPredicate extends ChangeIndexPredicate {
 
     // Check the user has 'READ' permission.
     try {
-      PermissionBackend.ForChange perm =
-          permissionBackend.absentUser(approver).database(dbProvider).change(cd);
+      PermissionBackend.ForChange perm = permissionBackend.absentUser(approver).change(cd);
       ProjectState projectState = projectCache.checkedGet(cd.project());
       if (projectState == null || !projectState.statePermitsRead()) {
         return false;

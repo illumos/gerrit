@@ -16,6 +16,7 @@ package com.google.gerrit.server.api.projects;
 
 import static com.google.gerrit.server.api.ApiUtil.asRestApiException;
 
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.projects.ProjectApi;
 import com.google.gerrit.extensions.api.projects.ProjectInput;
 import com.google.gerrit.extensions.api.projects.Projects;
@@ -28,7 +29,6 @@ import com.google.gerrit.server.restapi.project.ListProjects;
 import com.google.gerrit.server.restapi.project.ListProjects.FilterType;
 import com.google.gerrit.server.restapi.project.ProjectsCollection;
 import com.google.gerrit.server.restapi.project.QueryProjects;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -117,9 +117,6 @@ class ProjectsImpl implements Projects {
       case CODE:
         type = FilterType.CODE;
         break;
-      case PARENT_CANDIDATES:
-        type = FilterType.PARENT_CANDIDATES;
-        break;
       case PERMISSIONS:
         type = FilterType.PERMISSIONS;
         break;
@@ -158,8 +155,8 @@ class ProjectsImpl implements Projects {
           .withLimit(r.getLimit())
           .withStart(r.getStart())
           .apply();
-    } catch (OrmException e) {
-      throw new RestApiException("Cannot query projects", e);
+    } catch (StorageException e) {
+      throw asRestApiException("Cannot query projects", e);
     }
   }
 }

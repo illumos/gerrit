@@ -14,6 +14,7 @@
 
 package com.google.gerrit.server.rules;
 
+import static com.google.common.base.Preconditions.checkState;
 import static com.google.gerrit.server.project.SubmitRuleEvaluator.createRuleError;
 import static com.google.gerrit.server.project.SubmitRuleEvaluator.defaultRuleError;
 import static com.google.gerrit.server.project.SubmitRuleEvaluator.defaultTypeError;
@@ -24,9 +25,10 @@ import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.data.LabelType;
 import com.google.gerrit.common.data.SubmitRecord;
 import com.google.gerrit.common.data.SubmitTypeRecord;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.client.SubmitType;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Change;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.Accounts;
 import com.google.gerrit.server.account.Emails;
@@ -34,9 +36,7 @@ import com.google.gerrit.server.project.NoSuchProjectException;
 import com.google.gerrit.server.project.ProjectCache;
 import com.google.gerrit.server.project.ProjectState;
 import com.google.gerrit.server.project.RuleEvalException;
-import com.google.gerrit.server.project.SubmitRuleOptions;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.assistedinject.Assisted;
 import com.google.inject.assistedinject.AssistedInject;
 import com.googlecode.prolog_cafe.exceptions.CompileException;
@@ -51,7 +51,6 @@ import com.googlecode.prolog_cafe.lang.Term;
 import com.googlecode.prolog_cafe.lang.VariableTerm;
 import java.io.StringReader;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 
@@ -73,7 +72,7 @@ public class PrologRuleEvaluator {
 
   public interface Factory {
     /** Returns a new {@link PrologRuleEvaluator} with the specified options */
-    PrologRuleEvaluator create(ChangeData cd, SubmitRuleOptions options);
+    PrologRuleEvaluator create(ChangeData cd, PrologOptions options);
   }
 
   /**
@@ -95,7 +94,7 @@ public class PrologRuleEvaluator {
   private final PrologEnvironment.Factory envFactory;
   private final ChangeData cd;
   private final ProjectState projectState;
-  private final SubmitRuleOptions opts;
+  private final PrologOptions opts;
   private Term submitRule;
 
   @AssistedInject
@@ -107,7 +106,7 @@ public class PrologRuleEvaluator {
       PrologEnvironment.Factory envFactory,
       ProjectCache projectCache,
       @Assisted ChangeData cd,
-      @Assisted SubmitRuleOptions options) {
+      @Assisted PrologOptions options) {
     this.accountCache = accountCache;
     this.accounts = accounts;
     this.emails = emails;
@@ -141,28 +140,21 @@ public class PrologRuleEvaluator {
   /**
    * Evaluate the submit rules.
    *
-   * @return List of {@link SubmitRecord} objects returned from the evaluated rules, including any
-   *     errors.
+   * @return {@link SubmitRecord} returned from the evaluated rules. Can include errors.
    */
-  public Collection<SubmitRecord> evaluate() {
+  public SubmitRecord evaluate() {
     Change change;
     try {
       change = cd.change();
       if (change == null) {
-        throw new OrmException("No change found");
+        throw new StorageException("No change found");
       }
 
       if (projectState == null) {
         throw new NoSuchProjectException(cd.project());
       }
-    } catch (OrmException | NoSuchProjectException e) {
+    } catch (StorageException | NoSuchProjectException e) {
       return ruleError("Error looking up change " + cd.getId(), e);
-    }
-
-    if (!opts.allowClosed() && change.getStatus().isClosed()) {
-      SubmitRecord rec = new SubmitRecord();
-      rec.status = SubmitRecord.Status.CLOSED;
-      return Collections.singletonList(rec);
     }
 
     List<Term> results;
@@ -200,26 +192,30 @@ public class PrologRuleEvaluator {
    * output. Later after the loop the out collection is reversed to restore it to the original
    * ordering.
    */
-  public List<SubmitRecord> resultsToSubmitRecord(Term submitRule, List<Term> results) {
-    boolean foundOk = false;
-    List<SubmitRecord> out = new ArrayList<>(results.size());
+  public SubmitRecord resultsToSubmitRecord(Term submitRule, List<Term> results) {
+    checkState(!results.isEmpty(), "the list of Prolog terms must not be empty");
+
+    SubmitRecord resultSubmitRecord = new SubmitRecord();
+    resultSubmitRecord.labels = new ArrayList<>();
     for (int resultIdx = results.size() - 1; 0 <= resultIdx; resultIdx--) {
       Term submitRecord = results.get(resultIdx);
-      SubmitRecord rec = new SubmitRecord();
-      out.add(rec);
 
       if (!(submitRecord instanceof StructureTerm) || 1 != submitRecord.arity()) {
         return invalidResult(submitRule, submitRecord);
       }
 
-      if ("ok".equals(submitRecord.name())) {
-        rec.status = SubmitRecord.Status.OK;
-
-      } else if ("not_ready".equals(submitRecord.name())) {
-        rec.status = SubmitRecord.Status.NOT_READY;
-
-      } else {
+      if (!"ok".equals(submitRecord.name()) && !"not_ready".equals(submitRecord.name())) {
         return invalidResult(submitRule, submitRecord);
+      }
+
+      // This transformation is required to adapt Prolog's behavior to the way Gerrit handles
+      // SubmitRecords, as defined in the SubmitRecord#allRecordsOK method.
+      // When several rules are defined in Prolog, they are all matched to a SubmitRecord. We want
+      // the change to be submittable when at least one result is OK.
+      if ("ok".equals(submitRecord.name())) {
+        resultSubmitRecord.status = SubmitRecord.Status.OK;
+      } else if ("not_ready".equals(submitRecord.name()) && resultSubmitRecord.status == null) {
+        resultSubmitRecord.status = SubmitRecord.Status.NOT_READY;
       }
 
       // Unpack the one argument. This should also be a structure with one
@@ -231,8 +227,6 @@ public class PrologRuleEvaluator {
         return invalidResult(submitRule, submitRecord);
       }
 
-      rec.labels = new ArrayList<>(submitRecord.arity());
-
       for (Term state : ((StructureTerm) submitRecord).args()) {
         if (!(state instanceof StructureTerm)
             || 2 != state.arity()
@@ -241,7 +235,7 @@ public class PrologRuleEvaluator {
         }
 
         SubmitRecord.Label lbl = new SubmitRecord.Label();
-        rec.labels.add(lbl);
+        resultSubmitRecord.labels.add(lbl);
 
         lbl.label = checkLabelName(state.arg(0).name());
         Term status = state.arg(1);
@@ -272,24 +266,12 @@ public class PrologRuleEvaluator {
         }
       }
 
-      if (rec.status == SubmitRecord.Status.OK) {
-        foundOk = true;
+      if (resultSubmitRecord.status == SubmitRecord.Status.OK) {
         break;
       }
     }
-    Collections.reverse(out);
-
-    // This transformation is required to adapt Prolog's behavior to the way Gerrit handles
-    // SubmitRecords, as defined in the SubmitRecord#allRecordsOK method.
-    // When several rules are defined in Prolog, they are all matched to a SubmitRecord. We want
-    // the change to be submittable when at least one result is OK.
-    if (foundOk) {
-      for (SubmitRecord record : out) {
-        record.status = SubmitRecord.Status.OK;
-      }
-    }
-
-    return out;
+    Collections.reverse(resultSubmitRecord.labels);
+    return resultSubmitRecord;
   }
 
   @VisibleForTesting
@@ -306,7 +288,7 @@ public class PrologRuleEvaluator {
     return VALID_LABEL_MATCHER.retainFrom(name);
   }
 
-  private List<SubmitRecord> invalidResult(Term rule, Term record, String reason) {
+  private SubmitRecord invalidResult(Term rule, Term record, String reason) {
     return ruleError(
         String.format(
             "Submit rule %s for change %s of %s output invalid result: %s%s",
@@ -317,15 +299,15 @@ public class PrologRuleEvaluator {
             (reason == null ? "" : ". Reason: " + reason)));
   }
 
-  private List<SubmitRecord> invalidResult(Term rule, Term record) {
+  private SubmitRecord invalidResult(Term rule, Term record) {
     return invalidResult(rule, record, null);
   }
 
-  private List<SubmitRecord> ruleError(String err) {
+  private SubmitRecord ruleError(String err) {
     return ruleError(err, null);
   }
 
-  private List<SubmitRecord> ruleError(String err, Exception e) {
+  private SubmitRecord ruleError(String err, Exception e) {
     if (opts.logErrors()) {
       logger.atSevere().withCause(e).log(err);
       return defaultRuleError();
@@ -465,29 +447,28 @@ public class PrologRuleEvaluator {
     PrologEnvironment env;
     try {
       PrologMachineCopy pmc;
-      if (opts.rule() == null) {
+      if (opts.rule().isPresent()) {
+        pmc = rulesCache.loadMachine("stdin", new StringReader(opts.rule().get()));
+      } else {
         pmc =
             rulesCache.loadMachine(
                 projectState.getNameKey(), projectState.getConfig().getRulesId());
-      } else {
-        pmc = rulesCache.loadMachine("stdin", new StringReader(opts.rule()));
       }
       env = envFactory.create(pmc);
     } catch (CompileException err) {
       String msg;
-      if (opts.rule() == null) {
+      if (opts.rule().isPresent()) {
+        msg = err.getMessage();
+      } else {
         msg =
             String.format(
                 "Cannot load rules.pl for %s: %s", projectState.getName(), err.getMessage());
-      } else {
-        msg = err.getMessage();
       }
       throw new RuleEvalException(msg, err);
     }
     env.set(StoredValues.ACCOUNTS, accounts);
     env.set(StoredValues.ACCOUNT_CACHE, accountCache);
     env.set(StoredValues.EMAILS, emails);
-    env.set(StoredValues.REVIEW_DB, cd.db());
     env.set(StoredValues.CHANGE_DATA, cd);
     env.set(StoredValues.PROJECT_STATE, projectState);
     return env;
@@ -541,7 +522,7 @@ public class PrologRuleEvaluator {
     if (status instanceof StructureTerm && status.arity() == 1) {
       Term who = status.arg(0);
       if (isUser(who)) {
-        label.appliedBy = new Account.Id(((IntegerTerm) who.arg(0)).intValue());
+        label.appliedBy = Account.id(((IntegerTerm) who.arg(0)).intValue());
       } else {
         throw new UserTermExpected(label);
       }

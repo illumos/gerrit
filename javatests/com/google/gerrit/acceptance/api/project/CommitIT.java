@@ -15,6 +15,7 @@
 package com.google.gerrit.acceptance.api.project;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static java.util.stream.Collectors.toList;
 import static org.eclipse.jgit.lib.Constants.R_TAGS;
 
@@ -22,7 +23,9 @@ import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.PushOneCommit.Result;
 import com.google.gerrit.acceptance.TestAccount;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
 import com.google.gerrit.common.data.Permission;
+import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.extensions.api.changes.CherryPickInput;
 import com.google.gerrit.extensions.api.changes.IncludedInInfo;
 import com.google.gerrit.extensions.api.changes.ReviewInput;
@@ -33,7 +36,7 @@ import com.google.gerrit.extensions.common.ChangeMessageInfo;
 import com.google.gerrit.extensions.common.CommitInfo;
 import com.google.gerrit.extensions.common.GitPerson;
 import com.google.gerrit.extensions.common.RevisionInfo;
-import com.google.gerrit.reviewdb.client.Branch;
+import com.google.inject.Inject;
 import java.util.Iterator;
 import java.util.List;
 import org.eclipse.jgit.lib.ObjectId;
@@ -42,6 +45,8 @@ import org.junit.Test;
 
 @NoHttpd
 public class CommitIT extends AbstractDaemonTest {
+  @Inject private ProjectOperations projectOperations;
+
   @Test
   public void getCommitInfo() throws Exception {
     Result result = createChange();
@@ -75,22 +80,46 @@ public class CommitIT extends AbstractDaemonTest {
     assertThat(getIncludedIn(result.getCommit().getId()).branches).containsExactly("master");
     assertThat(getIncludedIn(result.getCommit().getId()).tags).isEmpty();
 
-    grant(project, R_TAGS + "*", Permission.CREATE_TAG);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.CREATE_TAG).ref(R_TAGS + "*").group(adminGroupUuid()))
+        .update();
     gApi.projects().name(result.getChange().project().get()).tag("test-tag").create(new TagInput());
 
     assertThat(getIncludedIn(result.getCommit().getId()).tags).containsExactly("test-tag");
 
-    createBranch(new Branch.NameKey(project.get(), "test-branch"));
+    createBranch(BranchNameKey.create(project, "test-branch"));
 
     assertThat(getIncludedIn(result.getCommit().getId()).branches)
         .containsExactly("master", "test-branch");
   }
 
   @Test
+  public void cherryPickWithoutMessage() throws Exception {
+    String branch = "foo";
+
+    // Create change to cherry-pick
+    RevCommit revCommit = createChange().getCommit();
+
+    // Create target branch to cherry-pick to.
+    gApi.projects().name(project.get()).branch(branch).create(new BranchInput());
+
+    // Cherry-pick without message.
+    CherryPickInput input = new CherryPickInput();
+    input.destination = branch;
+    String changeId =
+        gApi.projects().name(project.get()).commit(revCommit.name()).cherryPick(input).get().id;
+
+    // Expect that the message of the cherry-picked commit was used for the cherry-pick change.
+    ChangeInfo changeInfo = gApi.changes().id(changeId).get();
+    RevisionInfo revInfo = changeInfo.revisions.get(changeInfo.currentRevision);
+    assertThat(revInfo).isNotNull();
+    assertThat(revInfo.commit.message).isEqualTo(revCommit.getFullMessage());
+  }
+
+  @Test
   public void cherryPickCommitWithoutChangeId() throws Exception {
-    // This test is a little superfluous, since the current cherry-pick code ignores
-    // the commit message of the to-be-cherry-picked change, using the one in
-    // CherryPickInput instead.
     CherryPickInput input = new CherryPickInput();
     input.destination = "foo";
     input.message = "it goes to foo branch";
@@ -145,7 +174,7 @@ public class CommitIT extends AbstractDaemonTest {
   }
 
   private static void assertPerson(GitPerson actual, TestAccount expected) {
-    assertThat(actual.email).isEqualTo(expected.email);
-    assertThat(actual.name).isEqualTo(expected.fullName);
+    assertThat(actual.email).isEqualTo(expected.email());
+    assertThat(actual.name).isEqualTo(expected.fullName());
   }
 }

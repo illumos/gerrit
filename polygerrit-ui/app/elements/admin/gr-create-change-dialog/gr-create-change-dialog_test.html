@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-create-change-dialog</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-create-change-dialog.html">
 
@@ -79,9 +81,7 @@ limitations under the License.
       };
 
       const saveStub = sandbox.stub(element.$.restAPI,
-          'createChange', () => {
-            return Promise.resolve({});
-          });
+          'createChange', () => Promise.resolve({}));
 
       element.branch = 'test-branch';
       element.topic = 'test-topic';
@@ -107,9 +107,7 @@ limitations under the License.
         configured_value: 'TRUE',
         inherited_value: false,
       };
-      sandbox.stub(element, '_formatBooleanString', () => {
-        return Promise.resolve(true);
-      });
+      sandbox.stub(element, '_formatBooleanString', () => Promise.resolve(true));
       flushAsynchronousOperations();
 
       const configInputObj = {
@@ -121,9 +119,7 @@ limitations under the License.
       };
 
       const saveStub = sandbox.stub(element.$.restAPI,
-          'createChange', () => {
-            return Promise.resolve({});
-          });
+          'createChange', () => Promise.resolve({}));
 
       element.branch = 'test-branch';
       element.topic = 'test-topic';

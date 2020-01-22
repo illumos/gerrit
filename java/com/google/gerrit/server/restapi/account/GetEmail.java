@@ -15,21 +15,28 @@
 package com.google.gerrit.server.restapi.account;
 
 import com.google.gerrit.extensions.common.EmailInfo;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.server.account.AccountResource;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 
+/**
+ * REST endpoint to get an email of an account.
+ *
+ * <p>This REST endpoint handles {@code GET
+ * /accounts/<account-identifier>/emails/<email-identifier>} requests.
+ */
 @Singleton
 public class GetEmail implements RestReadView<AccountResource.Email> {
   @Inject
   public GetEmail() {}
 
   @Override
-  public EmailInfo apply(AccountResource.Email rsrc) {
+  public Response<EmailInfo> apply(AccountResource.Email rsrc) {
     EmailInfo e = new EmailInfo();
     e.email = rsrc.getEmail();
-    e.preferred(rsrc.getUser().getAccount().getPreferredEmail());
-    return e;
+    e.preferred(rsrc.getUser().getAccount().preferredEmail());
+    return Response.ok(e);
   }
 }

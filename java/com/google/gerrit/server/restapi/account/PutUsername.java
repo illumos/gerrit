@@ -17,14 +17,17 @@ package com.google.gerrit.server.restapi.account;
 import static com.google.gerrit.server.account.externalids.ExternalId.SCHEME_USERNAME;
 
 import com.google.common.base.Strings;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.exceptions.DuplicateKeyException;
 import com.google.gerrit.extensions.api.accounts.UsernameInput;
 import com.google.gerrit.extensions.client.AccountFieldName;
-import com.google.gerrit.extensions.restapi.AuthException;
+import com.google.gerrit.extensions.restapi.BadRequestException;
 import com.google.gerrit.extensions.restapi.MethodNotAllowedException;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
+import com.google.gerrit.extensions.restapi.Response;
+import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestModifyView;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.ServerInitiated;
 import com.google.gerrit.server.account.AccountResource;
@@ -36,8 +39,6 @@ import com.google.gerrit.server.permissions.GlobalPermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.ssh.SshKeyCache;
-import com.google.gwtorm.server.OrmDuplicateKeyException;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -45,6 +46,17 @@ import java.io.IOException;
 import java.util.Optional;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 
+/**
+ * REST endpoint to set the username of an account.
+ *
+ * <p>This REST endpoint handles {@code PUT /accounts/<account-identifier>/username} requests.
+ *
+ * <p>Whether a username can be set depends on whether the used {@link Realm} supports this.
+ *
+ * <p>Once set a username cannot be changed or deleted. Changing usernames is disallowed because
+ * they can be used in ref names that represent user-specific sandbox branches which can exist in
+ * any repository and we have no way to find and rename those refs.
+ */
 @Singleton
 public class PutUsername implements RestModifyView<AccountResource, UsernameInput> {
   private final Provider<CurrentUser> self;
@@ -71,10 +83,8 @@ public class PutUsername implements RestModifyView<AccountResource, UsernameInpu
   }
 
   @Override
-  public String apply(AccountResource rsrc, UsernameInput input)
-      throws AuthException, MethodNotAllowedException, UnprocessableEntityException,
-          ResourceConflictException, OrmException, IOException, ConfigInvalidException,
-          PermissionBackendException {
+  public Response<String> apply(AccountResource rsrc, UsernameInput input)
+      throws RestApiException, IOException, ConfigInvalidException, PermissionBackendException {
     if (!self.get().hasSameAccountId(rsrc.getUser())) {
       permissionBackend.currentUser().check(GlobalPermission.ADMINISTRATE_SERVER);
     }
@@ -83,17 +93,13 @@ public class PutUsername implements RestModifyView<AccountResource, UsernameInpu
       throw new MethodNotAllowedException("realm does not allow editing username");
     }
 
-    if (input == null) {
-      input = new UsernameInput();
-    }
-
     Account.Id accountId = rsrc.getUser().getAccountId();
     if (!externalIds.byAccount(accountId, SCHEME_USERNAME).isEmpty()) {
       throw new MethodNotAllowedException("Username cannot be changed.");
     }
 
-    if (Strings.isNullOrEmpty(input.username)) {
-      return input.username;
+    if (input == null || Strings.isNullOrEmpty(input.username)) {
+      throw new BadRequestException("input required");
     }
 
     if (!ExternalId.isValidUsername(input.username)) {
@@ -108,11 +114,11 @@ public class PutUsername implements RestModifyView<AccountResource, UsernameInpu
               "Set Username via API",
               accountId,
               u -> u.addExternalId(ExternalId.create(key, accountId, null, null)));
-    } catch (OrmDuplicateKeyException dupeErr) {
+    } catch (DuplicateKeyException dupeErr) {
       // If we are using this identity, don't report the exception.
       Optional<ExternalId> other = externalIds.get(key);
       if (other.isPresent() && other.get().accountId().equals(accountId)) {
-        return input.username;
+        return Response.ok(input.username);
       }
 
       // Otherwise, someone else has this identity.
@@ -120,6 +126,6 @@ public class PutUsername implements RestModifyView<AccountResource, UsernameInpu
     }
 
     sshKeyCache.evict(input.username);
-    return input.username;
+    return Response.ok(input.username);
   }
 }

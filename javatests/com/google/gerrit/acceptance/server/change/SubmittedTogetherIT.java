@@ -21,14 +21,17 @@ import static com.google.gerrit.extensions.api.changes.SubmittedTogetherOption.N
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.GitUtil;
 import com.google.gerrit.acceptance.TestProjectInput;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.api.changes.SubmittedTogetherInfo;
 import com.google.gerrit.extensions.client.ChangeStatus;
 import com.google.gerrit.extensions.client.ListChangesOption;
 import com.google.gerrit.extensions.client.SubmitType;
 import com.google.gerrit.extensions.common.FileInfo;
 import com.google.gerrit.extensions.common.RevisionInfo;
-import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.testing.ConfigSuite;
+import com.google.inject.Inject;
 import java.util.EnumSet;
 import org.eclipse.jgit.junit.TestRepository;
 import org.eclipse.jgit.lib.Config;
@@ -40,6 +43,9 @@ public class SubmittedTogetherIT extends AbstractDaemonTest {
   public static Config submitWholeTopicEnabled() {
     return submitWholeTopicEnabledConfig();
   }
+
+  @Inject private ProjectOperations projectOperations;
+  @Inject private RequestScopeOperations requestScopeOperations;
 
   @Test
   public void doesNotIncludeCurrentFiles() throws Exception {
@@ -100,23 +106,23 @@ public class SubmittedTogetherIT extends AbstractDaemonTest {
     RevCommit b = commitBuilder().add("b", "1").message("change 2").create();
     pushHead(testRepo, "refs/for/master", false);
 
-    setApiUserAnonymous();
+    requestScopeOperations.setApiUserAnonymous();
     assertSubmittedTogether(getChangeId(a));
     assertSubmittedTogether(getChangeId(b), getChangeId(b), getChangeId(a));
   }
 
   @Test
   public void respectWholeTopic() throws Exception {
-    RevCommit initialHead = getRemoteHead();
+    RevCommit initialHead = projectOperations.project(project).getHead("master");
     // Create two independent commits and push.
     RevCommit c1_1 = commitBuilder().add("a.txt", "1").message("subject: 1").create();
     String id1 = getChangeId(c1_1);
-    pushHead(testRepo, "refs/for/master/" + name("connectingTopic"), false);
+    pushHead(testRepo, "refs/for/master%topic=" + name("connectingTopic"), false);
 
     testRepo.reset(initialHead);
     RevCommit c2_1 = commitBuilder().add("b.txt", "2").message("subject: 2").create();
     String id2 = getChangeId(c2_1);
-    pushHead(testRepo, "refs/for/master/" + name("connectingTopic"), false);
+    pushHead(testRepo, "refs/for/master%topic=" + name("connectingTopic"), false);
 
     if (isSubmitWholeTopicEnabled()) {
       assertSubmittedTogether(id1, id2, id1);
@@ -129,17 +135,17 @@ public class SubmittedTogetherIT extends AbstractDaemonTest {
 
   @Test
   public void anonymousWholeTopic() throws Exception {
-    RevCommit initialHead = getRemoteHead();
+    RevCommit initialHead = projectOperations.project(project).getHead("master");
     RevCommit a = commitBuilder().add("a", "1").message("change 1").create();
-    pushHead(testRepo, "refs/for/master/" + name("topic"), false);
+    pushHead(testRepo, "refs/for/master%topic=" + name("topic"), false);
     String id1 = getChangeId(a);
 
     testRepo.reset(initialHead);
     RevCommit b = commitBuilder().add("b", "1").message("change 2").create();
-    pushHead(testRepo, "refs/for/master/" + name("topic"), false);
+    pushHead(testRepo, "refs/for/master%topic=" + name("topic"), false);
     String id2 = getChangeId(b);
 
-    setApiUserAnonymous();
+    requestScopeOperations.setApiUserAnonymous();
     if (isSubmitWholeTopicEnabled()) {
       assertSubmittedTogether(id1, id2, id1);
       assertSubmittedTogether(id2, id2, id1);
@@ -151,20 +157,20 @@ public class SubmittedTogetherIT extends AbstractDaemonTest {
 
   @Test
   public void topicChaining() throws Exception {
-    RevCommit initialHead = getRemoteHead();
+    RevCommit initialHead = projectOperations.project(project).getHead("master");
 
     RevCommit c1_1 = commitBuilder().add("a.txt", "1").message("subject: 1").create();
     String id1 = getChangeId(c1_1);
-    pushHead(testRepo, "refs/for/master/" + name("connectingTopic"), false);
+    pushHead(testRepo, "refs/for/master%topic=" + name("connectingTopic"), false);
 
     testRepo.reset(initialHead);
     RevCommit c2_1 = commitBuilder().add("b.txt", "2").message("subject: 2").create();
     String id2 = getChangeId(c2_1);
-    pushHead(testRepo, "refs/for/master/" + name("connectingTopic"), false);
+    pushHead(testRepo, "refs/for/master%topic=" + name("connectingTopic"), false);
 
     RevCommit c3_1 = commitBuilder().add("b.txt", "3").message("subject: 3").create();
     String id3 = getChangeId(c3_1);
-    pushHead(testRepo, "refs/for/master/" + name("unrelated-topic"), false);
+    pushHead(testRepo, "refs/for/master%topic=" + name("unrelated-topic"), false);
 
     if (isSubmitWholeTopicEnabled()) {
       assertSubmittedTogether(id1, id2, id1);
@@ -179,20 +185,20 @@ public class SubmittedTogetherIT extends AbstractDaemonTest {
 
   @Test
   public void respectTopicsOnAncestors() throws Exception {
-    RevCommit initialHead = getRemoteHead();
+    RevCommit initialHead = projectOperations.project(project).getHead("master");
 
     RevCommit c1_1 = commitBuilder().add("a.txt", "1").message("subject: 1").create();
     String id1 = getChangeId(c1_1);
-    pushHead(testRepo, "refs/for/master/" + name("connectingTopic"), false);
+    pushHead(testRepo, "refs/for/master%topic=" + name("connectingTopic"), false);
 
     testRepo.reset(initialHead);
     RevCommit c2_1 = commitBuilder().add("b.txt", "2").message("subject: 2").create();
     String id2 = getChangeId(c2_1);
-    pushHead(testRepo, "refs/for/master/" + name("otherConnectingTopic"), false);
+    pushHead(testRepo, "refs/for/master%topic=" + name("otherConnectingTopic"), false);
 
     RevCommit c3_1 = commitBuilder().add("b.txt", "3").message("subject: 3").create();
     String id3 = getChangeId(c3_1);
-    pushHead(testRepo, "refs/for/master/" + name("connectingTopic"), false);
+    pushHead(testRepo, "refs/for/master%topic=" + name("connectingTopic"), false);
 
     RevCommit c4_1 = commitBuilder().add("b.txt", "4").message("subject: 4").create();
     String id4 = getChangeId(c4_1);
@@ -205,7 +211,7 @@ public class SubmittedTogetherIT extends AbstractDaemonTest {
 
     RevCommit c6_1 = commitBuilder().add("c.txt", "6").message("subject: 6").create();
     String id6 = getChangeId(c6_1);
-    pushHead(testRepo, "refs/for/master/" + name("otherConnectingTopic"), false);
+    pushHead(testRepo, "refs/for/master%topic=" + name("otherConnectingTopic"), false);
 
     if (isSubmitWholeTopicEnabled()) {
       assertSubmittedTogether(id1, id6, id5, id3, id2, id1);
@@ -226,7 +232,8 @@ public class SubmittedTogetherIT extends AbstractDaemonTest {
 
   @Test
   public void newBranchTwoChangesTogether() throws Exception {
-    Project.NameKey p1 = createProject("a-new-project", null, false);
+    Project.NameKey p1 = projectOperations.newProject().noEmptyCommit().create();
+
     TestRepository<?> repo1 = cloneProject(p1);
 
     RevCommit c1 =

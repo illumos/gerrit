@@ -23,23 +23,22 @@ import com.google.common.cache.Weigher;
 import com.google.common.collect.FluentIterable;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.client.ChangeKind;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.server.ReviewDb;
+import com.google.gerrit.proto.Protos;
 import com.google.gerrit.server.cache.CacheModule;
 import com.google.gerrit.server.cache.proto.Cache.ChangeKindKeyProto;
 import com.google.gerrit.server.cache.serialize.CacheSerializer;
 import com.google.gerrit.server.cache.serialize.EnumCacheSerializer;
-import com.google.gerrit.server.cache.serialize.ProtoCacheSerializers;
-import com.google.gerrit.server.cache.serialize.ProtoCacheSerializers.ObjectIdConverter;
+import com.google.gerrit.server.cache.serialize.ObjectIdConverter;
 import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.InMemoryInserter;
 import com.google.gerrit.server.git.MergeUtil;
 import com.google.gerrit.server.query.change.ChangeData;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Module;
 import com.google.inject.name.Named;
@@ -80,7 +79,6 @@ public class ChangeKindCacheImpl implements ChangeKindCache {
     };
   }
 
-  @VisibleForTesting
   public static class NoCache implements ChangeKindCache {
     private final boolean useRecursiveMerge;
     private final ChangeData.Factory changeDataFactory;
@@ -114,8 +112,8 @@ public class ChangeKindCacheImpl implements ChangeKindCache {
     }
 
     @Override
-    public ChangeKind getChangeKind(ReviewDb db, Change change, PatchSet patch) {
-      return getChangeKindInternal(this, db, change, patch, changeDataFactory, repoManager);
+    public ChangeKind getChangeKind(Change change, PatchSet patch) {
+      return getChangeKindInternal(this, change, patch, changeDataFactory, repoManager);
     }
 
     @Override
@@ -146,7 +144,7 @@ public class ChangeKindCacheImpl implements ChangeKindCache {
       @Override
       public byte[] serialize(Key object) {
         ObjectIdConverter idConverter = ObjectIdConverter.create();
-        return ProtoCacheSerializers.toByteArray(
+        return Protos.toByteArray(
             ChangeKindKeyProto.newBuilder()
                 .setPrior(idConverter.toByteString(object.prior()))
                 .setNext(idConverter.toByteString(object.next()))
@@ -156,8 +154,7 @@ public class ChangeKindCacheImpl implements ChangeKindCache {
 
       @Override
       public Key deserialize(byte[] in) {
-        ChangeKindKeyProto proto =
-            ProtoCacheSerializers.parseUnchecked(ChangeKindKeyProto.parser(), in);
+        ChangeKindKeyProto proto = Protos.parseUnchecked(ChangeKindKeyProto.parser(), in);
         ObjectIdConverter idConverter = ObjectIdConverter.create();
         return create(
             idConverter.fromByteString(proto.getPrior()),
@@ -356,8 +353,8 @@ public class ChangeKindCacheImpl implements ChangeKindCache {
   }
 
   @Override
-  public ChangeKind getChangeKind(ReviewDb db, Change change, PatchSet patch) {
-    return getChangeKindInternal(this, db, change, patch, changeDataFactory, repoManager);
+  public ChangeKind getChangeKind(Change change, PatchSet patch) {
+    return getChangeKindInternal(this, change, patch, changeDataFactory, repoManager);
   }
 
   @Override
@@ -375,13 +372,13 @@ public class ChangeKindCacheImpl implements ChangeKindCache {
     ChangeKind kind = ChangeKind.REWORK;
     // Trivial case: if we're on the first patch, we don't need to use
     // the repository.
-    if (patch.getId().get() > 1) {
+    if (patch.id().get() > 1) {
       try {
         Collection<PatchSet> patchSetCollection = change.patchSets();
         PatchSet priorPs = patch;
         for (PatchSet ps : patchSetCollection) {
-          if (ps.getId().get() < patch.getId().get()
-              && (ps.getId().get() > priorPs.getId().get() || priorPs == patch)) {
+          if (ps.id().get() < patch.id().get()
+              && (ps.id().get() > priorPs.id().get() || priorPs == patch)) {
             // We only want the previous patch set, so walk until the last one
             priorPs = ps;
           }
@@ -394,17 +391,13 @@ public class ChangeKindCacheImpl implements ChangeKindCache {
         if (priorPs != patch) {
           kind =
               cache.getChangeKind(
-                  change.project(),
-                  rw,
-                  repoConfig,
-                  ObjectId.fromString(priorPs.getRevision().get()),
-                  ObjectId.fromString(patch.getRevision().get()));
+                  change.project(), rw, repoConfig, priorPs.commitId(), patch.commitId());
         }
-      } catch (OrmException e) {
+      } catch (StorageException e) {
         // Do nothing; assume we have a complex change
         logger.atWarning().withCause(e).log(
             "Unable to get change kind for patchSet %s of change %s",
-            patch.getPatchSetId(), change.getId());
+            patch.number(), change.getId());
       }
     }
     return kind;
@@ -412,7 +405,6 @@ public class ChangeKindCacheImpl implements ChangeKindCache {
 
   private static ChangeKind getChangeKindInternal(
       ChangeKindCache cache,
-      ReviewDb db,
       Change change,
       PatchSet patch,
       ChangeData.Factory changeDataFactory,
@@ -421,17 +413,17 @@ public class ChangeKindCacheImpl implements ChangeKindCache {
     ChangeKind kind = ChangeKind.REWORK;
     // Trivial case: if we're on the first patch, we don't need to open
     // the repository.
-    if (patch.getId().get() > 1) {
+    if (patch.id().get() > 1) {
       try (Repository repo = repoManager.openRepository(change.getProject());
           RevWalk rw = new RevWalk(repo)) {
         kind =
             getChangeKindInternal(
-                cache, rw, repo.getConfig(), changeDataFactory.create(db, change), patch);
+                cache, rw, repo.getConfig(), changeDataFactory.create(change), patch);
       } catch (IOException e) {
         // Do nothing; assume we have a complex change
         logger.atWarning().withCause(e).log(
             "Unable to get change kind for patchSet %s of change %s",
-            patch.getPatchSetId(), change.getChangeId());
+            patch.number(), change.getChangeId());
       }
     }
     return kind;

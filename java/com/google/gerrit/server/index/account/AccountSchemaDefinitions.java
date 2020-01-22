@@ -20,6 +20,7 @@ import com.google.gerrit.index.Schema;
 import com.google.gerrit.index.SchemaDefinitions;
 import com.google.gerrit.server.account.AccountState;
 
+/** Definition of account index versions (schemata). See {@link SchemaDefinitions}. */
 public class AccountSchemaDefinitions extends SchemaDefinitions<AccountState> {
   @Deprecated
   static final Schema<AccountState> V4 =
@@ -49,9 +50,25 @@ public class AccountSchemaDefinitions extends SchemaDefinitions<AccountState> {
   @Deprecated static final Schema<AccountState> V9 = schema(V8);
 
   // Lucene index was changed to add additional fields for sorting.
-  static final Schema<AccountState> V10 = schema(V9);
+  @Deprecated static final Schema<AccountState> V10 = schema(V9);
 
+  // New numeric types: use dimensional points using the k-d tree geo-spatial data structure
+  // to offer fast single- and multi-dimensional numeric range. As the consequense, integer
+  // document id type is replaced with string document id type.
+  static final Schema<AccountState> V11 =
+      new Schema.Builder<AccountState>()
+          .add(V10)
+          .remove(AccountField.ID)
+          .add(AccountField.ID_STR)
+          .legacyNumericFields(false)
+          .build();
+
+  /**
+   * Name of the account index to be used when contacting index backends or loading configurations.
+   */
   public static final String NAME = "accounts";
+
+  /** Singleton instance of the schema definitions. This is one per JVM. */
   public static final AccountSchemaDefinitions INSTANCE = new AccountSchemaDefinitions();
 
   private AccountSchemaDefinitions() {

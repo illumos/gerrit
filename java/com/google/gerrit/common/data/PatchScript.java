@@ -14,12 +14,14 @@
 
 package com.google.gerrit.common.data;
 
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Patch;
+import com.google.gerrit.entities.Patch.ChangeType;
 import com.google.gerrit.extensions.client.DiffPreferencesInfo;
 import com.google.gerrit.extensions.client.DiffPreferencesInfo.Whitespace;
 import com.google.gerrit.prettify.common.SparseFileContent;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Patch;
-import com.google.gerrit.reviewdb.client.Patch.ChangeType;
 import java.util.List;
 import java.util.Set;
 import org.eclipse.jgit.diff.Edit;
@@ -37,31 +39,42 @@ public class PatchScript {
     GITLINK
   }
 
-  private Change.Key changeId;
-  private ChangeType changeType;
-  private String oldName;
-  private String newName;
-  private FileMode oldMode;
-  private FileMode newMode;
-  private List<String> header;
-  private DiffPreferencesInfo diffPrefs;
-  private SparseFileContent a;
-  private SparseFileContent b;
-  private List<Edit> edits;
-  private Set<Edit> editsDueToRebase;
-  private DisplayMethod displayMethodA;
-  private DisplayMethod displayMethodB;
-  private transient String mimeTypeA;
-  private transient String mimeTypeB;
-  private CommentDetail comments;
-  private List<Patch> history;
-  private boolean hugeFile;
-  private boolean intralineDifference;
-  private boolean intralineFailure;
-  private boolean intralineTimeout;
-  private boolean binary;
-  private transient String commitIdA;
-  private transient String commitIdB;
+  public static class PatchScriptFileInfo {
+    public final String name;
+    public final FileMode mode;
+    public final SparseFileContent content;
+    public final DisplayMethod displayMethod;
+    public final String mimeType;
+    public final String commitId;
+
+    PatchScriptFileInfo(
+        String name,
+        FileMode mode,
+        SparseFileContent content,
+        DisplayMethod displayMethod,
+        String mimeType,
+        String commitId) {
+      this.name = name;
+      this.mode = mode;
+      this.content = content;
+      this.displayMethod = displayMethod;
+      this.mimeType = mimeType;
+      this.commitId = commitId;
+    }
+  }
+
+  private final Change.Key changeId;
+  private final ChangeType changeType;
+  private final ImmutableList<String> header;
+  private final DiffPreferencesInfo diffPrefs;
+  private final ImmutableList<Edit> edits;
+  private final ImmutableSet<Edit> editsDueToRebase;
+  private final ImmutableList<Patch> history;
+  private final boolean intralineFailure;
+  private final boolean intralineTimeout;
+  private final boolean binary;
+  private final PatchScriptFileInfo fileInfoA;
+  private final PatchScriptFileInfo fileInfoB;
 
   public PatchScript(
       Change.Key ck,
@@ -70,20 +83,17 @@ public class PatchScript {
       String nn,
       FileMode om,
       FileMode nm,
-      List<String> h,
+      ImmutableList<String> h,
       DiffPreferencesInfo dp,
       SparseFileContent ca,
       SparseFileContent cb,
-      List<Edit> e,
-      Set<Edit> editsDueToRebase,
+      ImmutableList<Edit> e,
+      ImmutableSet<Edit> editsDueToRebase,
       DisplayMethod ma,
       DisplayMethod mb,
       String mta,
       String mtb,
-      CommentDetail cd,
-      List<Patch> hist,
-      boolean hf,
-      boolean id,
+      ImmutableList<Patch> hist,
       boolean idf,
       boolean idt,
       boolean bin,
@@ -91,51 +101,21 @@ public class PatchScript {
       String cmb) {
     changeId = ck;
     changeType = ct;
-    oldName = on;
-    newName = nn;
-    oldMode = om;
-    newMode = nm;
     header = h;
     diffPrefs = dp;
-    a = ca;
-    b = cb;
     edits = e;
     this.editsDueToRebase = editsDueToRebase;
-    displayMethodA = ma;
-    displayMethodB = mb;
-    mimeTypeA = mta;
-    mimeTypeB = mtb;
-    comments = cd;
     history = hist;
-    hugeFile = hf;
-    intralineDifference = id;
     intralineFailure = idf;
     intralineTimeout = idt;
     binary = bin;
-    commitIdA = cma;
-    commitIdB = cmb;
-  }
 
-  protected PatchScript() {}
+    fileInfoA = new PatchScriptFileInfo(on, om, ca, ma, mta, cma);
+    fileInfoB = new PatchScriptFileInfo(nn, nm, cb, mb, mtb, cmb);
+  }
 
   public Change.Key getChangeId() {
     return changeId;
-  }
-
-  public DisplayMethod getDisplayMethodA() {
-    return displayMethodA;
-  }
-
-  public DisplayMethod getDisplayMethodB() {
-    return displayMethodB;
-  }
-
-  public FileMode getFileModeA() {
-    return oldMode;
-  }
-
-  public FileMode getFileModeB() {
-    return newMode;
   }
 
   public List<String> getPatchHeader() {
@@ -147,15 +127,11 @@ public class PatchScript {
   }
 
   public String getOldName() {
-    return oldName;
+    return fileInfoA.name;
   }
 
   public String getNewName() {
-    return newName;
-  }
-
-  public CommentDetail getCommentDetail() {
-    return comments;
+    return fileInfoB.name;
   }
 
   public List<Patch> getHistory() {
@@ -166,20 +142,8 @@ public class PatchScript {
     return diffPrefs;
   }
 
-  public void setDiffPrefs(DiffPreferencesInfo dp) {
-    diffPrefs = dp;
-  }
-
-  public boolean isHugeFile() {
-    return hugeFile;
-  }
-
   public boolean isIgnoreWhitespace() {
     return diffPrefs.ignoreWhitespace != Whitespace.IGNORE_NONE;
-  }
-
-  public boolean hasIntralineDifference() {
-    return intralineDifference;
   }
 
   public boolean hasIntralineFailure() {
@@ -190,24 +154,12 @@ public class PatchScript {
     return intralineTimeout;
   }
 
-  public boolean isExpandAllComments() {
-    return diffPrefs.expandAllComments;
-  }
-
   public SparseFileContent getA() {
-    return a;
+    return fileInfoA.content;
   }
 
   public SparseFileContent getB() {
-    return b;
-  }
-
-  public String getMimeTypeA() {
-    return mimeTypeA;
-  }
-
-  public String getMimeTypeB() {
-    return mimeTypeB;
+    return fileInfoB.content;
   }
 
   public List<Edit> getEdits() {
@@ -222,11 +174,11 @@ public class PatchScript {
     return binary;
   }
 
-  public String getCommitIdA() {
-    return commitIdA;
+  public PatchScriptFileInfo getFileInfoA() {
+    return fileInfoA;
   }
 
-  public String getCommitIdB() {
-    return commitIdB;
+  public PatchScriptFileInfo getFileInfoB() {
+    return fileInfoB;
   }
 }

@@ -4,16 +4,16 @@ load("//tools/bzl:pkg_war.bzl", "pkg_war")
 package(default_visibility = ["//visibility:public"])
 
 config_setting(
-    name = "java9",
+    name = "java11",
     values = {
-        "java_toolchain": "@bazel_tools//tools/jdk:toolchain_java9",
+        "java_toolchain": "@bazel_tools//tools/jdk:toolchain_java11",
     },
 )
 
 config_setting(
     name = "java_next",
     values = {
-        "java_toolchain": "@bazel_tools//tools/jdk:toolchain_vanilla",
+        "java_toolchain": "//tools:toolchain_vanilla",
     },
 )
 
@@ -43,15 +43,9 @@ pkg_war(
 )
 
 pkg_war(
-    name = "polygerrit",
-    ui = "polygerrit",
-)
-
-pkg_war(
     name = "release",
     context = ["//plugins:core"],
     doc = True,
-    ui = "ui_optdbg_r",
 )
 
 pkg_war(
@@ -69,9 +63,6 @@ API_DEPS = [
     "//plugins:plugin-api_deploy.jar",
     "//plugins:plugin-api-sources_deploy.jar",
     "//plugins:plugin-api-javadoc",
-    "//gerrit-plugin-gwtui:gwtui-api_deploy.jar",
-    "//gerrit-plugin-gwtui:gwtui-api-source_deploy.jar",
-    "//gerrit-plugin-gwtui:gwtui-api-javadoc",
 ]
 
 genrule2(

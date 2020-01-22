@@ -19,8 +19,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-diff-builder</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <script src="../../../scripts/util.js"></script>
 <script src="../gr-diff/gr-diff-line.js"></script>
@@ -28,13 +30,14 @@ limitations under the License.
 <script src="../gr-diff-highlight/gr-annotation.js"></script>
 <script src="gr-diff-builder.js"></script>
 
+<link rel="import" href="../../shared/gr-rest-api-interface/gr-rest-api-interface.html">
 <link rel="import" href="../../shared/gr-rest-api-interface/mock-diff-response_test.html">
 <link rel="import" href="gr-diff-builder.html">
 
 <script>void(0);</script>
 
 <test-fixture id="basic">
-  <template>
+  <template is="dom-template">
     <gr-diff-builder>
       <table id="diffTable"></table>
     </gr-diff-builder>
@@ -57,9 +60,9 @@ limitations under the License.
 
 <script>
   suite('gr-diff-builder tests', () => {
+    let prefs;
     let element;
     let builder;
-    let createThreadGroupFn;
     let sandbox;
     const LINE_FEED_HTML = '<span class="style-scope gr-diff br"></span>';
 
@@ -70,179 +73,15 @@ limitations under the License.
         getLoggedIn() { return Promise.resolve(false); },
         getProjectConfig() { return Promise.resolve({}); },
       });
-      const prefs = {
+      prefs = {
         line_length: 10,
         show_tabs: true,
         tab_size: 4,
       };
-      createThreadGroupFn = sinon.spy(() => ({
-        setAttribute: sinon.spy(),
-      }));
-      builder = new GrDiffBuilder(
-          {content: []}, {left: [], right: []}, createThreadGroupFn, prefs);
+      builder = new GrDiffBuilder({content: []}, prefs);
     });
 
     teardown(() => { sandbox.restore(); });
-
-    test('_getThreads', () => {
-      const patchForNewThreads = 3;
-      const comments = [
-        {
-          id: 'sallys_confession',
-          message: 'i like you, jack',
-          updated: '2015-12-23 15:00:20.396000000',
-          __commentSide: 'left',
-        }, {
-          id: 'jacks_reply',
-          message: 'i like you, too',
-          updated: '2015-12-24 15:01:20.396000000',
-          __commentSide: 'left',
-          in_reply_to: 'sallys_confession',
-        },
-        {
-          id: 'new_draft',
-          message: 'i do not like either of you',
-          __commentSide: 'left',
-          __draft: true,
-          updated: '2015-12-20 15:01:20.396000000',
-        },
-      ];
-
-      let expectedThreadGroups = [
-        {
-          start_datetime: '2015-12-23 15:00:20.396000000',
-          commentSide: 'left',
-          comments: [{
-            id: 'sallys_confession',
-            message: 'i like you, jack',
-            updated: '2015-12-23 15:00:20.396000000',
-            __commentSide: 'left',
-          }, {
-            id: 'jacks_reply',
-            message: 'i like you, too',
-            updated: '2015-12-24 15:01:20.396000000',
-            __commentSide: 'left',
-            in_reply_to: 'sallys_confession',
-          }],
-          rootId: 'sallys_confession',
-          patchNum: 3,
-        },
-        {
-          start_datetime: '2015-12-20 15:01:20.396000000',
-          commentSide: 'left',
-          comments: [
-            {
-              id: 'new_draft',
-              message: 'i do not like either of you',
-              __commentSide: 'left',
-              __draft: true,
-              updated: '2015-12-20 15:01:20.396000000',
-            },
-          ],
-          rootId: 'new_draft',
-          patchNum: 3,
-        },
-      ];
-
-      assert.deepEqual(
-          builder._getThreads(comments, patchForNewThreads),
-          expectedThreadGroups);
-
-      // Patch num should get inherited from comment rather
-      comments.push({
-        id: 'betsys_confession',
-        message: 'i like you, jack',
-        updated: '2015-12-24 15:00:10.396000000',
-        range: {
-          start_line: 1,
-          start_character: 1,
-          end_line: 1,
-          end_character: 2,
-        },
-        __commentSide: 'left',
-      });
-
-      expectedThreadGroups = [
-        {
-          start_datetime: '2015-12-23 15:00:20.396000000',
-          commentSide: 'left',
-          comments: [{
-            id: 'sallys_confession',
-            message: 'i like you, jack',
-            updated: '2015-12-23 15:00:20.396000000',
-            __commentSide: 'left',
-          }, {
-            id: 'jacks_reply',
-            in_reply_to: 'sallys_confession',
-            message: 'i like you, too',
-            updated: '2015-12-24 15:01:20.396000000',
-            __commentSide: 'left',
-          }],
-          patchNum: 3,
-          rootId: 'sallys_confession',
-        },
-        {
-          start_datetime: '2015-12-24 15:00:10.396000000',
-          commentSide: 'left',
-          comments: [{
-            id: 'betsys_confession',
-            message: 'i like you, jack',
-            updated: '2015-12-24 15:00:10.396000000',
-            range: {
-              start_line: 1,
-              start_character: 1,
-              end_line: 1,
-              end_character: 2,
-            },
-            __commentSide: 'left',
-          }],
-          patchNum: 3,
-          rootId: 'betsys_confession',
-          range: {
-            start_line: 1,
-            start_character: 1,
-            end_line: 1,
-            end_character: 2,
-          },
-        },
-        {
-          start_datetime: '2015-12-20 15:01:20.396000000',
-          commentSide: 'left',
-          comments: [
-            {
-              id: 'new_draft',
-              message: 'i do not like either of you',
-              __commentSide: 'left',
-              __draft: true,
-              updated: '2015-12-20 15:01:20.396000000',
-            },
-          ],
-          rootId: 'new_draft',
-          patchNum: 3,
-        },
-      ];
-
-      assert.deepEqual(
-          builder._getThreads(comments, patchForNewThreads),
-          expectedThreadGroups);
-    });
-
-    test('multiple comments at same location but not threaded', () => {
-      const comments = [
-        {
-          id: 'sallys_confession',
-          message: 'i like you, jack',
-          updated: '2015-12-23 15:00:20.396000000',
-          __commentSide: 'left',
-        }, {
-          id: 'jacks_reply',
-          message: 'i like you, too',
-          updated: '2015-12-24 15:01:20.396000000',
-          __commentSide: 'left',
-        },
-      ];
-      assert.equal(builder._getThreads(comments, '3').length, 2);
-    });
 
     test('_createElement classStr applies all classes', () => {
       const node = builder._createElement('div', 'test classes');
@@ -252,26 +91,37 @@ limitations under the License.
     });
 
     test('context control buttons', () => {
-      const section = {};
-      const line = {contextGroup: {lines: []}};
-
       // Create 10 lines.
+      const lines = [];
       for (let i = 0; i < 10; i++) {
-        line.contextGroup.lines.push('lorem upsum');
+        const line = new GrDiffLine(GrDiffLine.Type.BOTH);
+        line.beforeNumber = i + 1;
+        line.afterNumber = i + 1;
+        line.text = 'lorem upsum';
+        lines.push(line);
       }
 
+      const contextLine = {
+        contextGroups: [new GrDiffGroup(GrDiffGroup.Type.BOTH, lines)],
+      };
+
+      const section = {};
       // Does not include +10 buttons when there are fewer than 11 lines.
-      let td = builder._createContextControl(section, line);
+      let td = builder._createContextControl(section, contextLine);
       let buttons = td.querySelectorAll('gr-button.showContext');
 
       assert.equal(buttons.length, 1);
       assert.equal(Polymer.dom(buttons[0]).textContent, 'Show 10 common lines');
 
       // Add another line.
-      line.contextGroup.lines.push('lorem upsum');
+      const line = new GrDiffLine(GrDiffLine.Type.BOTH);
+      line.text = 'lorem upsum';
+      line.beforeNumber = 11;
+      line.afterNumber = 11;
+      contextLine.contextGroups[0].addLine(line);
 
       // Includes +10 buttons when there are at least 11 lines.
-      td = builder._createContextControl(section, line);
+      td = builder._createContextControl(section, contextLine);
       buttons = td.querySelectorAll('gr-button.showContext');
 
       assert.equal(buttons.length, 3);
@@ -321,13 +171,12 @@ limitations under the License.
           '👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍');
     });
 
-
     test('line_length ignored if line_wrapping is true', () => {
       builder._prefs = {line_wrapping: true, tab_size: 4, line_length: 50};
       const text = 'a'.repeat(51);
 
       const line = {text, highlights: []};
-      const result = builder._createTextEl(line).firstChild.innerHTML;
+      const result = builder._createTextEl(undefined, line).firstChild.innerHTML;
       assert.equal(result, text);
     });
 
@@ -337,14 +186,14 @@ limitations under the License.
 
       const line = {text, highlights: []};
       const expected = 'a'.repeat(50) + LINE_FEED_HTML + 'a';
-      const result = builder._createTextEl(line).firstChild.innerHTML;
+      const result = builder._createTextEl(undefined, line).firstChild.innerHTML;
       assert.equal(result, expected);
     });
 
     test('_createTextEl linewrap with tabs', () => {
       const text = '\t'.repeat(7) + '!';
       const line = {text, highlights: []};
-      const el = builder._createTextEl(line);
+      const el = builder._createTextEl(undefined, line);
       assert.equal(el.innerText, text);
       // With line length 10 and tab size 2, there should be a line break
       // after every two tabs.
@@ -407,8 +256,8 @@ limitations under the License.
     });
 
     test('tab wrapper style', () => {
-      const pattern = new RegExp('^<span class="style-scope gr-diff tab" '
-          + 'style="(?:-moz-)?tab-size: (\\d+);">\\t<\\/span>$');
+      const pattern = new RegExp('^<span class="style-scope gr-diff tab" ' +
+        'style="(?:-moz-)?tab-size: (\\d+);">\\t<\\/span>$');
 
       for (const size of [1, 3, 8, 55]) {
         const html = builder._getTabWrapper(size).outerHTML;
@@ -417,135 +266,10 @@ limitations under the License.
       }
     });
 
-    test('comments', () => {
-      const line = new GrDiffLine(GrDiffLine.Type.BOTH);
-      line.beforeNumber = 3;
-      line.afterNumber = 5;
-
-      let comments = {left: [], right: []};
-      assert.deepEqual(builder._getCommentsForLine(comments, line), []);
-      assert.deepEqual(builder._getCommentsForLine(comments, line,
-          GrDiffBuilder.Side.LEFT), []);
-      assert.deepEqual(builder._getCommentsForLine(comments, line,
-          GrDiffBuilder.Side.RIGHT), []);
-
-      comments = {
-        left: [
-          {id: 'l3', line: 3},
-          {id: 'l5', line: 5},
-        ],
-        right: [
-          {id: 'r3', line: 3},
-          {id: 'r5', line: 5},
-        ],
-      };
-      assert.deepEqual(builder._getCommentsForLine(comments, line),
-          [{id: 'l3', line: 3, __commentSide: 'left'},
-            {id: 'r5', line: 5, __commentSide: 'right'}]);
-      assert.deepEqual(builder._getCommentsForLine(comments, line,
-          GrDiffBuilder.Side.LEFT), [{id: 'l3', line: 3,
-        __commentSide: 'left'}]);
-      assert.deepEqual(builder._getCommentsForLine(comments, line,
-          GrDiffBuilder.Side.RIGHT), [{id: 'r5', line: 5,
-        __commentSide: 'right'}]);
-    });
-
-    test('comment thread group creation', () => {
-      const l3 = {id: 'l3', line: 3, updated: '2016-08-09 00:42:32.000000000',
-        __commentSide: 'left'};
-      const l5 = {id: 'l5', line: 5, updated: '2016-08-09 00:42:32.000000000',
-        __commentSide: 'left'};
-      const r5 = {id: 'r5', line: 5, updated: '2016-08-09 00:42:32.000000000',
-        __commentSide: 'right'};
-
-      builder._comments = {
-        meta: {
-          changeNum: '42',
-          patchRange: {
-            basePatchNum: 'PARENT',
-            patchNum: '3',
-          },
-          path: '/path/to/foo',
-          projectConfig: {foo: 'bar'},
-        },
-        left: [l3, l5],
-        right: [r5],
-      };
-
-      function threadForComment(c, patchNum) {
-        return {
-          commentSide: c.__commentSide,
-          comments: [c],
-          patchNum,
-          rootId: c.id,
-          start_datetime: c.updated,
-        };
-      }
-
-      function checkThreadGroupProps(threadGroupEl, patchNum, isOnParent,
-          comments) {
-        assert.equal(createThreadGroupFn.lastCall.args[0], patchNum);
-        assert.equal(createThreadGroupFn.lastCall.args[1], isOnParent);
-        assert.deepEqual(
-            threadGroupEl.threads,
-            comments.map(c => threadForComment(c, patchNum)));
-      }
-
-      let line = new GrDiffLine(GrDiffLine.Type.BOTH);
-      line.beforeNumber = 5;
-      line.afterNumber = 5;
-      let threadGroupEl = builder._commentThreadGroupForLine(line);
-      assert.isTrue(createThreadGroupFn.calledOnce);
-      checkThreadGroupProps(threadGroupEl, '3', false, [l5, r5]);
-
-      threadGroupEl =
-          builder._commentThreadGroupForLine(line, GrDiffBuilder.Side.RIGHT);
-      assert.isTrue(createThreadGroupFn.calledTwice);
-      checkThreadGroupProps(threadGroupEl, '3', false, [r5]);
-
-      threadGroupEl =
-          builder._commentThreadGroupForLine(line, GrDiffBuilder.Side.LEFT);
-      assert.isTrue(createThreadGroupFn.calledThrice);
-      checkThreadGroupProps(threadGroupEl, '3', true, [l5]);
-
-      builder._comments.meta.patchRange.basePatchNum = '1';
-
-      threadGroupEl = builder._commentThreadGroupForLine(line);
-      assert.equal(createThreadGroupFn.callCount, 4);
-      checkThreadGroupProps(threadGroupEl, '3', false, [l5, r5]);
-
-      threadEl =
-          builder._commentThreadGroupForLine(line, GrDiffBuilder.Side.LEFT);
-      assert.equal(createThreadGroupFn.callCount, 5);
-      checkThreadGroupProps(threadEl, '1', false, [l5]);
-
-      threadGroupEl =
-          builder._commentThreadGroupForLine(line, GrDiffBuilder.Side.RIGHT);
-      assert.equal(createThreadGroupFn.callCount, 6);
-      checkThreadGroupProps(threadGroupEl, '3', false, [r5]);
-
-      builder._comments.meta.patchRange.basePatchNum = 'PARENT';
-
-      line = new GrDiffLine(GrDiffLine.Type.REMOVE);
-      line.beforeNumber = 5;
-      line.afterNumber = 5;
-      threadGroupEl = builder._commentThreadGroupForLine(line);
-      assert.equal(createThreadGroupFn.callCount, 7);
-      checkThreadGroupProps(threadGroupEl, '3', true, [l5, r5]);
-
-      line = new GrDiffLine(GrDiffLine.Type.ADD);
-      line.beforeNumber = 3;
-      line.afterNumber = 5;
-      threadGroupEl = builder._commentThreadGroupForLine(line);
-      assert.equal(createThreadGroupFn.callCount, 8);
-      checkThreadGroupProps(threadGroupEl, '3', false, [l3, r5]);
-    });
-
-
     test('_handlePreferenceError called with invalid preference', () => {
       sandbox.stub(element, '_handlePreferenceError');
       const prefs = {tab_size: 0};
-      element._getDiffBuilder(element.diff, element.comments, prefs);
+      element._getDiffBuilder(element.diff, prefs);
       assert.isTrue(element._handlePreferenceError.lastCall
           .calledWithExactly('tab size'));
     });
@@ -557,31 +281,6 @@ limitations under the License.
       assert.equal(errorStub.lastCall.args[0].detail.message,
           `The value of the 'tab size' user preference is invalid. ` +
         `Fix in diff preferences`);
-    });
-
-    test('_getKeyLocations', () => {
-      assert.deepEqual(element._getKeyLocations({left: [], right: []}, null),
-          {left: {}, right: {}});
-      const comments = {
-        left: [{line: 123}, {}],
-        right: [{line: 456}],
-      };
-      assert.deepEqual(element._getKeyLocations(comments, null), {
-        left: {FILE: true, 123: true},
-        right: {456: true},
-      });
-
-      const lineOfInterest = {number: 789, leftSide: true};
-      assert.deepEqual(element._getKeyLocations(comments, lineOfInterest), {
-        left: {FILE: true, 123: true, 789: true},
-        right: {456: true},
-      });
-
-      delete lineOfInterest.leftSide;
-      assert.deepEqual(element._getKeyLocations(comments, lineOfInterest), {
-        left: {FILE: true, 123: true},
-        right: {456: true, 789: true},
-      });
     });
 
     suite('_isTotal', () => {
@@ -620,9 +319,11 @@ limitations under the License.
       let str;
       let annotateElementSpy;
       let layer;
+      const lineNumberEl = document.createElement('td');
 
       function slice(str, start, end) {
-        return Array.from(str).slice(start, end).join('');
+        return Array.from(str).slice(start, end)
+            .join('');
       }
 
       setup(() => {
@@ -639,7 +340,7 @@ limitations under the License.
           highlights: [],
         };
 
-        layer.annotate(el, line);
+        layer.annotate(el, lineNumberEl, line);
 
         // The content is unchanged.
         assert.isFalse(annotateElementSpy.called);
@@ -662,7 +363,7 @@ limitations under the License.
         const str3 = slice(str, 18, 22);
         const str4 = slice(str, 22);
 
-        layer.annotate(el, line);
+        layer.annotate(el, lineNumberEl, line);
 
         assert.isTrue(annotateElementSpy.called);
         assert.equal(el.childNodes.length, 5);
@@ -694,7 +395,7 @@ limitations under the License.
         const str0 = slice(str, 0, 28);
         const str1 = slice(str, 28);
 
-        layer.annotate(el, line);
+        layer.annotate(el, lineNumberEl, line);
 
         assert.isTrue(annotateElementSpy.called);
         assert.equal(el.childNodes.length, 2);
@@ -714,7 +415,7 @@ limitations under the License.
           ],
         };
 
-        layer.annotate(el, line);
+        layer.annotate(el, lineNumberEl, line);
 
         assert.isFalse(annotateElementSpy.called);
         assert.equal(el.childNodes.length, 1);
@@ -735,7 +436,7 @@ limitations under the License.
         const str1 = slice(str, 6, 12);
         const str2 = slice(str, 12);
 
-        layer.annotate(el, line);
+        layer.annotate(el, lineNumberEl, line);
 
         assert.isTrue(annotateElementSpy.called);
         assert.equal(el.childNodes.length, 3);
@@ -765,7 +466,7 @@ limitations under the License.
         const str0 = slice(str, 0, 6);
         const str1 = slice(str, 6);
 
-        layer.annotate(el, line);
+        layer.annotate(el, lineNumberEl, line);
 
         assert.isTrue(annotateElementSpy.called);
         assert.equal(el.childNodes.length, 2);
@@ -781,6 +482,7 @@ limitations under the License.
     suite('tab indicators', () => {
       let element;
       let layer;
+      const lineNumberEl = document.createElement('td');
 
       setup(() => {
         element = fixture('basic');
@@ -794,7 +496,7 @@ limitations under the License.
         const annotateElementStub =
             sandbox.stub(GrAnnotation, 'annotateElement');
 
-        layer.annotate(el, line);
+        layer.annotate(el, lineNumberEl, line);
 
         assert.isFalse(annotateElementStub.called);
       });
@@ -807,7 +509,7 @@ limitations under the License.
         const annotateElementStub =
             sandbox.stub(GrAnnotation, 'annotateElement');
 
-        layer.annotate(el, line);
+        layer.annotate(el, lineNumberEl, line);
 
         assert.isFalse(annotateElementStub.called);
       });
@@ -820,7 +522,7 @@ limitations under the License.
         const annotateElementStub =
             sandbox.stub(GrAnnotation, 'annotateElement');
 
-        layer.annotate(el, line);
+        layer.annotate(el, lineNumberEl, line);
 
         assert.equal(annotateElementStub.callCount, 1);
         const args = annotateElementStub.getCalls()[0].args;
@@ -840,7 +542,7 @@ limitations under the License.
         const annotateElementStub =
             sandbox.stub(GrAnnotation, 'annotateElement');
 
-        layer.annotate(el, line);
+        layer.annotate(el, lineNumberEl, line);
 
         assert.isFalse(annotateElementStub.called);
       });
@@ -853,7 +555,7 @@ limitations under the License.
         const annotateElementStub =
             sandbox.stub(GrAnnotation, 'annotateElement');
 
-        layer.annotate(el, line);
+        layer.annotate(el, lineNumberEl, line);
 
         assert.equal(annotateElementStub.callCount, 2);
 
@@ -878,7 +580,7 @@ limitations under the License.
         const annotateElementStub =
             sandbox.stub(GrAnnotation, 'annotateElement');
 
-        layer.annotate(el, line);
+        layer.annotate(el, lineNumberEl, line);
 
         assert.equal(annotateElementStub.callCount, 1);
         const args = annotateElementStub.getCalls()[0].args;
@@ -889,36 +591,46 @@ limitations under the License.
       });
     });
 
-    suite('layers from plugins', () => {
+    suite('layers', () => {
       let element;
       let initialLayersCount;
-
+      let withLayerCount;
       setup(() => {
+        const layers = [];
         element = fixture('basic');
+        element.layers = layers;
         element._showTrailingWhitespace = true;
+        element._setupAnnotationLayers();
         initialLayersCount = element._layers.length;
       });
 
-      test('no plugin layers', () => {
-        const getDiffLayersStub = sinon.stub(element.$.jsAPI, 'getDiffLayers')
-            .returns([]);
-        element.attached();
-        assert.isTrue(getDiffLayersStub.called);
+      test('no layers', () => {
+        element._setupAnnotationLayers();
         assert.equal(element._layers.length, initialLayersCount);
       });
 
-      test('with plugin layers', () => {
-        const getDiffLayersStub = sinon.stub(element.$.jsAPI, 'getDiffLayers')
-            .returns([{}, {}]);
-        element.attached();
-        assert.isTrue(getDiffLayersStub.called);
-        assert.equal(element._layers.length, initialLayersCount+2);
+      suite('with layers', () => {
+        const layers = [{}, {}];
+        setup(() => {
+          element = fixture('basic');
+          element.layers = layers;
+          element._showTrailingWhitespace = true;
+          element._setupAnnotationLayers();
+          withLayerCount = element._layers.length;
+        });
+        test('with layers', () => {
+          element._setupAnnotationLayers();
+          assert.equal(element._layers.length, withLayerCount);
+          assert.equal(initialLayersCount + layers.length,
+              withLayerCount);
+        });
       });
     });
 
     suite('trailing whitespace', () => {
       let element;
       let layer;
+      const lineNumberEl = document.createElement('td');
 
       setup(() => {
         element = fixture('basic');
@@ -931,7 +643,7 @@ limitations under the License.
         const el = document.createElement('div');
         const annotateElementStub =
             sandbox.stub(GrAnnotation, 'annotateElement');
-        layer.annotate(el, line);
+        layer.annotate(el, lineNumberEl, line);
         assert.isFalse(annotateElementStub.called);
       });
 
@@ -942,7 +654,7 @@ limitations under the License.
         el.textContent = str;
         const annotateElementStub =
             sandbox.stub(GrAnnotation, 'annotateElement');
-        layer.annotate(el, line);
+        layer.annotate(el, lineNumberEl, line);
         assert.isFalse(annotateElementStub.called);
       });
 
@@ -953,7 +665,7 @@ limitations under the License.
         el.textContent = str;
         const annotateElementStub =
             sandbox.stub(GrAnnotation, 'annotateElement');
-        layer.annotate(el, line);
+        layer.annotate(el, lineNumberEl, line);
         assert.isTrue(annotateElementStub.called);
         assert.equal(annotateElementStub.lastCall.args[1], 11);
         assert.equal(annotateElementStub.lastCall.args[2], 3);
@@ -966,7 +678,7 @@ limitations under the License.
         el.textContent = str;
         const annotateElementStub =
             sandbox.stub(GrAnnotation, 'annotateElement');
-        layer.annotate(el, line);
+        layer.annotate(el, lineNumberEl, line);
         assert.isTrue(annotateElementStub.called);
         assert.equal(annotateElementStub.lastCall.args[1], 11);
         assert.equal(annotateElementStub.lastCall.args[2], 3);
@@ -979,7 +691,7 @@ limitations under the License.
         el.textContent = str;
         const annotateElementStub =
             sandbox.stub(GrAnnotation, 'annotateElement');
-        layer.annotate(el, line);
+        layer.annotate(el, lineNumberEl, line);
         assert.isTrue(annotateElementStub.called);
         assert.equal(annotateElementStub.lastCall.args[1], 11);
         assert.equal(annotateElementStub.lastCall.args[2], 3);
@@ -992,7 +704,7 @@ limitations under the License.
         el.textContent = str;
         const annotateElementStub =
             sandbox.stub(GrAnnotation, 'annotateElement');
-        layer.annotate(el, line);
+        layer.annotate(el, lineNumberEl, line);
         assert.isTrue(annotateElementStub.called);
         assert.equal(annotateElementStub.lastCall.args[1], 1);
         assert.equal(annotateElementStub.lastCall.args[2], 1);
@@ -1006,14 +718,14 @@ limitations under the License.
         el.textContent = str;
         const annotateElementStub =
             sandbox.stub(GrAnnotation, 'annotateElement');
-        layer.annotate(el, line);
+        layer.annotate(el, lineNumberEl, line);
         assert.isFalse(annotateElementStub.called);
       });
     });
 
     suite('rendering text, images and binary files', () => {
       let processStub;
-      let comments;
+      let keyLocations;
       let prefs;
       let content;
 
@@ -1022,8 +734,7 @@ limitations under the License.
         element.viewMode = 'SIDE_BY_SIDE';
         processStub = sandbox.stub(element.$.processor, 'process')
             .returns(Promise.resolve());
-        sandbox.stub(element, '_anyLineTooLong').returns(true);
-        comments = {left: [], right: []};
+        keyLocations = {left: {}, right: {}};
         prefs = {
           line_length: 10,
           show_tabs: true,
@@ -1044,7 +755,7 @@ limitations under the License.
 
       test('text', () => {
         element.diff = {content};
-        return element.render(comments, prefs).then(() => {
+        return element.render(keyLocations, prefs).then(() => {
           assert.isTrue(processStub.calledOnce);
           assert.isFalse(processStub.lastCall.args[1]);
         });
@@ -1053,7 +764,7 @@ limitations under the License.
       test('image', () => {
         element.diff = {content, binary: true};
         element.isImageDiff = true;
-        return element.render(comments, prefs).then(() => {
+        return element.render(keyLocations, prefs).then(() => {
           assert.isTrue(processStub.calledOnce);
           assert.isTrue(processStub.lastCall.args[1]);
         });
@@ -1061,7 +772,7 @@ limitations under the License.
 
       test('binary', () => {
         element.diff = {content, binary: true};
-        return element.render(comments, prefs).then(() => {
+        return element.render(keyLocations, prefs).then(() => {
           assert.isTrue(processStub.calledOnce);
           assert.isTrue(processStub.lastCall.args[1]);
         });
@@ -1071,6 +782,7 @@ limitations under the License.
     suite('rendering', () => {
       let content;
       let outputEl;
+      let keyLocations;
 
       setup(done => {
         const prefs = {
@@ -1092,39 +804,22 @@ limitations under the License.
             ],
           },
         ];
-        stub('gr-reporting', {
-          time: sandbox.stub(),
-          timeEnd: sandbox.stub(),
-        });
         element = fixture('basic');
         outputEl = element.queryEffectiveChildren('#diffTable');
+        keyLocations = {left: {}, right: {}};
         sandbox.stub(element, '_getDiffBuilder', () => {
-          const builder = new GrDiffBuilder(
-              {content}, {left: [], right: []}, null, prefs, outputEl);
+          const builder = new GrDiffBuilder({content}, prefs, outputEl);
           sandbox.stub(builder, 'addColumns');
           builder.buildSectionElement = function(group) {
             const section = document.createElement('stub');
-            section.textContent = group.lines.reduce((acc, line) => {
-              return acc + line.text;
-            }, '');
+            section.textContent = group.lines
+                .reduce((acc, line) => acc + line.text, '');
             return section;
           };
           return builder;
         });
         element.diff = {content};
-        element.render({left: [], right: []}, prefs).then(done);
-      });
-
-      test('reporting', done => {
-        const timeStub = element.$.reporting.time;
-        const timeEndStub = element.$.reporting.timeEnd;
-        assert.isTrue(timeStub.calledWithExactly('Diff Total Render'));
-        assert.isTrue(timeStub.calledWithExactly('Diff Content Render'));
-        assert.isTrue(timeStub.calledWithExactly('Diff Syntax Render'));
-        assert.isTrue(timeEndStub.calledWithExactly('Diff Total Render'));
-        assert.isTrue(timeEndStub.calledWithExactly('Diff Content Render'));
-        assert.isTrue(timeEndStub.calledWithExactly('Diff Syntax Render'));
-        done();
+        element.render(keyLocations, prefs).then(done);
       });
 
       test('renderSection', () => {
@@ -1137,7 +832,7 @@ limitations under the License.
       });
 
       test('addColumns is called', done => {
-        element.render({left: [], right: []}, {}).then(done);
+        element.render(keyLocations, {}).then(done);
         assert.isTrue(element._builder.addColumns.called);
       });
 
@@ -1159,45 +854,21 @@ limitations under the License.
         assert.strictEqual(sections[1], section[1]);
       });
 
-      test('render-start and render are fired', done => {
+      test('render-start and render-content are fired', done => {
         const dispatchEventStub = sandbox.stub(element, 'dispatchEvent');
-        element.render({left: [], right: []}, {}).then(() => {
+        element.render(keyLocations, {}).then(() => {
           const firedEventTypes = dispatchEventStub.getCalls()
-              .map(c => { return c.args[0].type; });
+              .map(c => c.args[0].type);
           assert.include(firedEventTypes, 'render-start');
           assert.include(firedEventTypes, 'render-content');
-          assert.include(firedEventTypes, 'render');
           done();
         });
-      });
-
-      test('rendering normal-sized diff does not disable syntax', () => {
-        assert.isTrue(element.$.syntaxLayer.enabled);
-      });
-
-      test('rendering large diff disables syntax', done => {
-        // Before it renders, set the first diff line to 500 '*' characters.
-        element.diff.content[0].a = [new Array(501).join('*')];
-        element.addEventListener('render', () => {
-          assert.isFalse(element.$.syntaxLayer.enabled);
-          done();
-        });
-        const prefs = {
-          line_length: 10,
-          show_tabs: true,
-          tab_size: 4,
-          context: -1,
-          syntax_highlighting: true,
-        };
-        element.render({left: [], right: []}, prefs);
       });
 
       test('cancel', () => {
         const processorCancelStub = sandbox.stub(element.$.processor, 'cancel');
-        const syntaxCancelStub = sandbox.stub(element.$.syntaxLayer, 'cancel');
         element.cancel();
         assert.isTrue(processorCancelStub.called);
-        assert.isTrue(syntaxCancelStub.called);
       });
     });
 
@@ -1206,6 +877,7 @@ limitations under the License.
       let builder;
       let diff;
       let prefs;
+      let keyLocations;
 
       setup(done => {
         element = fixture('mock-diff');
@@ -1217,15 +889,12 @@ limitations under the License.
           show_tabs: true,
           tab_size: 4,
         };
+        keyLocations = {left: {}, right: {}};
 
-        element.render({left: [], right: []}, prefs).then(() => {
+        element.render(keyLocations, prefs).then(() => {
           builder = element._builder;
           done();
         });
-      });
-
-      test('getDiffLength', () => {
-        assert.equal(element.getDiffLength(diff), 52);
       });
 
       test('getContentByLine', () => {
@@ -1274,7 +943,7 @@ limitations under the License.
 
         assert.equal(spy.callCount, count);
         spy.getCalls().forEach((call, i) => {
-          assert.equal(call.args[0].beforeNumber, start + i);
+          assert.equal(call.args[1].beforeNumber, start + i);
         });
       });
 
@@ -1285,9 +954,11 @@ limitations under the License.
             (s, e, d, lines, elements) => {
               // Add a line and a corresponding element.
               lines.push(new GrDiffLine(GrDiffLine.Type.BOTH));
-              const parEl = document.createElement('div');
+              const tr = document.createElement('tr');
+              const td = document.createElement('td');
               const el = document.createElement('div');
-              parEl.appendChild(el);
+              tr.appendChild(td);
+              td.appendChild(el);
               elements.push(el);
 
               // Add 2 lines without corresponding elements.
@@ -1299,6 +970,52 @@ limitations under the License.
         // Should be called only once because only one line had a corresponding
         // element.
         assert.equal(spy.callCount, 1);
+      });
+
+      test('_getLineNumberEl side-by-side left', () => {
+        const contentEl = builder.getContentByLine(5, 'left',
+            element.$.diffTable);
+        const lineNumberEl = builder._getLineNumberEl(contentEl, 'left');
+        assert.isTrue(lineNumberEl.classList.contains('lineNum'));
+        assert.isTrue(lineNumberEl.classList.contains('left'));
+      });
+
+      test('_getLineNumberEl side-by-side right', () => {
+        const contentEl = builder.getContentByLine(5, 'right',
+            element.$.diffTable);
+        const lineNumberEl = builder._getLineNumberEl(contentEl, 'right');
+        assert.isTrue(lineNumberEl.classList.contains('lineNum'));
+        assert.isTrue(lineNumberEl.classList.contains('right'));
+      });
+
+      test('_getLineNumberEl unified left', done => {
+        // Re-render as unified:
+        element.viewMode = 'UNIFIED_DIFF';
+        element.render(keyLocations, prefs).then(() => {
+          builder = element._builder;
+
+          const contentEl = builder.getContentByLine(5, 'left',
+              element.$.diffTable);
+          const lineNumberEl = builder._getLineNumberEl(contentEl, 'left');
+          assert.isTrue(lineNumberEl.classList.contains('lineNum'));
+          assert.isTrue(lineNumberEl.classList.contains('left'));
+          done();
+        });
+      });
+
+      test('_getLineNumberEl unified right', done => {
+        // Re-render as unified:
+        element.viewMode = 'UNIFIED_DIFF';
+        element.render(keyLocations, prefs).then(() => {
+          builder = element._builder;
+
+          const contentEl = builder.getContentByLine(5, 'right',
+              element.$.diffTable);
+          const lineNumberEl = builder._getLineNumberEl(contentEl, 'right');
+          assert.isTrue(lineNumberEl.classList.contains('lineNum'));
+          assert.isTrue(lineNumberEl.classList.contains('right'));
+          done();
+        });
       });
 
       test('_getNextContentOnSide side-by-side left', () => {
@@ -1328,7 +1045,7 @@ limitations under the License.
       test('_getNextContentOnSide unified left', done => {
         // Re-render as unified:
         element.viewMode = 'UNIFIED_DIFF';
-        element.render({left: [], right: []}, prefs).then(() => {
+        element.render(keyLocations, prefs).then(() => {
           builder = element._builder;
 
           const startElem = builder.getContentByLine(5, 'left',
@@ -1348,7 +1065,7 @@ limitations under the License.
       test('_getNextContentOnSide unified right', done => {
         // Re-render as unified:
         element.viewMode = 'UNIFIED_DIFF';
-        element.render({left: [], right: []}, prefs).then(() => {
+        element.render(keyLocations, prefs).then(() => {
           builder = element._builder;
 
           const startElem = builder.getContentByLine(5, 'right',

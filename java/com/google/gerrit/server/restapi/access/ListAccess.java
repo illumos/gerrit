@@ -14,23 +14,24 @@
 
 package com.google.gerrit.server.restapi.access;
 
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.extensions.api.access.ProjectAccessInfo;
-import com.google.gerrit.extensions.restapi.ResourceConflictException;
-import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
+import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.extensions.restapi.TopLevelResource;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.restapi.project.GetAccess;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import org.kohsuke.args4j.Option;
 
+/**
+ * REST endpoint to list members of the {@link AccessCollection}.
+ *
+ * <p>This REST endpoint handles {@code GET /access/} requests.
+ */
 public class ListAccess implements RestReadView<TopLevelResource> {
 
   @Option(
@@ -48,13 +49,12 @@ public class ListAccess implements RestReadView<TopLevelResource> {
   }
 
   @Override
-  public Map<String, ProjectAccessInfo> apply(TopLevelResource resource)
-      throws ResourceNotFoundException, ResourceConflictException, IOException,
-          PermissionBackendException, OrmException {
+  public Response<Map<String, ProjectAccessInfo>> apply(TopLevelResource resource)
+      throws Exception {
     Map<String, ProjectAccessInfo> access = new TreeMap<>();
     for (String p : projects) {
-      access.put(p, getAccess.apply(new Project.NameKey(p)));
+      access.put(p, getAccess.apply(Project.nameKey(p)));
     }
-    return access;
+    return Response.ok(access);
   }
 }

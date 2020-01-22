@@ -48,8 +48,7 @@ public class ListChangesOptionsIT extends AbstractDaemonTest {
     String subject = "Change subject";
     String fileName = "a.txt";
     PushOneCommit push =
-        pushFactory.create(
-            db, admin.getIdent(), testRepo, subject, fileName, content, baseChangeId);
+        pushFactory.create(admin.newIdent(), testRepo, subject, fileName, content, baseChangeId);
     PushOneCommit.Result r = push.to("refs/for/master");
     r.assertOkStatus();
     return r;
@@ -66,7 +65,7 @@ public class ListChangesOptionsIT extends AbstractDaemonTest {
   public void currentRevision() throws Exception {
     ChangeInfo c = get(changeId, CURRENT_REVISION);
     assertThat(c.currentRevision).isEqualTo(commitId(2));
-    assertThat(c.revisions.keySet()).containsAllIn(ImmutableSet.of(commitId(2)));
+    assertThat(c.revisions.keySet()).containsAtLeastElementsIn(ImmutableSet.of(commitId(2)));
     assertThat(c.revisions.get(commitId(2))._number).isEqualTo(3);
   }
 
@@ -75,7 +74,7 @@ public class ListChangesOptionsIT extends AbstractDaemonTest {
     ChangeInfo c = get(changeId, CURRENT_REVISION, MESSAGES);
     assertThat(c.revisions).hasSize(1);
     assertThat(c.currentRevision).isEqualTo(commitId(2));
-    assertThat(c.revisions.keySet()).containsAllIn(ImmutableSet.of(commitId(2)));
+    assertThat(c.revisions.keySet()).containsAtLeastElementsIn(ImmutableSet.of(commitId(2)));
     assertThat(c.revisions.get(commitId(2))._number).isEqualTo(3);
   }
 
@@ -84,7 +83,7 @@ public class ListChangesOptionsIT extends AbstractDaemonTest {
     ChangeInfo c = get(changeId, ALL_REVISIONS);
     assertThat(c.currentRevision).isEqualTo(commitId(2));
     assertThat(c.revisions.keySet())
-        .containsAllIn(ImmutableSet.of(commitId(0), commitId(1), commitId(2)));
+        .containsAtLeastElementsIn(ImmutableSet.of(commitId(0), commitId(1), commitId(2)));
     assertThat(c.revisions.get(commitId(0))._number).isEqualTo(1);
     assertThat(c.revisions.get(commitId(1))._number).isEqualTo(2);
     assertThat(c.revisions.get(commitId(2))._number).isEqualTo(3);

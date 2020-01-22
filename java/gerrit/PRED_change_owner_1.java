@@ -14,7 +14,7 @@
 
 package gerrit;
 
-import com.google.gerrit.reviewdb.client.Account;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.server.rules.StoredValues;
 import com.googlecode.prolog_cafe.exceptions.PrologException;
 import com.googlecode.prolog_cafe.lang.IntegerTerm;
@@ -25,6 +25,16 @@ import com.googlecode.prolog_cafe.lang.StructureTerm;
 import com.googlecode.prolog_cafe.lang.SymbolTerm;
 import com.googlecode.prolog_cafe.lang.Term;
 
+/**
+ * Prolog predicate for the owner of a change.
+ *
+ * <p>Checks that the term that is provided as input to this Prolog predicate is a user ID term that
+ * matches the account ID of the change owner.
+ *
+ * <pre>
+ *   'change_owner'(user(-ID))
+ * </pre>
+ */
 public class PRED_change_owner_1 extends Predicate.P1 {
   private static final SymbolTerm user = SymbolTerm.intern("user", 1);
 

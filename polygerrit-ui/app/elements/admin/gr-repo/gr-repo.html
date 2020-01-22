@@ -15,29 +15,33 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
-<link rel="import" href="../../../bower_components/iron-autogrow-textarea/iron-autogrow-textarea.html">
-<link rel="import" href="../../../bower_components/iron-input/iron-input.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/iron-autogrow-textarea/iron-autogrow-textarea.html">
+<link rel="import" href="/bower_components/iron-input/iron-input.html">
+<link rel="import" href="../../../behaviors/fire-behavior/fire-behavior.html">
 
 <link rel="import" href="../../plugins/gr-endpoint-decorator/gr-endpoint-decorator.html">
+<link rel="import" href="../../plugins/gr-endpoint-param/gr-endpoint-param.html">
 <link rel="import" href="../../shared/gr-download-commands/gr-download-commands.html">
 <link rel="import" href="../../shared/gr-rest-api-interface/gr-rest-api-interface.html">
 <link rel="import" href="../../shared/gr-select/gr-select.html">
 <link rel="import" href="../../../styles/gr-form-styles.html">
 <link rel="import" href="../../../styles/gr-subpage-styles.html">
 <link rel="import" href="../../../styles/shared-styles.html">
-
+<link rel="import" href="../gr-repo-plugin-config/gr-repo-plugin-config.html">
 
 <dom-module id="gr-repo">
   <template>
-    <style include="shared-styles"></style>
+    <style include="shared-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <style include="gr-subpage-styles">
       h2.edited:after {
         color: var(--deemphasized-text-color);
         content: ' *';
       }
       .loading,
-      .hideDownload {
+      .hide {
         display: none;
       }
       #loading.loading {
@@ -46,16 +50,20 @@ limitations under the License.
       #loading:not(.loading) {
         display: none;
       }
-      .repositorySettings {
+      #options .repositorySettings {
         display: none;
       }
-      .repositorySettings.showConfig {
+      #options .repositorySettings.showConfig {
         display: block;
       }
     </style>
-    <style include="gr-form-styles"></style>
+    <style include="gr-form-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <main class="gr-form-styles read-only">
-      <style include="shared-styles"></style>
+      <style include="shared-styles">
+        /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+      </style>
       <div class="info">
         <h1 id="Title" class$="name">
           [[repo]]
@@ -67,7 +75,7 @@ limitations under the License.
       </div>
       <div id="loading" class$="[[_computeLoadingClass(_loading)]]">Loading...</div>
       <div id="loadedContent" class$="[[_computeLoadingClass(_loading)]]">
-        <div id="downloadContent" class$="[[_computeDownloadClass(_schemes)]]">
+        <div id="downloadContent" class$="[[_computeHideClass(_schemes)]]">
           <h2 id="download">Download</h2>
           <fieldset>
             <gr-download-commands
@@ -219,7 +227,7 @@ limitations under the License.
                   </gr-select>
                 </span>
               </section>
-              <section id="noteDbSettings" class$="repositorySettings [[_computeRepositoriesClass(_noteDbEnabled)]]">
+              <section>
                 <span class="title">
                   Enable adding unregistered users as reviewers and CCs on changes</span>
                 <span class="value">
@@ -270,12 +278,18 @@ limitations under the License.
               <section>
                 <span class="title">Maximum Git object size limit</span>
                 <span class="value">
-                  <input
-                      id="maxGitObjSizeInput"
+                  <iron-input
+                      id="maxGitObjSizeIronInput"
                       bind-value="{{_repoConfig.max_object_size_limit.configured_value}}"
-                      is="iron-input"
                       type="text"
                       disabled$="[[_readOnly]]">
+                    <input
+                        id="maxGitObjSizeInput"
+                        bind-value="{{_repoConfig.max_object_size_limit.configured_value}}"
+                        is="iron-input"
+                        type="text"
+                        disabled$="[[_readOnly]]">
+                  </iron-input>
                   <template is="dom-if" if="[[_repoConfig.max_object_size_limit.value]]">
                     effective: [[_repoConfig.max_object_size_limit.value]] bytes
                   </template>
@@ -346,9 +360,17 @@ limitations under the License.
                 </span>
               </section>
             </fieldset>
-            <!-- TODO @beckysiegel add plugin config widgets -->
+            <div
+                class$="pluginConfig [[_computeHideClass(_pluginData)]]"
+                on-plugin-config-changed="_handlePluginConfigChanged">
+              <h3>Plugins</h3>
+              <template is="dom-repeat" items="[[_pluginData]]" as="data">
+                <gr-repo-plugin-config
+                    plugin-data="[[data]]"></gr-repo-plugin-config>
+              </template>
+            </div>
             <gr-button
-                on-tap="_handleSaveRepoConfig"
+                on-click="_handleSaveRepoConfig"
                 disabled$="[[_computeButtonDisabled(_readOnly, _configChanged)]]">Save changes</gr-button>
           </fieldset>
           <gr-endpoint-decorator name="repo-config">

@@ -15,7 +15,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-<link rel="import" href="../../../bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/polymer/polymer.html">
+<link rel="import" href="/bower_components/iron-input/iron-input.html">
 <link rel="import" href="../../../styles/gr-form-styles.html">
 <link rel="import" href="../../../styles/shared-styles.html">
 <link rel="import" href="../../shared/gr-rest-api-interface/gr-rest-api-interface.html">
@@ -23,46 +24,74 @@ limitations under the License.
 
 <dom-module id="gr-edit-preferences">
   <template>
-    <style include="shared-styles"></style>
-    <style include="gr-form-styles"></style>
+    <style include="shared-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
+    <style include="gr-form-styles">
+      /* Workaround for empty style block - see https://github.com/Polymer/tools/issues/408 */
+    </style>
     <div id="editPreferences" class="gr-form-styles">
       <section>
         <span class="title">Tab width</span>
         <span class="value">
-          <input
-              is="iron-input"
+          <iron-input
               type="number"
               prevent-invalid-input
               allowed-pattern="[0-9]"
               bind-value="{{editPrefs.tab_size}}"
               on-keypress="_handleEditPrefsChanged"
               on-change="_handleEditPrefsChanged">
+            <input
+                is="iron-input"
+                type="number"
+                prevent-invalid-input
+                allowed-pattern="[0-9]"
+                bind-value="{{editPrefs.tab_size}}"
+                on-keypress="_handleEditPrefsChanged"
+                on-change="_handleEditPrefsChanged">
+          </iron-input>
         </span>
       </section>
       <section>
         <span class="title">Columns</span>
         <span class="value">
-          <input
-              is="iron-input"
+          <iron-input
               type="number"
               prevent-invalid-input
               allowed-pattern="[0-9]"
               bind-value="{{editPrefs.line_length}}"
               on-keypress="_handleEditPrefsChanged"
               on-change="_handleEditPrefsChanged">
+            <input
+                is="iron-input"
+                type="number"
+                prevent-invalid-input
+                allowed-pattern="[0-9]"
+                bind-value="{{editPrefs.line_length}}"
+                on-keypress="_handleEditPrefsChanged"
+                on-change="_handleEditPrefsChanged">
+          </iron-input>
         </span>
       </section>
       <section>
         <span class="title">Indent unit</span>
         <span class="value">
-          <input
-              is="iron-input"
+          <iron-input
               type="number"
               prevent-invalid-input
               allowed-pattern="[0-9]"
               bind-value="{{editPrefs.indent_unit}}"
               on-keypress="_handleEditPrefsChanged"
               on-change="_handleEditPrefsChanged">
+            <input
+                is="iron-input"
+                type="number"
+                prevent-invalid-input
+                allowed-pattern="[0-9]"
+                bind-value="{{editPrefs.indent_unit}}"
+                on-keypress="_handleEditPrefsChanged"
+                on-change="_handleEditPrefsChanged">
+          </iron-input>
         </span>
       </section>
       <section>

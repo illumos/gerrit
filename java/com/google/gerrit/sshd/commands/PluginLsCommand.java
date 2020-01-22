@@ -21,7 +21,7 @@ import com.google.gerrit.common.data.GlobalCapability;
 import com.google.gerrit.extensions.annotations.RequiresCapability;
 import com.google.gerrit.extensions.common.PluginInfo;
 import com.google.gerrit.extensions.restapi.TopLevelResource;
-import com.google.gerrit.server.OutputFormat;
+import com.google.gerrit.json.OutputFormat;
 import com.google.gerrit.server.plugins.ListPlugins;
 import com.google.gerrit.sshd.CommandMetaData;
 import com.google.gerrit.sshd.SshCommand;
@@ -41,7 +41,7 @@ public class PluginLsCommand extends SshCommand {
 
   @Override
   public void run() throws Exception {
-    Map<String, PluginInfo> output = list.apply(TopLevelResource.INSTANCE);
+    Map<String, PluginInfo> output = list.apply(TopLevelResource.INSTANCE).value();
 
     if (format.isJson()) {
       format

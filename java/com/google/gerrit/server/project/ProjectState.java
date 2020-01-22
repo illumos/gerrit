@@ -15,12 +15,10 @@
 package com.google.gerrit.server.project;
 
 import static com.google.gerrit.common.data.PermissionRule.Action.ALLOW;
-import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.data.AccessSection;
@@ -29,10 +27,13 @@ import com.google.gerrit.common.data.LabelType;
 import com.google.gerrit.common.data.LabelTypes;
 import com.google.gerrit.common.data.Permission;
 import com.google.gerrit.common.data.PermissionRule;
-import com.google.gerrit.common.data.RefConfigSection;
 import com.google.gerrit.common.data.SubscribeSection;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.BooleanProjectConfig;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.projects.CommentLinkInfo;
-import com.google.gerrit.extensions.api.projects.ThemeInfo;
 import com.google.gerrit.extensions.client.SubmitType;
 import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.index.project.ProjectData;
@@ -41,30 +42,22 @@ import com.google.gerrit.metrics.Description.Units;
 import com.google.gerrit.metrics.Field;
 import com.google.gerrit.metrics.MetricMaker;
 import com.google.gerrit.metrics.Timer1;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.BooleanProjectConfig;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
 import com.google.gerrit.server.account.CapabilityCollection;
 import com.google.gerrit.server.config.AllProjectsName;
 import com.google.gerrit.server.config.AllUsersName;
-import com.google.gerrit.server.config.SitePaths;
 import com.google.gerrit.server.git.BranchOrderSection;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.git.TransferConfig;
+import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -77,7 +70,7 @@ import org.eclipse.jgit.lib.Repository;
 
 /**
  * Cached information on a project. Must not contain any data derived from parents other than it's
- * immediate parent's {@link com.google.gerrit.reviewdb.client.Project.NameKey}.
+ * immediate parent's {@link com.google.gerrit.entities.Project.NameKey}.
  */
 public class ProjectState {
   private static final FluentLogger logger = FluentLogger.forEnclosingClass();
@@ -88,7 +81,6 @@ public class ProjectState {
 
   private final boolean isAllProjects;
   private final boolean isAllUsers;
-  private final SitePaths sitePaths;
   private final AllProjectsName allProjectsName;
   private final ProjectCache projectCache;
   private final GitRepositoryManager gitMgr;
@@ -109,17 +101,11 @@ public class ProjectState {
   /** Local access sections, wrapped in SectionMatchers for faster evaluation. */
   private volatile List<SectionMatcher> localAccessSections;
 
-  // TODO(dborowitz): Delete when the GWT UI gets deleted; in the meantime, don't bother with any
-  // refactoring.
-  /** Theme information loaded from site_path/themes. */
-  private volatile ThemeInfo theme;
-
   /** If this is all projects, the capabilities used by the server. */
   private final CapabilityCollection capabilities;
 
   @Inject
   public ProjectState(
-      SitePaths sitePaths,
       ProjectCache projectCache,
       AllProjectsName allProjectsName,
       AllUsersName allUsersName,
@@ -129,7 +115,6 @@ public class ProjectState {
       TransferConfig transferConfig,
       MetricMaker metricMaker,
       @Assisted ProjectConfig config) {
-    this.sitePaths = sitePaths;
     this.projectCache = projectCache;
     this.isAllProjects = config.getProject().getNameKey().equals(allProjectsName);
     this.isAllUsers = config.getProject().getNameKey().equals(allUsersName);
@@ -151,7 +136,7 @@ public class ProjectState {
             new Description("Latency for access computations in ProjectState")
                 .setCumulative()
                 .setUnit(Units.NANOSECONDS),
-            Field.ofString("method"));
+            Field.ofString("method", Metadata.Builder::methodName).build());
 
     if (isAllProjects && !Permission.canBeOnAllProjects(AccessSection.ALL, Permission.OWNER)) {
       localOwners = Collections.emptySet();
@@ -370,14 +355,15 @@ public class ProjectState {
    * cached. Callers should try to cache this result per-request as much as possible.
    */
   public List<SectionMatcher> getAllSections() {
-    try (Timer1.Context ignored = computationLatency.start("getAllSections")) {
+    try (Timer1.Context<String> ignored = computationLatency.start("getAllSections")) {
       if (isAllProjects) {
         return getLocalAccessSections();
       }
 
       List<SectionMatcher> all = new ArrayList<>();
       Iterable<ProjectState> tree = tree();
-      try (Timer1.Context ignored2 = computationLatency.start("getAllSections-parsing-only")) {
+      try (Timer1.Context<String> ignored2 =
+          computationLatency.start("getAllSections-parsing-only")) {
         for (ProjectState s : tree) {
           all.addAll(s.getLocalAccessSections());
         }
@@ -421,12 +407,7 @@ public class ProjectState {
    *     Starts from this project and progresses up the hierarchy to All-Projects.
    */
   public Iterable<ProjectState> tree() {
-    return new Iterable<ProjectState>() {
-      @Override
-      public Iterator<ProjectState> iterator() {
-        return new ProjectHierarchyIterator(projectCache, allProjectsName, ProjectState.this);
-      }
-    };
+    return () -> new ProjectHierarchyIterator(projectCache, allProjectsName, ProjectState.this);
   }
 
   /**
@@ -497,7 +478,7 @@ public class ProjectState {
   }
 
   /** All available label types for this branch. */
-  public LabelTypes getLabelTypes(Branch.NameKey destination) {
+  public LabelTypes getLabelTypes(BranchNameKey destination) {
     List<LabelType> all = getLabelTypes().getLabelTypes();
 
     List<LabelType> r = Lists.newArrayListWithCapacity(all.size());
@@ -515,7 +496,7 @@ public class ProjectState {
             continue;
           }
 
-          if (RefConfigSection.isValid(refPattern) && match(destination, refPattern)) {
+          if (AccessSection.isValidRefSectionName(refPattern) && match(destination, refPattern)) {
             r.add(l);
             break;
           }
@@ -558,30 +539,12 @@ public class ProjectState {
     return null;
   }
 
-  public Collection<SubscribeSection> getSubscribeSections(Branch.NameKey branch) {
+  public Collection<SubscribeSection> getSubscribeSections(BranchNameKey branch) {
     Collection<SubscribeSection> ret = new ArrayList<>();
     for (ProjectState s : tree()) {
       ret.addAll(s.getConfig().getSubscribeSections(branch));
     }
     return ret;
-  }
-
-  public ThemeInfo getTheme() {
-    ThemeInfo theme = this.theme;
-    if (theme == null) {
-      synchronized (this) {
-        theme = this.theme;
-        if (theme == null) {
-          theme = loadTheme();
-          this.theme = theme;
-        }
-      }
-    }
-    if (theme == ThemeInfo.INHERIT) {
-      ProjectState parent = Iterables.getFirst(parents(), null);
-      return parent != null ? parent.getTheme() : null;
-    }
-    return theme;
   }
 
   public Set<GroupReference> getAllGroups() {
@@ -615,26 +578,6 @@ public class ProjectState {
     return all;
   }
 
-  private ThemeInfo loadTheme() {
-    String name = getConfig().getProject().getName();
-    Path dir = sitePaths.themes_dir.resolve(name);
-    if (!Files.exists(dir)) {
-      return ThemeInfo.INHERIT;
-    } else if (!Files.isDirectory(dir)) {
-      logger.atWarning().log("Bad theme for %s: not a directory", name);
-      return ThemeInfo.INHERIT;
-    }
-    try {
-      return new ThemeInfo(
-          readFile(dir.resolve(SitePaths.CSS_FILENAME)),
-          readFile(dir.resolve(SitePaths.HEADER_FILENAME)),
-          readFile(dir.resolve(SitePaths.FOOTER_FILENAME)));
-    } catch (IOException e) {
-      logger.atSevere().withCause(e).log("Error reading theme for %s", name);
-      return ThemeInfo.INHERIT;
-    }
-  }
-
   public ProjectData toProjectData() {
     ProjectData project = null;
     for (ProjectState state : treeInOrder()) {
@@ -643,11 +586,7 @@ public class ProjectState {
     return project;
   }
 
-  private String readFile(Path p) throws IOException {
-    return Files.exists(p) ? new String(Files.readAllBytes(p), UTF_8) : null;
-  }
-
-  private boolean match(Branch.NameKey destination, String refPattern) {
-    return RefPatternMatcher.getMatcher(refPattern).match(destination.get(), null);
+  private boolean match(BranchNameKey destination, String refPattern) {
+    return RefPatternMatcher.getMatcher(refPattern).match(destination.branch(), null);
   }
 }

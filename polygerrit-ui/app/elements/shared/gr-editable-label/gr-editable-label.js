@@ -20,90 +20,101 @@
   const AWAIT_MAX_ITERS = 10;
   const AWAIT_STEP = 5;
 
-  Polymer({
-    is: 'gr-editable-label',
-
+  /**
+   * @appliesMixin Gerrit.FireMixin
+   * @appliesMixin Gerrit.KeyboardShortcutMixin
+   * @extends Polymer.Element
+   */
+  class GrEditableLabel extends Polymer.mixinBehaviors( [
+    Gerrit.FireBehavior,
+    Gerrit.KeyboardShortcutBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-editable-label'; }
     /**
      * Fired when the value is changed.
      *
      * @event changed
      */
 
-    properties: {
-      labelText: String,
-      editing: {
-        type: Boolean,
-        value: false,
-      },
-      value: {
-        type: String,
-        notify: true,
-        value: '',
-        observer: '_updateTitle',
-      },
-      placeholder: {
-        type: String,
-        value: '',
-      },
-      readOnly: {
-        type: Boolean,
-        value: false,
-      },
-      uppercase: {
-        type: Boolean,
-        reflectToAttribute: true,
-        value: false,
-      },
-      maxLength: Number,
-      _inputText: String,
-      // This is used to push the iron-input element up on the page, so
-      // the input is placed in approximately the same position as the
-      // trigger.
-      _verticalOffset: {
-        type: Number,
-        readOnly: true,
-        value: -30,
-      },
-    },
+    static get properties() {
+      return {
+        labelText: String,
+        editing: {
+          type: Boolean,
+          value: false,
+        },
+        value: {
+          type: String,
+          notify: true,
+          value: '',
+          observer: '_updateTitle',
+        },
+        placeholder: {
+          type: String,
+          value: '',
+        },
+        readOnly: {
+          type: Boolean,
+          value: false,
+        },
+        uppercase: {
+          type: Boolean,
+          reflectToAttribute: true,
+          value: false,
+        },
+        maxLength: Number,
+        _inputText: String,
+        // This is used to push the iron-input element up on the page, so
+        // the input is placed in approximately the same position as the
+        // trigger.
+        _verticalOffset: {
+          type: Number,
+          readOnly: true,
+          value: -30,
+        },
+      };
+    }
 
-    behaviors: [
-      Gerrit.KeyboardShortcutBehavior,
-    ],
+    /** @override */
+    ready() {
+      super.ready();
+      this._ensureAttribute('tabindex', '0');
+    }
 
-    keyBindings: {
-      enter: '_handleEnter',
-      esc: '_handleEsc',
-    },
-
-    hostAttributes: {
-      tabindex: '0',
-    },
+    get keyBindings() {
+      return {
+        enter: '_handleEnter',
+        esc: '_handleEsc',
+      };
+    }
 
     _usePlaceholder(value, placeholder) {
       return (!value || !value.length) && placeholder;
-    },
+    }
 
     _computeLabel(value, placeholder) {
       if (this._usePlaceholder(value, placeholder)) {
         return placeholder;
       }
       return value;
-    },
+    }
 
     _showDropdown() {
       if (this.readOnly || this.editing) { return; }
       return this._open().then(() => {
-        this.$.input.$.input.focus();
+        this._nativeInput.focus();
         if (!this.$.input.value) { return; }
-        this.$.input.$.input.setSelectionRange(0, this.$.input.value.length);
+        this._nativeInput.setSelectionRange(0, this.$.input.value.length);
       });
-    },
+    }
 
     open() {
       return this._open().then(() => {
-        this.$.input.$.input.focus();
+        this._nativeInput.focus();
       });
-    },
+    }
 
     _open(...args) {
       this.$.dropdown.open();
@@ -114,7 +125,7 @@
         Polymer.IronOverlayBehaviorImpl.open.apply(this.$.dropdown, args);
         this._awaitOpen(resolve);
       });
-    },
+    }
 
     /**
      * NOTE: (wyatta) Slightly hacky way to listen to the overlay actually
@@ -132,11 +143,11 @@
         }, AWAIT_STEP);
       };
       step.call(this);
-    },
+    }
 
     _id() {
       return this.getAttribute('id') || 'global';
-    },
+    }
 
     _save() {
       if (!this.editing) { return; }
@@ -144,42 +155,38 @@
       this.value = this._inputText;
       this.editing = false;
       this.fire('changed', this.value);
-    },
+    }
 
     _cancel() {
       if (!this.editing) { return; }
       this.$.dropdown.close();
       this.editing = false;
       this._inputText = this.value;
-    },
+    }
 
-    /**
-     * @suppress {checkTypes}
-     * Closure doesn't think 'e' is an Event.
-     * TODO(beckysiegel) figure out why.
-     */
+    get _nativeInput() {
+      // In Polymer 2, the namespace of nativeInput
+      // changed from input to nativeInput
+      return this.$.input.$.nativeInput || this.$.input.$.input;
+    }
+
     _handleEnter(e) {
       e = this.getKeyboardEvent(e);
       const target = Polymer.dom(e).rootTarget;
-      if (target === this.$.input.$.input) {
+      if (target === this._nativeInput) {
         e.preventDefault();
         this._save();
       }
-    },
+    }
 
-    /**
-     * @suppress {checkTypes}
-     * Closure doesn't think 'e' is an Event.
-     * TODO(beckysiegel) figure out why.
-     */
     _handleEsc(e) {
       e = this.getKeyboardEvent(e);
       const target = Polymer.dom(e).rootTarget;
-      if (target === this.$.input.$.input) {
+      if (target === this._nativeInput) {
         e.preventDefault();
         this._cancel();
       }
-    },
+    }
 
     _computeLabelClass(readOnly, value, placeholder) {
       const classes = [];
@@ -188,10 +195,12 @@
         classes.push('placeholder');
       }
       return classes.join(' ');
-    },
+    }
 
     _updateTitle(value) {
       this.setAttribute('title', this._computeLabel(value, this.placeholder));
-    },
-  });
+    }
+  }
+
+  customElements.define(GrEditableLabel.is, GrEditableLabel);
 })();

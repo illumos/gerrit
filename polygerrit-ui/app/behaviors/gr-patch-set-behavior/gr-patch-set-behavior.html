@@ -31,7 +31,7 @@ limitations under the License.
 
   window.Gerrit = window.Gerrit || {};
 
-  /** @polymerBehavior this */
+  /** @polymerBehavior Gerrit.PatchSetBehavior*/
   Gerrit.PatchSetBehavior = {
     EDIT_NAME: 'edit',
     PARENT_NAME: 'PARENT',
@@ -54,7 +54,7 @@ limitations under the License.
      * number).
      *
      * @param  {string|number} n
-     * @return {Boolean}
+     * @return {boolean}
      */
     isMergeParent(n) {
       return (n + '')[0] === '-';
@@ -124,9 +124,9 @@ limitations under the License.
       // Map a normal patchNum to 2 * (patchNum - 1) + 1... I.e. 1 -> 1,
       // 2 -> 3, 3 -> 5, etc.
       // Map an edit to the patchNum of parent*2... I.e. edit on 2 -> 4.
-      const num = r => r._number === Gerrit.PatchSetBehavior.EDIT_NAME ?
+      const num = r => (r._number === Gerrit.PatchSetBehavior.EDIT_NAME ?
         2 * editParent :
-        2 * (r._number - 1) + 1;
+        2 * (r._number - 1) + 1);
       return revisions.sort((a, b) => num(b) - num(a));
     },
 
@@ -150,9 +150,8 @@ limitations under the License.
       if (!change) { return []; }
       let patchNums = [];
       if (change.revisions && Object.keys(change.revisions).length) {
-        const revisions = Object.keys(change.revisions).map(sha => {
-          return Object.assign({sha}, change.revisions[sha]);
-        });
+        const revisions = Object.keys(change.revisions)
+            .map(sha => Object.assign({sha}, change.revisions[sha]));
         patchNums =
           Gerrit.PatchSetBehavior.sortRevisions(revisions)
               .map(e => {
@@ -210,13 +209,13 @@ limitations under the License.
       return allPatchSets[0].num;
     },
 
-    /** @return {Boolean} */
+    /** @return {boolean} */
     hasEditBasedOnCurrentPatchSet(allPatchSets) {
       if (!allPatchSets || allPatchSets.length < 2) { return false; }
       return allPatchSets[0].num === Gerrit.PatchSetBehavior.EDIT_NAME;
     },
 
-    /** @return {Boolean} */
+    /** @return {boolean} */
     hasEditPatchsetLoaded(patchRangeRecord) {
       const patchRange = patchRangeRecord.base;
       if (!patchRange) { return false; }
@@ -238,7 +237,8 @@ limitations under the License.
       return restAPI.getChangeDetail(change._number)
           .then(detail => {
             if (!detail) {
-              return Promise.reject('Unable to check for latest patchset.');
+              const error = new Error('Unable to check for latest patchset.');
+              return Promise.reject(error);
             }
             const actualLatest = Gerrit.PatchSetBehavior.computeLatestPatchNum(
                 Gerrit.PatchSetBehavior.computeAllPatchSets(detail));
@@ -273,5 +273,29 @@ limitations under the License.
       return -parseInt(rangeBase + '', 10);
     },
   };
+
+  // eslint-disable-next-line no-unused-vars
+  function defineEmptyMixin() {
+    // This is a temporary function.
+    // Polymer linter doesn't process correctly the following code:
+    // class MyElement extends Polymer.mixinBehaviors([legacyBehaviors], ...) {...}
+    // To workaround this issue, the mock mixin is declared in this method.
+    // In the following changes, legacy behaviors will be converted to mixins.
+
+    /**
+     * @polymer
+     * @mixinFunction
+     */
+    Gerrit.PatchSetMixin = base =>
+      class extends base {
+        computeLatestPatchNum(allPatchSets) {}
+
+        hasEditPatchsetLoaded(patchRangeRecord) {}
+
+        hasEditBasedOnCurrentPatchSet(allPatchSets) {}
+
+        computeAllPatchSets(change) {}
+      };
+  }
 })(window);
 </script>

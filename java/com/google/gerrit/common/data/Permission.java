@@ -14,6 +14,7 @@
 
 package com.google.gerrit.common.data;
 
+import com.google.common.collect.ImmutableList;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -45,6 +46,7 @@ public class Permission implements Comparable<Permission> {
   public static final String REMOVE_REVIEWER = "removeReviewer";
   public static final String SUBMIT = "submit";
   public static final String SUBMIT_AS = "submitAs";
+  public static final String TOGGLE_WORK_IN_PROGRESS_STATE = "toggleWipState";
   public static final String VIEW_PRIVATE_CHANGES = "viewPrivateChanges";
 
   private static final List<String> NAMES_LC;
@@ -77,6 +79,7 @@ public class Permission implements Comparable<Permission> {
     NAMES_LC.add(REMOVE_REVIEWER.toLowerCase());
     NAMES_LC.add(SUBMIT.toLowerCase());
     NAMES_LC.add(SUBMIT_AS.toLowerCase());
+    NAMES_LC.add(TOGGLE_WORK_IN_PROGRESS_STATE.toLowerCase());
     NAMES_LC.add(VIEW_PRIVATE_CHANGES.toLowerCase());
 
     LABEL_INDEX = NAMES_LC.indexOf(Permission.LABEL);
@@ -157,12 +160,8 @@ public class Permission implements Comparable<Permission> {
     exclusiveGroup = newExclusiveGroup;
   }
 
-  // TODO(ekempin): Make this method return an ImmutableList once the GWT UI is gone.
-  public List<PermissionRule> getRules() {
-    if (rules == null) {
-      return new ArrayList<>();
-    }
-    return new ArrayList<>(rules);
+  public ImmutableList<PermissionRule> getRules() {
+    return rules == null ? ImmutableList.of() : ImmutableList.copyOf(rules);
   }
 
   public void setRules(List<PermissionRule> list) {

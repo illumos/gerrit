@@ -29,11 +29,12 @@ import com.google.common.flogger.FluentLogger;
 import com.google.common.hash.Hashing;
 import com.google.gerrit.common.Nullable;
 import com.google.gerrit.common.data.GroupReference;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.exceptions.DuplicateKeyException;
+import com.google.gerrit.git.ObjectIds;
 import com.google.gerrit.server.git.meta.VersionedMetaData;
-import com.google.gwtorm.server.OrmDuplicateKeyException;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.Map;
@@ -114,7 +115,7 @@ public class GroupNameNotes extends VersionedMetaData {
    * @throws IOException if the repository can't be accessed for some reason
    * @throws ConfigInvalidException if the note for the specified group doesn't exist or is in an
    *     invalid state
-   * @throws OrmDuplicateKeyException if a group with the new name already exists
+   * @throws DuplicateKeyException if a group with the new name already exists
    */
   public static GroupNameNotes forRename(
       Project.NameKey projectName,
@@ -122,7 +123,7 @@ public class GroupNameNotes extends VersionedMetaData {
       AccountGroup.UUID groupUuid,
       AccountGroup.NameKey oldName,
       AccountGroup.NameKey newName)
-      throws IOException, ConfigInvalidException, OrmDuplicateKeyException {
+      throws IOException, ConfigInvalidException, DuplicateKeyException {
     requireNonNull(oldName);
     requireNonNull(newName);
 
@@ -146,14 +147,14 @@ public class GroupNameNotes extends VersionedMetaData {
    * @return an instance of {@code GroupNameNotes} configured for a specific group creation
    * @throws IOException if the repository can't be accessed for some reason
    * @throws ConfigInvalidException in no case so far
-   * @throws OrmDuplicateKeyException if a group with the new name already exists
+   * @throws DuplicateKeyException if a group with the new name already exists
    */
   public static GroupNameNotes forNewGroup(
       Project.NameKey projectName,
       Repository repository,
       AccountGroup.UUID groupUuid,
       AccountGroup.NameKey groupName)
-      throws IOException, ConfigInvalidException, OrmDuplicateKeyException {
+      throws IOException, ConfigInvalidException, DuplicateKeyException {
     requireNonNull(groupName);
 
     GroupNameNotes groupNameNotes = new GroupNameNotes(groupUuid, null, groupName);
@@ -266,7 +267,7 @@ public class GroupNameNotes extends VersionedMetaData {
       RevCommit oldCommit = ref != null ? rw.parseCommit(ref.getObjectId()) : null;
 
       for (Map.Entry<AccountGroup.UUID, String> e : biMap.entrySet()) {
-        AccountGroup.NameKey nameKey = new AccountGroup.NameKey(e.getValue());
+        AccountGroup.NameKey nameKey = AccountGroup.nameKey(e.getValue());
         ObjectId noteKey = getNoteKey(nameKey);
         noteMap.set(noteKey, getAsNoteData(e.getKey(), nameKey), inserter);
       }
@@ -286,7 +287,7 @@ public class GroupNameNotes extends VersionedMetaData {
       cb.setMessage("Store " + n + " group name" + (n != 1 ? "s" : ""));
       ObjectId newId = inserter.insert(cb).copy();
 
-      ObjectId oldId = oldCommit != null ? oldCommit.copy() : ObjectId.zeroId();
+      ObjectId oldId = ObjectIds.copyOrZero(oldCommit);
       bru.addCommand(new ReceiveCommand(oldId, newId, RefNames.REFS_GROUPNAMES));
     }
   }
@@ -363,9 +364,9 @@ public class GroupNameNotes extends VersionedMetaData {
     }
   }
 
-  private void ensureNewNameIsNotUsed() throws OrmDuplicateKeyException {
+  private void ensureNewNameIsNotUsed() throws DuplicateKeyException {
     if (newGroupName.isPresent() && nameConflicting) {
-      throw new OrmDuplicateKeyException(
+      throw new DuplicateKeyException(
           String.format("Name '%s' is already used", newGroupName.get().get()));
     }
   }
@@ -442,7 +443,7 @@ public class GroupNameNotes extends VersionedMetaData {
       throw new ConfigInvalidException(String.format("UUID for group '%s' must be defined", name));
     }
 
-    return new GroupReference(new AccountGroup.UUID(uuid), name);
+    return new GroupReference(AccountGroup.uuid(uuid), name);
   }
 
   private String getCommitMessage() {

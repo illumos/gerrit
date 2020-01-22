@@ -17,14 +17,10 @@ package com.google.gerrit.index.query;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 
-import com.google.common.base.Throwables;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
-import com.google.gwtorm.server.ListResultSet;
-import com.google.gwtorm.server.OrmException;
-import com.google.gwtorm.server.OrmRuntimeException;
-import com.google.gwtorm.server.ResultSet;
+import com.google.gerrit.exceptions.StorageException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -78,69 +74,65 @@ public class AndSource<T> extends AndPredicate<T>
   }
 
   @Override
-  public ResultSet<T> read() throws OrmException {
-    try {
-      return readImpl();
-    } catch (OrmRuntimeException err) {
-      if (err.getCause() != null) {
-        Throwables.throwIfInstanceOf(err.getCause(), OrmException.class);
-      }
-      throw new OrmException(err);
+  public ResultSet<T> read() {
+    if (source == null) {
+      throw new StorageException("No DataSource: " + this);
     }
+
+    // ResultSets are lazy. Calling #read here first and then dealing with ResultSets only when
+    // requested allows the index to run asynchronous queries.
+    ResultSet<T> resultSet = source.read();
+    return new LazyResultSet<>(
+        () -> {
+          List<T> r = new ArrayList<>();
+          T last = null;
+          int nextStart = 0;
+          boolean skipped = false;
+          for (T data : buffer(resultSet)) {
+            if (!isMatchable() || match(data)) {
+              r.add(data);
+            } else {
+              skipped = true;
+            }
+            last = data;
+            nextStart++;
+          }
+
+          if (skipped && last != null && source instanceof Paginated) {
+            // If our source is a paginated source and we skipped at
+            // least one of its results, we may not have filled the full
+            // limit the caller wants.  Restart the source and continue.
+            //
+            @SuppressWarnings("unchecked")
+            Paginated<T> p = (Paginated<T>) source;
+            while (skipped && r.size() < p.getOptions().limit() + start) {
+              skipped = false;
+              ResultSet<T> next = p.restart(nextStart);
+
+              for (T data : buffer(next)) {
+                if (match(data)) {
+                  r.add(data);
+                } else {
+                  skipped = true;
+                }
+                nextStart++;
+              }
+            }
+          }
+
+          if (start >= r.size()) {
+            return ImmutableList.of();
+          } else if (start > 0) {
+            return ImmutableList.copyOf(r.subList(start, r.size()));
+          }
+          return ImmutableList.copyOf(r);
+        });
   }
 
   @Override
-  public ResultSet<FieldBundle> readRaw() throws OrmException {
+  public ResultSet<FieldBundle> readRaw() {
     // TOOD(hiesel): Implement
     throw new UnsupportedOperationException("not implemented");
-  }
-
-  private ResultSet<T> readImpl() throws OrmException {
-    if (source == null) {
-      throw new OrmException("No DataSource: " + this);
-    }
-    List<T> r = new ArrayList<>();
-    T last = null;
-    int nextStart = 0;
-    boolean skipped = false;
-    for (T data : buffer(source.read())) {
-      if (!isMatchable() || match(data)) {
-        r.add(data);
-      } else {
-        skipped = true;
-      }
-      last = data;
-      nextStart++;
-    }
-
-    if (skipped && last != null && source instanceof Paginated) {
-      // If our source is a paginated source and we skipped at
-      // least one of its results, we may not have filled the full
-      // limit the caller wants.  Restart the source and continue.
-      //
-      @SuppressWarnings("unchecked")
-      Paginated<T> p = (Paginated<T>) source;
-      while (skipped && r.size() < p.getOptions().limit() + start) {
-        skipped = false;
-        ResultSet<T> next = p.restart(nextStart);
-
-        for (T data : buffer(next)) {
-          if (match(data)) {
-            r.add(data);
-          } else {
-            skipped = true;
-          }
-          nextStart++;
-        }
-      }
-    }
-
-    if (start >= r.size()) {
-      r = ImmutableList.of();
-    } else if (start > 0) {
-      r = ImmutableList.copyOf(r.subList(start, r.size()));
-    }
-    return new ListResultSet<>(r);
   }
 
   @Override
@@ -149,7 +141,7 @@ public class AndSource<T> extends AndPredicate<T>
   }
 
   @Override
-  public boolean match(T object) throws OrmException {
+  public boolean match(T object) {
     if (isVisibleToPredicate != null && !isVisibleToPredicate.match(object)) {
       return false;
     }
@@ -166,7 +158,7 @@ public class AndSource<T> extends AndPredicate<T>
         .transformAndConcat(this::transformBuffer);
   }
 
-  protected List<T> transformBuffer(List<T> buffer) throws OrmRuntimeException {
+  protected List<T> transformBuffer(List<T> buffer) {
     return buffer;
   }
 

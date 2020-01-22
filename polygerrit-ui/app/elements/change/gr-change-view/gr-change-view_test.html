@@ -19,10 +19,12 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-change-view</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
-<script src="../../../bower_components/page/page.js"></script>
+<script src="/bower_components/page/page.js"></script>
 
 <link rel="import" href="../../edit/gr-edit-constants.html">
 <link rel="import" href="gr-change-view.html">
@@ -79,7 +81,7 @@ limitations under the License.
       });
       element = fixture('basic');
       sandbox.stub(element.$.actions, 'reload').returns(Promise.resolve());
-      Gerrit._setPluginsCount(0);
+      Gerrit._loadPlugins([]);
     });
 
     teardown(done => {
@@ -89,11 +91,21 @@ limitations under the License.
       });
     });
 
-    getCustomCssValue = cssParam => {
-      // TODO: Update to be compatible with 2.x when we upgrade from
-      // 1.x to 2.x.
-      return element.getComputedStyleValue(cssParam);
-    };
+    getCustomCssValue = cssParam => util.getComputedStyleValue(cssParam, element);
+
+    test('_handleMessageAnchorTap', () => {
+      element._changeNum = '1';
+      element._patchRange = {
+        basePatchNum: 'PARENT',
+        patchNum: 1,
+      };
+      const getUrlStub = sandbox.stub(Gerrit.Nav, 'getUrlForChange');
+      const replaceStateStub = sandbox.stub(history, 'replaceState');
+      element._handleMessageAnchorTap({detail: {id: 'a12345'}});
+
+      assert.equal(getUrlStub.lastCall.args[4], '#message-a12345');
+      assert.isTrue(replaceStateStub.called);
+    });
 
     suite('keyboard shortcuts', () => {
       test('t to add topic', () => {
@@ -285,6 +297,16 @@ limitations under the License.
       test(', should open diff preferences', () => {
         const stub = sandbox.stub(
             element.$.fileList.$.diffPreferencesDialog, 'open');
+        element._loggedIn = false;
+        element.disableDiffPrefs = true;
+        MockInteractions.pressAndReleaseKeyOn(element, 188, null, ',');
+        assert.isFalse(stub.called);
+
+        element._loggedIn = true;
+        MockInteractions.pressAndReleaseKeyOn(element, 188, null, ',');
+        assert.isFalse(stub.called);
+
+        element.disableDiffPrefs = false;
         MockInteractions.pressAndReleaseKeyOn(element, 188, null, ',');
         assert.isTrue(stub.called);
       });
@@ -321,8 +343,10 @@ limitations under the License.
         ],
       };
       setup(() => {
+        // Fake computeDraftCount as its required for ChangeComments,
+        // see gr-comment-api#reloadDrafts.
         reloadStub = sandbox.stub(element.$.commentAPI, 'reloadDrafts')
-            .returns(Promise.resolve({drafts}));
+            .returns(Promise.resolve({drafts, computeDraftCount: () => 1}));
       });
 
       test('drafts are reloaded when reload-drafts fired', done => {
@@ -506,65 +530,11 @@ limitations under the License.
       assert.equal(result, 'CC=\u200Btest@google.com');
     }),
 
-    test('_updateRebaseAction', () => {
-      const currentRevisionActions = {
-        cherrypick: {
-          enabled: true,
-          label: 'Cherry Pick',
-          method: 'POST',
-          title: 'cherrypick',
-        },
-        rebase: {
-          enabled: true,
-          label: 'Rebase',
-          method: 'POST',
-          title: 'Rebase onto tip of branch or parent change',
-        },
-      };
-      element._parentIsCurrent = undefined;
-
-      // Rebase enabled should always end up true.
-      // When rebase is enabled initially, rebaseOnCurrent should be set to
-      // true.
-      assert.equal(element._updateRebaseAction(currentRevisionActions),
-          currentRevisionActions);
-
-      assert.isTrue(currentRevisionActions.rebase.enabled);
-      assert.isTrue(currentRevisionActions.rebase.rebaseOnCurrent);
-      assert.isFalse(element._parentIsCurrent);
-
-      delete currentRevisionActions.rebase.enabled;
-
-      // When rebase is not enabled initially, rebaseOnCurrent should be set to
-      // false.
-      assert.equal(element._updateRebaseAction(currentRevisionActions),
-          currentRevisionActions);
-
-      assert.isTrue(currentRevisionActions.rebase.enabled);
-      assert.isFalse(currentRevisionActions.rebase.rebaseOnCurrent);
-      assert.isTrue(element._parentIsCurrent);
-    });
-
     test('_isSubmitEnabled', () => {
       assert.isFalse(element._isSubmitEnabled({}));
-      assert.isFalse(element._isSubmitEnabled({actions: {}}));
-      assert.isFalse(element._isSubmitEnabled({actions: {submit: {}}}));
+      assert.isFalse(element._isSubmitEnabled({submit: {}}));
       assert.isTrue(element._isSubmitEnabled(
-          {actions: {submit: {enabled: true}}}));
-    });
-
-    test('_updateRebaseAction sets _parentIsCurrent on no rebase', () => {
-      const currentRevisionActions = {
-        cherrypick: {
-          enabled: true,
-          label: 'Cherry Pick',
-          method: 'POST',
-          title: 'cherrypick',
-        },
-      };
-      element._parentIsCurrent = undefined;
-      element._updateRebaseAction(currentRevisionActions);
-      assert.isTrue(element._parentIsCurrent);
+          {submit: {enabled: true}}));
     });
 
     test('_reload is called when an approved label is removed', () => {
@@ -643,12 +613,12 @@ limitations under the License.
         path: '/foo/bar.txt',
         text: 'hello',
       };
-      element._handleCommentSave({target: {comment: draft}});
+      element._handleCommentSave({detail: {comment: draft}});
       draft.patch_set = 2;
       assert.deepEqual(element._diffDrafts, {'/foo/bar.txt': [draft]});
       draft.patch_set = null;
       draft.text = 'hello, there';
-      element._handleCommentSave({target: {comment: draft}});
+      element._handleCommentSave({detail: {comment: draft}});
       draft.patch_set = 2;
       assert.deepEqual(element._diffDrafts, {'/foo/bar.txt': [draft]});
       const draft2 = {
@@ -657,14 +627,14 @@ limitations under the License.
         path: '/foo/bar.txt',
         text: 'hola',
       };
-      element._handleCommentSave({target: {comment: draft2}});
+      element._handleCommentSave({detail: {comment: draft2}});
       draft2.patch_set = 2;
       assert.deepEqual(element._diffDrafts, {'/foo/bar.txt': [draft, draft2]});
       draft.patch_set = null;
-      element._handleCommentDiscard({target: {comment: draft}});
+      element._handleCommentDiscard({detail: {comment: draft}});
       draft.patch_set = 2;
       assert.deepEqual(element._diffDrafts, {'/foo/bar.txt': [draft2]});
-      element._handleCommentDiscard({target: {comment: draft2}});
+      element._handleCommentDiscard({detail: {comment: draft2}});
       assert.deepEqual(element._diffDrafts, {});
     });
 
@@ -753,10 +723,10 @@ limitations under the License.
 
     test('don’t reload entire page when patchRange changes', () => {
       const reloadStub = sandbox.stub(element, '_reload',
-          () => { return Promise.resolve(); });
+          () => Promise.resolve());
       const reloadPatchDependentStub = sandbox.stub(element,
           '_reloadPatchNumDependentResources',
-          () => { return Promise.resolve(); });
+          () => Promise.resolve());
       const relatedClearSpy = sandbox.spy(element.$.relatedChanges, 'clear');
       const collapseStub = sandbox.stub(element.$.fileList, 'collapseAllDiffs');
 
@@ -781,7 +751,7 @@ limitations under the License.
 
     test('reload entire page when patchRange doesnt change', () => {
       const reloadStub = sandbox.stub(element, '_reload',
-          () => { return Promise.resolve(); });
+          () => Promise.resolve());
       const collapseStub = sandbox.stub(element.$.fileList, 'collapseAllDiffs');
       const value = {
         view: Gerrit.Nav.View.CHANGE,
@@ -797,11 +767,9 @@ limitations under the License.
     test('related changes are updated and new patch selected after rebase',
         done => {
           element._changeNum = '42';
-          sandbox.stub(element, 'computeLatestPatchNum', () => {
-            return 1;
-          });
+          sandbox.stub(element, 'computeLatestPatchNum', () => 1);
           sandbox.stub(element, '_reload',
-              () => { return Promise.resolve(); });
+              () => Promise.resolve());
           const e = {detail: {action: 'rebase'}};
           element._handleReloadChange(e).then(() => {
             assert.isTrue(navigateToChangeStub.lastCall.calledWithExactly(
@@ -811,7 +779,7 @@ limitations under the License.
         });
 
     test('related changes are not updated after other action', done => {
-      sandbox.stub(element, '_reload', () => { return Promise.resolve(); });
+      sandbox.stub(element, '_reload', () => Promise.resolve());
       sandbox.stub(element.$.relatedChanges, 'reload');
       const e = {detail: {action: 'abandon'}};
       element._handleReloadChange(e).then(() => {
@@ -833,6 +801,24 @@ limitations under the License.
       const commit = element._computeMergedCommitInfo(2, dummyRevs);
       assert.notDeepEqual(commit, dummyRevs[2]);
       assert.deepEqual(commit, {commit: 2});
+    });
+
+    test('_computeCopyTextForTitle', () => {
+      const change = {
+        _number: 123,
+        subject: 'test subject',
+        revisions: {
+          rev1: {_number: 1},
+          rev3: {_number: 3},
+        },
+        current_revision: 'rev3',
+      };
+      sandbox.stub(Gerrit.Nav, 'getUrlForChange')
+          .returns('/change/123');
+      assert.equal(
+          element._computeCopyTextForTitle(change),
+          '123: test subject | https://localhost:8081/change/123'
+      );
     });
 
     test('get latest revision', () => {
@@ -957,14 +943,12 @@ limitations under the License.
 
     test('topic is coalesced to null', done => {
       sandbox.stub(element, '_changeChanged');
-      sandbox.stub(element.$.restAPI, 'getChangeDetail', () => {
-        return Promise.resolve({
-          id: '123456789',
-          labels: {},
-          current_revision: 'foo',
-          revisions: {foo: {commit: {}}},
-        });
-      });
+      sandbox.stub(element.$.restAPI, 'getChangeDetail', () => Promise.resolve({
+        id: '123456789',
+        labels: {},
+        current_revision: 'foo',
+        revisions: {foo: {commit: {}}},
+      }));
 
       element._getChangeDetail().then(() => {
         assert.isNull(element._change.topic);
@@ -974,14 +958,12 @@ limitations under the License.
 
     test('commit sha is populated from getChangeDetail', done => {
       sandbox.stub(element, '_changeChanged');
-      sandbox.stub(element.$.restAPI, 'getChangeDetail', () => {
-        return Promise.resolve({
-          id: '123456789',
-          labels: {},
-          current_revision: 'foo',
-          revisions: {foo: {commit: {}}},
-        });
-      });
+      sandbox.stub(element.$.restAPI, 'getChangeDetail', () => Promise.resolve({
+        id: '123456789',
+        labels: {},
+        current_revision: 'foo',
+        revisions: {foo: {commit: {}}},
+      }));
 
       element._getChangeDetail().then(() => {
         assert.equal('foo', element._commitInfo.commit);
@@ -991,20 +973,16 @@ limitations under the License.
 
     test('edit is added to change', () => {
       sandbox.stub(element, '_changeChanged');
-      sandbox.stub(element.$.restAPI, 'getChangeDetail', () => {
-        return Promise.resolve({
-          id: '123456789',
-          labels: {},
-          current_revision: 'foo',
-          revisions: {foo: {commit: {}}},
-        });
-      });
-      sandbox.stub(element, '_getEdit', () => {
-        return Promise.resolve({
-          base_patch_set_number: 1,
-          commit: {commit: 'bar'},
-        });
-      });
+      sandbox.stub(element.$.restAPI, 'getChangeDetail', () => Promise.resolve({
+        id: '123456789',
+        labels: {},
+        current_revision: 'foo',
+        revisions: {foo: {commit: {}}},
+      }));
+      sandbox.stub(element, '_getEdit', () => Promise.resolve({
+        base_patch_set_number: 1,
+        commit: {commit: 'bar'},
+      }));
       element._patchRange = {};
 
       return element._getChangeDetail().then(() => {
@@ -1125,12 +1103,8 @@ limitations under the License.
     });
 
     test('revert dialog opened with revert param', done => {
-      sandbox.stub(element.$.restAPI, 'getLoggedIn', () => {
-        return Promise.resolve(true);
-      });
-      sandbox.stub(Gerrit, 'awaitPluginsLoaded', () => {
-        return Promise.resolve();
-      });
+      sandbox.stub(element.$.restAPI, 'getLoggedIn', () => Promise.resolve(true));
+      sandbox.stub(Gerrit, 'awaitPluginsLoaded', () => Promise.resolve());
 
       element._patchRange = {
         basePatchNum: 'PARENT',
@@ -1201,7 +1175,7 @@ limitations under the License.
       setup(() => {
         sandbox.stub(element.$.replyDialog, '_draftChanged');
         sandbox.stub(element.$.replyDialog, 'fetchChangeUpdates',
-            () => { return Promise.resolve({isLatest: true}); });
+            () => Promise.resolve({isLatest: true}));
         element._change = {labels: {}};
       });
 
@@ -1250,7 +1224,7 @@ limitations under the License.
     suite('commit message expand/collapse', () => {
       setup(() => {
         sandbox.stub(element, 'fetchChangeUpdates',
-            () => { return Promise.resolve({isLatest: false}); });
+            () => Promise.resolve({isLatest: false}));
       });
 
       test('commitCollapseToggle hidden for short commit message', () => {
@@ -1288,7 +1262,7 @@ limitations under the License.
             sandbox.stub(element, '_getOffsetHeight', () => 50);
             sandbox.stub(element, '_getScrollHeight', () => 60);
             sandbox.stub(element, '_getLineHeight', () => 5);
-            sandbox.stub(window, 'matchMedia', () => ({matches: true}));
+            sandbox.stub(window, 'matchMedia', () => { return {matches: true}; });
             element.$.relatedChanges.dispatchEvent(
                 new CustomEvent('new-section-loaded'));
             assert.isTrue(element.$.relatedChangesToggle.classList
@@ -1303,7 +1277,7 @@ limitations under the License.
             sandbox.stub(element, '_getOffsetHeight', () => 50);
             sandbox.stub(element, '_getScrollHeight', () => 40);
             sandbox.stub(element, '_getLineHeight', () => 5);
-            sandbox.stub(window, 'matchMedia', () => ({matches: true}));
+            sandbox.stub(window, 'matchMedia', () => { return {matches: true}; });
             element.$.relatedChanges.dispatchEvent(
                 new CustomEvent('new-section-loaded'));
             assert.isFalse(element.$.relatedChangesToggle.classList
@@ -1313,7 +1287,7 @@ limitations under the License.
 
       test('relatedChangesToggle functions', () => {
         sandbox.stub(element, '_getOffsetHeight', () => 50);
-        sandbox.stub(window, 'matchMedia', () => ({matches: false}));
+        sandbox.stub(window, 'matchMedia', () => { return {matches: false}; });
         element._relatedChangesLoading = false;
         assert.isTrue(element._relatedChangesCollapsed);
         assert.isTrue(
@@ -1327,7 +1301,7 @@ limitations under the License.
       test('_updateRelatedChangeMaxHeight without commit toggle', () => {
         sandbox.stub(element, '_getOffsetHeight', () => 50);
         sandbox.stub(element, '_getLineHeight', () => 12);
-        sandbox.stub(window, 'matchMedia', () => ({matches: false}));
+        sandbox.stub(window, 'matchMedia', () => { return {matches: false}; });
 
         // 50 (existing height) - 30 (extra height) = 20 (adjusted height).
         // 20 (max existing height)  % 12 (line height) = 6 (remainder).
@@ -1344,7 +1318,7 @@ limitations under the License.
         element._latestCommitMessage = _.times(31, String).join('\n');
         sandbox.stub(element, '_getOffsetHeight', () => 50);
         sandbox.stub(element, '_getLineHeight', () => 12);
-        sandbox.stub(window, 'matchMedia', () => ({matches: false}));
+        sandbox.stub(window, 'matchMedia', () => { return {matches: false}; });
 
         // 50 (existing height) % 12 (line height) = 2 (remainder).
         // 50 (existing height)  - 2 (remainder) = 48 (max height to set).
@@ -1360,7 +1334,7 @@ limitations under the License.
         element._latestCommitMessage = _.times(31, String).join('\n');
         sandbox.stub(element, '_getOffsetHeight', () => 50);
         sandbox.stub(element, '_getLineHeight', () => 12);
-        sandbox.stub(window, 'matchMedia', () => ({matches: true}));
+        sandbox.stub(window, 'matchMedia', () => { return {matches: true}; });
 
         element._updateRelatedChangeMaxHeight();
 
@@ -1390,7 +1364,6 @@ limitations under the License.
             '96px');
       });
 
-
       suite('update checks', () => {
         setup(() => {
           sandbox.spy(element, '_startUpdateCheckTimer');
@@ -1412,7 +1385,7 @@ limitations under the License.
 
         test('_startUpdateCheckTimer up-to-date', () => {
           sandbox.stub(element, 'fetchChangeUpdates',
-              () => { return Promise.resolve({isLatest: true}); });
+              () => Promise.resolve({isLatest: true}));
 
           element._serverConfig = {change: {update_delay: 12345}};
 
@@ -1423,7 +1396,7 @@ limitations under the License.
 
         test('_startUpdateCheckTimer out-of-date shows an alert', done => {
           sandbox.stub(element, 'fetchChangeUpdates',
-              () => { return Promise.resolve({isLatest: false}); });
+              () => Promise.resolve({isLatest: false}));
           element.addEventListener('show-alert', e => {
             assert.equal(e.detail.message,
                 'A newer patch set has been uploaded');
@@ -1575,32 +1548,44 @@ limitations under the License.
       sandbox.stub(Gerrit.Nav, 'navigateToRelativeUrl');
 
       // Delete
-      fileList.dispatchEvent(new CustomEvent('file-action-tap',
-          {detail: {action: Actions.DELETE.id, path: 'foo'}, bubbles: true}));
+      fileList.dispatchEvent(new CustomEvent('file-action-tap', {
+        detail: {action: Actions.DELETE.id, path: 'foo'},
+        bubbles: true,
+        composed: true,
+      }));
       flushAsynchronousOperations();
 
       assert.isTrue(controls.openDeleteDialog.called);
       assert.equal(controls.openDeleteDialog.lastCall.args[0], 'foo');
 
       // Restore
-      fileList.dispatchEvent(new CustomEvent('file-action-tap',
-          {detail: {action: Actions.RESTORE.id, path: 'foo'}, bubbles: true}));
+      fileList.dispatchEvent(new CustomEvent('file-action-tap', {
+        detail: {action: Actions.RESTORE.id, path: 'foo'},
+        bubbles: true,
+        composed: true,
+      }));
       flushAsynchronousOperations();
 
       assert.isTrue(controls.openRestoreDialog.called);
       assert.equal(controls.openRestoreDialog.lastCall.args[0], 'foo');
 
       // Rename
-      fileList.dispatchEvent(new CustomEvent('file-action-tap',
-          {detail: {action: Actions.RENAME.id, path: 'foo'}, bubbles: true}));
+      fileList.dispatchEvent(new CustomEvent('file-action-tap', {
+        detail: {action: Actions.RENAME.id, path: 'foo'},
+        bubbles: true,
+        composed: true,
+      }));
       flushAsynchronousOperations();
 
       assert.isTrue(controls.openRenameDialog.called);
       assert.equal(controls.openRenameDialog.lastCall.args[0], 'foo');
 
       // Open
-      fileList.dispatchEvent(new CustomEvent('file-action-tap',
-          {detail: {action: Actions.OPEN.id, path: 'foo'}, bubbles: true}));
+      fileList.dispatchEvent(new CustomEvent('file-action-tap', {
+        detail: {action: Actions.OPEN.id, path: 'foo'},
+        bubbles: true,
+        composed: true,
+      }));
       flushAsynchronousOperations();
 
       assert.isTrue(Gerrit.Nav.getEditUrlForDiff.called);
@@ -1631,6 +1616,30 @@ limitations under the License.
 
         element.set('_patchRange.patchNum', '1');
         assert.strictEqual(element._selectedRevision, revision1);
+      });
+    });
+
+    test('_selectedRevision is assigned when patchNum is edit', () => {
+      const revision1 = {_number: 1, commit: {parents: []}};
+      const revision2 = {_number: 2, commit: {parents: []}};
+      const revision3 = {_number: 'edit', commit: {parents: []}};
+      sandbox.stub(element.$.restAPI, 'getChangeDetail').returns(
+          Promise.resolve({
+            revisions: {
+              aaa: revision1,
+              bbb: revision2,
+              ccc: revision3,
+            },
+            labels: {},
+            actions: {},
+            current_revision: 'ccc',
+            change_id: 'loremipsumdolorsitamet',
+          }));
+      sandbox.stub(element, '_getEdit').returns(Promise.resolve());
+      sandbox.stub(element, '_getPreferences').returns(Promise.resolve({}));
+      element._patchRange = {patchNum: 'edit'};
+      return element._getChangeDetail().then(() => {
+        assert.strictEqual(element._selectedRevision, revision3);
       });
     });
 
@@ -1731,8 +1740,9 @@ limitations under the License.
         Gerrit.install(
             p => {
               plugin = p;
-              plugin.hook('change-view-integration').getLastAttached().then(
-                  el => hookEl = el);
+              plugin.hook('change-view-integration').getLastAttached()
+                  .then(
+                      el => hookEl = el);
             },
             '0.1',
             'http://some/plugins/url.html');
@@ -1805,6 +1815,51 @@ limitations under the License.
 
       MockInteractions.tap(element.$.changeStar.$$('button'));
       assert.isTrue(stub.called);
+    });
+
+    suite('gr-reporting tests', () => {
+      setup(() => {
+        element._patchRange = {
+          basePatchNum: 'PARENT',
+          patchNum: 1,
+        };
+        sandbox.stub(element, '_getChangeDetail').returns(Promise.resolve());
+        sandbox.stub(element, '_getProjectConfig').returns(Promise.resolve());
+        sandbox.stub(element, '_reloadComments').returns(Promise.resolve());
+        sandbox.stub(element, '_getMergeability').returns(Promise.resolve());
+        sandbox.stub(element, '_getLatestCommitMessage')
+            .returns(Promise.resolve());
+      });
+
+      test('don\'t report changedDisplayed on reply', done => {
+        const changeDisplayStub =
+          sandbox.stub(element.$.reporting, 'changeDisplayed');
+        const changeFullyLoadedStub =
+          sandbox.stub(element.$.reporting, 'changeFullyLoaded');
+        element._handleReplySent();
+        flush(() => {
+          assert.isFalse(changeDisplayStub.called);
+          assert.isFalse(changeFullyLoadedStub.called);
+          done();
+        });
+      });
+
+      test('report changedDisplayed on _paramsChanged', done => {
+        const changeDisplayStub =
+          sandbox.stub(element.$.reporting, 'changeDisplayed');
+        const changeFullyLoadedStub =
+          sandbox.stub(element.$.reporting, 'changeFullyLoaded');
+        element._paramsChanged({
+          view: Gerrit.Nav.View.CHANGE,
+          changeNum: 101,
+          project: 'test-project',
+        });
+        flush(() => {
+          assert.isTrue(changeDisplayStub.called);
+          assert.isTrue(changeFullyLoadedStub.called);
+          done();
+        });
+      });
     });
   });
 </script>

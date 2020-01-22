@@ -24,6 +24,11 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Strings;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.api.changes.FixInput;
 import com.google.gerrit.extensions.api.projects.CheckProjectInput;
 import com.google.gerrit.extensions.api.projects.CheckProjectInput.AutoCloseableChangesCheckInput;
@@ -37,23 +42,16 @@ import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
 import com.google.gerrit.index.IndexConfig;
 import com.google.gerrit.index.query.Predicate;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
 import com.google.gerrit.server.change.ChangeJson;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.index.change.ChangeField;
 import com.google.gerrit.server.query.change.ChangeData;
 import com.google.gerrit.server.query.change.ChangeIdPredicate;
 import com.google.gerrit.server.query.change.CommitPredicate;
-import com.google.gerrit.server.query.change.InternalChangeQuery;
 import com.google.gerrit.server.query.change.ProjectPredicate;
 import com.google.gerrit.server.query.change.RefPredicate;
 import com.google.gerrit.server.update.RetryHelper;
-import com.google.gerrit.server.update.RetryHelper.ActionType;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -75,7 +73,6 @@ public class ProjectsConsistencyChecker {
 
   private final GitRepositoryManager repoManager;
   private final RetryHelper retryHelper;
-  private final Provider<InternalChangeQuery> changeQueryProvider;
   private final ChangeJson.Factory changeJsonFactory;
   private final IndexConfig indexConfig;
 
@@ -83,18 +80,16 @@ public class ProjectsConsistencyChecker {
   ProjectsConsistencyChecker(
       GitRepositoryManager repoManager,
       RetryHelper retryHelper,
-      Provider<InternalChangeQuery> changeQueryProvider,
       ChangeJson.Factory changeJsonFactory,
       IndexConfig indexConfig) {
     this.repoManager = repoManager;
     this.retryHelper = retryHelper;
-    this.changeQueryProvider = changeQueryProvider;
     this.changeJsonFactory = changeJsonFactory;
     this.indexConfig = indexConfig;
   }
 
   public CheckProjectResultInfo check(Project.NameKey projectName, CheckProjectInput input)
-      throws IOException, OrmException, RestApiException {
+      throws IOException, RestApiException {
     CheckProjectResultInfo r = new CheckProjectResultInfo();
     if (input.autoCloseableChangesCheck != null) {
       r.autoCloseableChangesCheckResult =
@@ -105,7 +100,7 @@ public class ProjectsConsistencyChecker {
 
   private AutoCloseableChangesCheckResult checkForAutoCloseableChanges(
       Project.NameKey projectName, AutoCloseableChangesCheckInput input)
-      throws IOException, OrmException, RestApiException {
+      throws IOException, RestApiException {
     AutoCloseableChangesCheckResult r = new AutoCloseableChangesCheckResult();
     if (Strings.isNullOrEmpty(input.branch)) {
       throw new BadRequestException("branch is required");
@@ -225,7 +220,7 @@ public class ProjectsConsistencyChecker {
               // important thing for callers is that auto-closable changes are closed. Which of the
               // commits is used to auto-close a change if there are several candidates is of minor
               // importance and hence can be non-deterministic.
-              Change.Key changeKey = new Change.Key(changeId);
+              Change.Key changeKey = Change.key(changeId);
               if (!changeIdToMergedSha1.containsKey(changeKey)) {
                 changeIdToMergedSha1.put(changeKey, commitId);
               }
@@ -256,24 +251,20 @@ public class ProjectsConsistencyChecker {
       List<Predicate<ChangeData>> predicates,
       boolean fix,
       Map<Change.Key, ObjectId> changeIdToMergedSha1,
-      List<ObjectId> mergedSha1s)
-      throws OrmException {
+      List<ObjectId> mergedSha1s) {
     if (predicates.isEmpty()) {
       return ImmutableList.of();
     }
 
     try {
       List<ChangeData> queryResult =
-          retryHelper.execute(
-              ActionType.INDEX_QUERY,
-              () -> {
-                // Execute the query.
-                return changeQueryProvider
-                    .get()
-                    .setRequestedFields(ChangeField.CHANGE, ChangeField.PATCH_SET)
-                    .query(and(basePredicate, or(predicates)));
-              },
-              OrmException.class::isInstance);
+          retryHelper
+              .changeIndexQuery(
+                  "projectsConsistencyCheckerQueryChanges",
+                  q ->
+                      q.setRequestedFields(ChangeField.CHANGE, ChangeField.PATCH_SET)
+                          .query(and(basePredicate, or(predicates))))
+              .call();
 
       // Result for this query that we want to return to the client.
       List<ChangeInfo> autoCloseableChangesByBranch = new ArrayList<>();
@@ -282,40 +273,41 @@ public class ProjectsConsistencyChecker {
         // Skip changes that we have already processed, either by this query or by
         // earlier queries.
         if (seenChanges.add(autoCloseableChange.getId())) {
-          retryHelper.execute(
-              ActionType.CHANGE_UPDATE,
-              () -> {
-                // Auto-close by change
-                if (changeIdToMergedSha1.containsKey(autoCloseableChange.change().getKey())) {
-                  autoCloseableChangesByBranch.add(
-                      changeJson(
-                              fix, changeIdToMergedSha1.get(autoCloseableChange.change().getKey()))
-                          .format(autoCloseableChange));
-                  return null;
-                }
+          retryHelper
+              .changeUpdate(
+                  "projectsConsistencyCheckerAutoCloseChanges",
+                  () -> {
+                    // Auto-close by change
+                    if (changeIdToMergedSha1.containsKey(autoCloseableChange.change().getKey())) {
+                      autoCloseableChangesByBranch.add(
+                          changeJson(
+                                  fix,
+                                  changeIdToMergedSha1.get(autoCloseableChange.change().getKey()))
+                              .format(autoCloseableChange));
+                      return null;
+                    }
 
-                // Auto-close by commit
-                for (ObjectId patchSetSha1 :
-                    autoCloseableChange.patchSets().stream()
-                        .map(ps -> ObjectId.fromString(ps.getRevision().get()))
-                        .collect(toSet())) {
-                  if (mergedSha1s.contains(patchSetSha1)) {
-                    autoCloseableChangesByBranch.add(
-                        changeJson(fix, patchSetSha1).format(autoCloseableChange));
-                    break;
-                  }
-                }
-                return null;
-              },
-              OrmException.class::isInstance);
+                    // Auto-close by commit
+                    for (ObjectId patchSetSha1 :
+                        autoCloseableChange.patchSets().stream()
+                            .map(PatchSet::commitId)
+                            .collect(toSet())) {
+                      if (mergedSha1s.contains(patchSetSha1)) {
+                        autoCloseableChangesByBranch.add(
+                            changeJson(fix, patchSetSha1).format(autoCloseableChange));
+                        break;
+                      }
+                    }
+                    return null;
+                  })
+              .call();
         }
       }
 
       return autoCloseableChangesByBranch;
     } catch (Exception e) {
       Throwables.throwIfUnchecked(e);
-      Throwables.throwIfInstanceOf(e, OrmException.class);
-      throw new OrmException(e);
+      throw new StorageException(e);
     }
   }
 

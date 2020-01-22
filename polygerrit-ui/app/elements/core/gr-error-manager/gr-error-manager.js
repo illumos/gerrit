@@ -25,94 +25,130 @@
   const TOO_MANY_FILES = 'too many files to find conflicts';
   const AUTHENTICATION_REQUIRED = 'Authentication required\n';
 
-  Polymer({
-    is: 'gr-error-manager',
+  /**
+   * @appliesMixin Gerrit.BaseUrlMixin
+   * @appliesMixin Gerrit.FireMixin
+   * @extends Polymer.Element
+   */
+  class GrErrorManager extends Polymer.mixinBehaviors( [
+    Gerrit.BaseUrlBehavior,
+    Gerrit.FireBehavior,
+  ], Polymer.GestureEventListeners(
+      Polymer.LegacyElementMixin(
+          Polymer.Element))) {
+    static get is() { return 'gr-error-manager'; }
 
-    behaviors: [
-      Gerrit.BaseUrlBehavior,
-    ],
-
-    properties: {
+    static get properties() {
+      return {
       /**
        * The ID of the account that was logged in when the app was launched. If
        * not set, then there was no account at launch.
        */
-      knownAccountId: Number,
+        knownAccountId: Number,
 
-      /** @type {?Object} */
-      _alertElement: Object,
-      /** @type {?number} */
-      _hideAlertHandle: Number,
-      _refreshingCredentials: {
-        type: Boolean,
-        value: false,
-      },
+        /** @type {?Object} */
+        _alertElement: Object,
+        /** @type {?number} */
+        _hideAlertHandle: Number,
+        _refreshingCredentials: {
+          type: Boolean,
+          value: false,
+        },
 
-      /**
-       * The time (in milliseconds) since the most recent credential check.
-       */
-      _lastCredentialCheck: {
-        type: Number,
-        value() { return Date.now(); },
-      },
-    },
+        /**
+         * The time (in milliseconds) since the most recent credential check.
+         */
+        _lastCredentialCheck: {
+          type: Number,
+          value() { return Date.now(); },
+        },
+      };
+    }
 
+    constructor() {
+      super();
+
+      /** @type {!Gerrit.Auth} */
+      this._authService = Gerrit.Auth;
+
+      /** @type {?Function} */
+      this._authErrorHandlerDeregistrationHook;
+    }
+
+    /** @override */
     attached() {
+      super.attached();
       this.listen(document, 'server-error', '_handleServerError');
       this.listen(document, 'network-error', '_handleNetworkError');
-      this.listen(document, 'auth-error', '_handleAuthError');
       this.listen(document, 'show-alert', '_handleShowAlert');
       this.listen(document, 'show-error', '_handleShowErrorDialog');
       this.listen(document, 'visibilitychange', '_handleVisibilityChange');
       this.listen(document, 'show-auth-required', '_handleAuthRequired');
-    },
 
+      this._authErrorHandlerDeregistrationHook = Gerrit.on('auth-error',
+          event => {
+            this._handleAuthError(event.message, event.action);
+          });
+    }
+
+    /** @override */
     detached() {
+      super.detached();
       this._clearHideAlertHandle();
       this.unlisten(document, 'server-error', '_handleServerError');
       this.unlisten(document, 'network-error', '_handleNetworkError');
-      this.unlisten(document, 'auth-error', '_handleAuthError');
       this.unlisten(document, 'show-auth-required', '_handleAuthRequired');
       this.unlisten(document, 'visibilitychange', '_handleVisibilityChange');
       this.unlisten(document, 'show-error', '_handleShowErrorDialog');
-    },
+
+      this._authErrorHandlerDeregistrationHook();
+    }
 
     _shouldSuppressError(msg) {
       return msg.includes(TOO_MANY_FILES);
-    },
+    }
 
     _handleAuthRequired() {
       this._showAuthErrorAlert(
           'Log in is required to perform that action.', 'Log in.');
-    },
+    }
 
-    _handleAuthError() {
-      this._showAuthErrorAlert('Auth error', 'Refresh credentials.');
-    },
+    _handleAuthError(msg, action) {
+      this.$.noInteractionOverlay.open().then(() => {
+        this._showAuthErrorAlert(msg, action);
+      });
+    }
 
     _handleServerError(e) {
       const {request, response} = e.detail;
-      Promise.all([response.text(), this._getLoggedIn()])
-          .then(([errorText, loggedIn]) => {
-            const url = request && (request.anonymizedUrl || request.url);
-            const {status, statusText} = response;
-            if (response.status === 403 &&
-                loggedIn &&
-                errorText === AUTHENTICATION_REQUIRED) {
-              // The app was logged at one point and is now getting auth errors.
-              // This indicates the auth token is no longer valid.
-              this._handleAuthError();
-            } else if (!this._shouldSuppressError(errorText)) {
-              this._showErrorDialog(this._constructServerErrorMsg({
-                status,
-                statusText,
-                errorText,
-                url,
-              }));
-            }
-            console.error(errorText);
-          });
-    },
+      response.text().then(errorText => {
+        const url = request && (request.anonymizedUrl || request.url);
+        const {status, statusText} = response;
+        if (response.status === 403
+                && !this._authService.isAuthed
+                && errorText === AUTHENTICATION_REQUIRED) {
+          // if not authed previously, this is trying to access auth required APIs
+          // show auth required alert
+          this._handleAuthRequired();
+        } else if (response.status === 403
+                && this._authService.isAuthed
+                && errorText === AUTHENTICATION_REQUIRED) {
+          // The app was logged at one point and is now getting auth errors.
+          // This indicates the auth token may no longer valid.
+          // Re-check on auth
+          this._authService.clearCache();
+          this.$.restAPI.getLoggedIn();
+        } else if (!this._shouldSuppressError(errorText)) {
+          this._showErrorDialog(this._constructServerErrorMsg({
+            status,
+            statusText,
+            errorText,
+            url,
+          }));
+        }
+        console.log(`server error: ${errorText}`);
+      });
+    }
 
     _constructServerErrorMsg({errorText, status, statusText, url}) {
       let err = `Error ${status}`;
@@ -121,21 +157,17 @@
       if (errorText) { err += errorText; }
       if (url) { err += `\nEndpoint: ${url}`; }
       return err;
-    },
+    }
 
     _handleShowAlert(e) {
       this._showAlert(e.detail.message, e.detail.action, e.detail.callback,
           e.detail.dismissOnNavigation);
-    },
+    }
 
     _handleNetworkError(e) {
       this._showAlert('Server unavailable');
       console.error(e.detail.error.message);
-    },
-
-    _getLoggedIn() {
-      return this.$.restAPI.getLoggedIn();
-    },
+    }
 
     /**
      * @param {string} text
@@ -146,6 +178,8 @@
     _showAlert(text, opt_actionText, opt_actionCallback,
         opt_dismissOnNavigation) {
       if (this._alertElement) {
+        // do not override auth alerts
+        if (this._alertElement.type === 'AUTH') return;
         this._hideAlert();
       }
 
@@ -160,7 +194,7 @@
       const el = this._createToastAlert();
       el.show(text, opt_actionText, opt_actionCallback);
       this._alertElement = el;
-    },
+    }
 
     _hideAlert() {
       if (!this._alertElement) { return; }
@@ -170,20 +204,24 @@
 
       // Remove listener for page navigation, if it exists.
       this.unlisten(document, 'location-change', '_hideAlert');
-    },
+    }
 
     _clearHideAlertHandle() {
       if (this._hideAlertHandle != null) {
         this.cancelAsync(this._hideAlertHandle);
         this._hideAlertHandle = null;
       }
-    },
+    }
 
     _showAuthErrorAlert(errorText, actionText) {
-      // TODO(viktard): close alert if it's not for auth error.
-      if (this._alertElement) { return; }
+      // hide any existing alert like `reload`
+      // as auth error should have the highest priority
+      if (this._alertElement) {
+        this._alertElement.hide();
+      }
 
       this._alertElement = this._createToastAlert();
+      this._alertElement.type = 'AUTH';
       this._alertElement.show(errorText, actionText,
           this._createLoginPopup.bind(this));
 
@@ -192,13 +230,13 @@
       if (!document.hidden) {
         this._handleVisibilityChange();
       }
-    },
+    }
 
     _createToastAlert() {
       const el = document.createElement('gr-alert');
       el.toast = true;
       return el;
-    },
+    }
 
     _handleVisibilityChange() {
       // Ignore when the page is transitioning to hidden (or hidden is
@@ -213,39 +251,57 @@
           this.knownAccountId !== undefined &&
           timeSinceLastCheck > STALE_CREDENTIAL_THRESHOLD_MS) {
         this._lastCredentialCheck = Date.now();
-        this.$.restAPI.checkCredentials();
+
+        // check auth status in case:
+        // - user signed out
+        // - user switched account
+        this._checkSignedIn();
       }
-    },
+    }
 
     _requestCheckLoggedIn() {
       this.debounce(
           'checkLoggedIn', this._checkSignedIn, CHECK_SIGN_IN_INTERVAL_MS);
-    },
+    }
 
     _checkSignedIn() {
-      this.$.restAPI.checkCredentials().then(account => {
-        const isLoggedIn = !!account;
-        this._lastCredentialCheck = Date.now();
-        if (this._refreshingCredentials) {
-          if (isLoggedIn) {
-            // If the credentials were refreshed but the account is different
-            // then reload the page completely.
-            if (account._account_id !== this.knownAccountId) {
-              this._reloadPage();
-              return;
-            }
+      this._lastCredentialCheck = Date.now();
 
-            this._handleCredentialRefreshed();
-          } else {
-            this._requestCheckLoggedIn();
-          }
+      // force to refetch account info
+      this.$.restAPI.invalidateAccountsCache();
+      this._authService.clearCache();
+
+      this.$.restAPI.getLoggedIn().then(isLoggedIn => {
+        // do nothing if its refreshing
+        if (!this._refreshingCredentials) return;
+
+        if (!isLoggedIn) {
+          // check later
+          // 1. guest mode
+          // 2. or signed out
+          // in case #2, auth-error is taken care of separately
+          this._requestCheckLoggedIn();
+        } else {
+          // check account
+          this.$.restAPI.getAccount().then(account => {
+            if (this._refreshingCredentials) {
+              // If the credentials were refreshed but the account is different
+              // then reload the page completely.
+              if (account._account_id !== this.knownAccountId) {
+                this._reloadPage();
+                return;
+              }
+
+              this._handleCredentialRefreshed();
+            }
+          });
         }
       });
-    },
+    }
 
     _reloadPage() {
       window.location.reload();
-    },
+    }
 
     _createLoginPopup() {
       const left = window.screenLeft +
@@ -261,30 +317,37 @@
       window.open(this.getBaseUrl() +
           '/login/%3FcloseAfterLogin', '_blank', options.join(','));
       this.listen(window, 'focus', '_handleWindowFocus');
-    },
+    }
 
     _handleCredentialRefreshed() {
       this.unlisten(window, 'focus', '_handleWindowFocus');
       this._refreshingCredentials = false;
       this._hideAlert();
       this._showAlert('Credentials refreshed.');
-    },
+      this.$.noInteractionOverlay.close();
+
+      // Clear the cache for auth
+      this._authService.clearCache();
+    }
 
     _handleWindowFocus() {
       this.flushDebouncer('checkLoggedIn');
-    },
+    }
 
     _handleShowErrorDialog(e) {
       this._showErrorDialog(e.detail.message);
-    },
+    }
 
     _handleDismissErrorDialog() {
       this.$.errorOverlay.close();
-    },
+    }
 
     _showErrorDialog(message) {
+      this.$.reporting.reportErrorDialog(message);
       this.$.errorDialog.text = message;
       this.$.errorOverlay.open();
-    },
-  });
+    }
+  }
+
+  customElements.define(GrErrorManager.is, GrErrorManager);
 })();

@@ -16,7 +16,7 @@ package com.google.gerrit.server.notedb;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-import com.google.gerrit.reviewdb.client.RobotComment;
+import com.google.gerrit.entities.RobotComment;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -26,6 +26,7 @@ import java.util.List;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectReader;
 
+/** Like {@link RevisionNote} but for robot comments. */
 public class RobotCommentsRevisionNote extends RevisionNote<RobotComment> {
   private final ChangeNoteJson noteUtil;
 

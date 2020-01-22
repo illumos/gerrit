@@ -20,21 +20,34 @@
   // Prevent redefinition.
   if (window.GrDiffLine) { return; }
 
-  function GrDiffLine(type) {
+  /**
+   * @constructor
+   * @param {GrDiffLine.Type} type
+   * @param {number|string=} opt_beforeLine
+   * @param {number|string=} opt_afterLine
+   */
+  function GrDiffLine(type, opt_beforeLine, opt_afterLine) {
     this.type = type;
+
+    /** @type {number|string} */
+    this.beforeNumber = opt_beforeLine || 0;
+
+    /** @type {number|string} */
+    this.afterNumber = opt_afterLine || 0;
+
+    /** @type {boolean} */
+    this.hasIntralineInfo = false;
+
+    /** @type {!Array<GrDiffLine.Highlights>} */
     this.highlights = [];
+
+    /** @type {?Array<Object>} ?Array<!GrDiffGroup> */
+    this.contextGroups = null;
+
+    this.text = '';
   }
 
-  /** @type {number|string} */
-  GrDiffLine.prototype.afterNumber = 0;
-
-  /** @type {number|string} */
-  GrDiffLine.prototype.beforeNumber = 0;
-
-  GrDiffLine.prototype.contextGroup = null;
-
-  GrDiffLine.prototype.text = '';
-
+  /** @enum {string} */
   GrDiffLine.Type = {
     ADD: 'add',
     BOTH: 'both',
@@ -42,6 +55,23 @@
     CONTEXT_CONTROL: 'contextControl',
     REMOVE: 'remove',
   };
+
+  /**
+   * A line highlight object consists of three fields:
+   * - contentIndex: The index of the chunk `content` field (the line
+   *   being referred to).
+   * - startIndex: Index of the character where the highlight should begin.
+   * - endIndex: (optional) Index of the character where the highlight should
+   *   end. If omitted, the highlight is meant to be a continuation onto the
+   *   next line.
+   *
+   * @typedef {{
+   *  contentIndex: number,
+   *  startIndex: number,
+   *  endIndex: number
+   * }}
+   */
+  GrDiffLine.Highlights;
 
   GrDiffLine.FILE = 'FILE';
 

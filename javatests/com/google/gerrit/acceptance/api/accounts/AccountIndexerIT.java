@@ -17,10 +17,10 @@ package com.google.gerrit.acceptance.api.accounts;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.extensions.api.GerritApi;
 import com.google.gerrit.extensions.common.AccountInfo;
 import com.google.gerrit.extensions.restapi.RestApiException;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.server.GerritPersonIdent;
 import com.google.gerrit.server.account.AccountCache;
 import com.google.gerrit.server.account.AccountConfig;
@@ -66,7 +66,7 @@ public class AccountIndexerIT {
     List<AccountState> matchedAccountStates =
         accountQueryProvider.get().byPreferredEmail(preferredEmail);
     assertThat(matchedAccountStates).hasSize(1);
-    assertThat(matchedAccountStates.get(0).getAccount().getId()).isEqualTo(accountId);
+    assertThat(matchedAccountStates.get(0).account().id()).isEqualTo(accountId);
   }
 
   @Test
@@ -82,7 +82,7 @@ public class AccountIndexerIT {
     List<AccountState> matchedAccountStates =
         accountQueryProvider.get().byPreferredEmail(preferredEmail);
     assertThat(matchedAccountStates).hasSize(1);
-    assertThat(matchedAccountStates.get(0).getAccount().getId()).isEqualTo(accountId);
+    assertThat(matchedAccountStates.get(0).account().id()).isEqualTo(accountId);
   }
 
   @Test
@@ -91,10 +91,10 @@ public class AccountIndexerIT {
     loadAccountToCache(accountId);
     String status = "ooo";
     updateAccountWithoutCacheOrIndex(accountId, newAccountUpdate().setStatus(status).build());
-    assertThat(accountCache.get(accountId).get().getAccount().getStatus()).isNull();
+    assertThat(accountCache.get(accountId).get().account().status()).isNull();
 
     accountIndexer.index(accountId);
-    assertThat(accountCache.get(accountId).get().getAccount().getStatus()).isEqualTo(status);
+    assertThat(accountCache.get(accountId).get().account().status()).isEqualTo(status);
   }
 
   @Test
@@ -109,7 +109,7 @@ public class AccountIndexerIT {
     List<AccountState> matchedAccountStates =
         accountQueryProvider.get().byPreferredEmail(preferredEmail);
     assertThat(matchedAccountStates).hasSize(1);
-    assertThat(matchedAccountStates.get(0).getAccount().getId()).isEqualTo(accountId);
+    assertThat(matchedAccountStates.get(0).account().id()).isEqualTo(accountId);
   }
 
   @Test
@@ -136,7 +136,7 @@ public class AccountIndexerIT {
 
   private Account.Id createAccount(String name) throws RestApiException {
     AccountInfo account = gApi.accounts().create(name).get();
-    return new Account.Id(account._accountId);
+    return Account.id(account._accountId);
   }
 
   private void reloadAccountToCache(Account.Id accountId) {

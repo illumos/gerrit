@@ -139,7 +139,7 @@ public class UploadArchive extends AbstractGitCommand {
     PacketLineIn packetIn = new PacketLineIn(in);
     for (; ; ) {
       String s = packetIn.readString();
-      if (s == PacketLineIn.END) {
+      if (PacketLineIn.isEnd(s)) {
         break;
       }
       if (!s.startsWith(argCmd)) {
@@ -238,7 +238,7 @@ public class UploadArchive extends AbstractGitCommand {
                   options.level9)
               .indexOf(true);
       if (value >= 0) {
-        return ImmutableMap.<String, Object>of("level", Integer.valueOf(value));
+        return ImmutableMap.of("level", Integer.valueOf(value));
       }
     }
     return Collections.emptyMap();

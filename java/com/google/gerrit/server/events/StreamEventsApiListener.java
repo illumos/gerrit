@@ -20,6 +20,11 @@ import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.common.data.LabelType;
 import com.google.gerrit.common.data.LabelTypes;
+import com.google.gerrit.entities.Account;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.PatchSet;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.extensions.common.AccountInfo;
 import com.google.gerrit.extensions.common.ApprovalInfo;
 import com.google.gerrit.extensions.common.ChangeInfo;
@@ -41,32 +46,23 @@ import com.google.gerrit.extensions.events.TopicEditedListener;
 import com.google.gerrit.extensions.events.VoteDeletedListener;
 import com.google.gerrit.extensions.events.WorkInProgressStateChangedListener;
 import com.google.gerrit.extensions.registration.DynamicSet;
-import com.google.gerrit.reviewdb.client.Account;
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.data.AccountAttribute;
 import com.google.gerrit.server.data.ApprovalAttribute;
 import com.google.gerrit.server.data.ChangeAttribute;
 import com.google.gerrit.server.data.PatchSetAttribute;
-import com.google.gerrit.server.data.RefUpdateAttribute;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.plugincontext.PluginItemContext;
 import com.google.gerrit.server.project.NoSuchChangeException;
 import com.google.gerrit.server.project.ProjectCache;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.AbstractModule;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Map.Entry;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevWalk;
@@ -117,7 +113,6 @@ public class StreamEventsApiListener
   }
 
   private final PluginItemContext<EventDispatcher> dispatcher;
-  private final Provider<ReviewDb> db;
   private final EventFactory eventFactory;
   private final ProjectCache projectCache;
   private final GitRepositoryManager repoManager;
@@ -127,14 +122,12 @@ public class StreamEventsApiListener
   @Inject
   StreamEventsApiListener(
       PluginItemContext<EventDispatcher> dispatcher,
-      Provider<ReviewDb> db,
       EventFactory eventFactory,
       ProjectCache projectCache,
       GitRepositoryManager repoManager,
       PatchSetUtil psUtil,
       ChangeNotes.Factory changeNotesFactory) {
     this.dispatcher = dispatcher;
-    this.db = db;
     this.eventFactory = eventFactory;
     this.projectCache = projectCache;
     this.repoManager = repoManager;
@@ -142,59 +135,53 @@ public class StreamEventsApiListener
     this.changeNotesFactory = changeNotesFactory;
   }
 
-  private ChangeNotes getNotes(ChangeInfo info) throws OrmException {
+  private ChangeNotes getNotes(ChangeInfo info) {
     try {
-      return changeNotesFactory.createChecked(new Change.Id(info._number));
+      return changeNotesFactory.createChecked(Change.id(info._number));
     } catch (NoSuchChangeException e) {
-      throw new OrmException(e);
+      throw new StorageException(e);
     }
   }
 
-  private PatchSet getPatchSet(ChangeNotes notes, RevisionInfo info) throws OrmException {
-    return psUtil.get(db.get(), notes, PatchSet.Id.fromRef(info.ref));
+  private PatchSet getPatchSet(ChangeNotes notes, RevisionInfo info) {
+    return psUtil.get(notes, PatchSet.Id.fromRef(info.ref));
   }
 
   private Supplier<ChangeAttribute> changeAttributeSupplier(Change change, ChangeNotes notes) {
     return Suppliers.memoize(
-        new Supplier<ChangeAttribute>() {
-          @Override
-          public ChangeAttribute get() {
+        () -> {
+          try {
             return eventFactory.asChangeAttribute(change, notes);
+          } catch (StorageException e) {
+            throw new RuntimeException(e);
           }
         });
   }
 
   private Supplier<AccountAttribute> accountAttributeSupplier(AccountInfo account) {
     return Suppliers.memoize(
-        new Supplier<AccountAttribute>() {
-          @Override
-          public AccountAttribute get() {
-            return account != null
-                ? eventFactory.asAccountAttribute(new Account.Id(account._accountId))
-                : null;
-          }
-        });
+        () ->
+            account != null
+                ? eventFactory.asAccountAttribute(Account.id(account._accountId))
+                : null);
   }
 
   private Supplier<PatchSetAttribute> patchSetAttributeSupplier(
       final Change change, PatchSet patchSet) {
     return Suppliers.memoize(
-        new Supplier<PatchSetAttribute>() {
-          @Override
-          public PatchSetAttribute get() {
-            try (Repository repo = repoManager.openRepository(change.getProject());
-                RevWalk revWalk = new RevWalk(repo)) {
-              return eventFactory.asPatchSetAttribute(revWalk, change, patchSet);
-            } catch (IOException e) {
-              throw new RuntimeException(e);
-            }
+        () -> {
+          try (Repository repo = repoManager.openRepository(change.getProject());
+              RevWalk revWalk = new RevWalk(repo)) {
+            return eventFactory.asPatchSetAttribute(revWalk, change, patchSet);
+          } catch (IOException e) {
+            throw new RuntimeException(e);
           }
         });
   }
 
   private static Map<String, Short> convertApprovalsMap(Map<String, ApprovalInfo> approvals) {
     Map<String, Short> result = new HashMap<>();
-    for (Entry<String, ApprovalInfo> e : approvals.entrySet()) {
+    for (Map.Entry<String, ApprovalInfo> e : approvals.entrySet()) {
       Short value = e.getValue().value == null ? null : e.getValue().value.shortValue();
       result.put(e.getKey(), value);
     }
@@ -202,7 +189,7 @@ public class StreamEventsApiListener
   }
 
   private ApprovalAttribute getApprovalAttribute(
-      LabelTypes labelTypes, Entry<String, Short> approval, Map<String, Short> oldApprovals) {
+      LabelTypes labelTypes, Map.Entry<String, Short> approval, Map<String, Short> oldApprovals) {
     ApprovalAttribute a = new ApprovalAttribute();
     a.type = approval.getKey();
 
@@ -227,21 +214,18 @@ public class StreamEventsApiListener
       final Map<String, ApprovalInfo> oldApprovals) {
     final Map<String, Short> approvals = convertApprovalsMap(newApprovals);
     return Suppliers.memoize(
-        new Supplier<ApprovalAttribute[]>() {
-          @Override
-          public ApprovalAttribute[] get() {
-            LabelTypes labelTypes = projectCache.get(change.getProject()).getLabelTypes();
-            if (approvals.size() > 0) {
-              ApprovalAttribute[] r = new ApprovalAttribute[approvals.size()];
-              int i = 0;
-              for (Map.Entry<String, Short> approval : approvals.entrySet()) {
-                r[i++] =
-                    getApprovalAttribute(labelTypes, approval, convertApprovalsMap(oldApprovals));
-              }
-              return r;
+        () -> {
+          LabelTypes labelTypes = projectCache.get(change.getProject()).getLabelTypes();
+          if (approvals.size() > 0) {
+            ApprovalAttribute[] r = new ApprovalAttribute[approvals.size()];
+            int i = 0;
+            for (Map.Entry<String, Short> approval : approvals.entrySet()) {
+              r[i++] =
+                  getApprovalAttribute(labelTypes, approval, convertApprovalsMap(oldApprovals));
             }
-            return null;
+            return r;
           }
+          return null;
         });
   }
 
@@ -264,7 +248,7 @@ public class StreamEventsApiListener
       event.oldAssignee = accountAttributeSupplier(ev.getOldAssignee());
 
       dispatcher.run(d -> d.postEvent(change, event));
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       logger.atSevere().withCause(e).log("Failed to dispatch event");
     }
   }
@@ -281,7 +265,7 @@ public class StreamEventsApiListener
       event.oldTopic = ev.getOldTopic();
 
       dispatcher.run(d -> d.postEvent(change, event));
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       logger.atSevere().withCause(e).log("Failed to dispatch event");
     }
   }
@@ -299,7 +283,7 @@ public class StreamEventsApiListener
       event.uploader = accountAttributeSupplier(ev.getWho());
 
       dispatcher.run(d -> d.postEvent(change, event));
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       logger.atSevere().withCause(e).log("Failed to dispatch event");
     }
   }
@@ -311,7 +295,7 @@ public class StreamEventsApiListener
       Change change = notes.getChange();
       ReviewerDeletedEvent event = new ReviewerDeletedEvent(change);
       event.change = changeAttributeSupplier(change, notes);
-      event.patchSet = patchSetAttributeSupplier(change, psUtil.current(db.get(), notes));
+      event.patchSet = patchSetAttributeSupplier(change, psUtil.current(notes));
       event.reviewer = accountAttributeSupplier(ev.getReviewer());
       event.remover = accountAttributeSupplier(ev.getWho());
       event.comment = ev.getComment();
@@ -319,7 +303,7 @@ public class StreamEventsApiListener
           approvalsAttributeSupplier(change, ev.getNewApprovals(), ev.getOldApprovals());
 
       dispatcher.run(d -> d.postEvent(change, event));
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       logger.atSevere().withCause(e).log("Failed to dispatch event");
     }
   }
@@ -332,12 +316,13 @@ public class StreamEventsApiListener
       ReviewerAddedEvent event = new ReviewerAddedEvent(change);
 
       event.change = changeAttributeSupplier(change, notes);
-      event.patchSet = patchSetAttributeSupplier(change, psUtil.current(db.get(), notes));
+      event.patchSet = patchSetAttributeSupplier(change, psUtil.current(notes));
+      event.adder = accountAttributeSupplier(ev.getWho());
       for (AccountInfo reviewer : ev.getReviewers()) {
         event.reviewer = accountAttributeSupplier(reviewer);
         dispatcher.run(d -> d.postEvent(event));
       }
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       logger.atSevere().withCause(e).log("Failed to dispatch event");
     }
   }
@@ -365,7 +350,7 @@ public class StreamEventsApiListener
       event.removed = hashtagArray(ev.getRemovedHashtags());
 
       dispatcher.run(d -> d.postEvent(change, event));
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       logger.atSevere().withCause(e).log("Failed to dispatch event");
     }
   }
@@ -376,18 +361,14 @@ public class StreamEventsApiListener
     if (ev.getUpdater() != null) {
       event.submitter = accountAttributeSupplier(ev.getUpdater());
     }
-    final Branch.NameKey refName = new Branch.NameKey(ev.getProjectName(), ev.getRefName());
+    final BranchNameKey refName = BranchNameKey.create(ev.getProjectName(), ev.getRefName());
     event.refUpdate =
         Suppliers.memoize(
-            new Supplier<RefUpdateAttribute>() {
-              @Override
-              public RefUpdateAttribute get() {
-                return eventFactory.asRefUpdateAttribute(
+            () ->
+                eventFactory.asRefUpdateAttribute(
                     ObjectId.fromString(ev.getOldObjectId()),
                     ObjectId.fromString(ev.getNewObjectId()),
-                    refName);
-              }
-            });
+                    refName));
     dispatcher.run(d -> d.postEvent(refName, event));
   }
 
@@ -406,7 +387,7 @@ public class StreamEventsApiListener
       event.approvals = approvalsAttributeSupplier(change, ev.getApprovals(), ev.getOldApprovals());
 
       dispatcher.run(d -> d.postEvent(change, event));
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       logger.atSevere().withCause(e).log("Failed to dispatch event");
     }
   }
@@ -420,11 +401,11 @@ public class StreamEventsApiListener
 
       event.change = changeAttributeSupplier(change, notes);
       event.restorer = accountAttributeSupplier(ev.getWho());
-      event.patchSet = patchSetAttributeSupplier(change, psUtil.current(db.get(), notes));
+      event.patchSet = patchSetAttributeSupplier(change, psUtil.current(notes));
       event.reason = ev.getReason();
 
       dispatcher.run(d -> d.postEvent(change, event));
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       logger.atSevere().withCause(e).log("Failed to dispatch event");
     }
   }
@@ -438,11 +419,11 @@ public class StreamEventsApiListener
 
       event.change = changeAttributeSupplier(change, notes);
       event.submitter = accountAttributeSupplier(ev.getWho());
-      event.patchSet = patchSetAttributeSupplier(change, psUtil.current(db.get(), notes));
+      event.patchSet = patchSetAttributeSupplier(change, psUtil.current(notes));
       event.newRev = ev.getNewRevisionId();
 
       dispatcher.run(d -> d.postEvent(change, event));
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       logger.atSevere().withCause(e).log("Failed to dispatch event");
     }
   }
@@ -456,11 +437,11 @@ public class StreamEventsApiListener
 
       event.change = changeAttributeSupplier(change, notes);
       event.abandoner = accountAttributeSupplier(ev.getWho());
-      event.patchSet = patchSetAttributeSupplier(change, psUtil.current(db.get(), notes));
+      event.patchSet = patchSetAttributeSupplier(change, psUtil.current(notes));
       event.reason = ev.getReason();
 
       dispatcher.run(d -> d.postEvent(change, event));
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       logger.atSevere().withCause(e).log("Failed to dispatch event");
     }
   }
@@ -478,7 +459,7 @@ public class StreamEventsApiListener
       event.patchSet = patchSetAttributeSupplier(change, patchSet);
 
       dispatcher.run(d -> d.postEvent(change, event));
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       logger.atSevere().withCause(e).log("Failed to dispatch event");
     }
   }
@@ -496,7 +477,7 @@ public class StreamEventsApiListener
       event.patchSet = patchSetAttributeSupplier(change, patchSet);
 
       dispatcher.run(d -> d.postEvent(change, event));
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       logger.atSevere().withCause(e).log("Failed to dispatch event");
     }
   }
@@ -509,14 +490,14 @@ public class StreamEventsApiListener
       VoteDeletedEvent event = new VoteDeletedEvent(change);
 
       event.change = changeAttributeSupplier(change, notes);
-      event.patchSet = patchSetAttributeSupplier(change, psUtil.current(db.get(), notes));
+      event.patchSet = patchSetAttributeSupplier(change, psUtil.current(notes));
       event.comment = ev.getMessage();
       event.reviewer = accountAttributeSupplier(ev.getReviewer());
       event.remover = accountAttributeSupplier(ev.getWho());
       event.approvals = approvalsAttributeSupplier(change, ev.getApprovals(), ev.getOldApprovals());
 
       dispatcher.run(d -> d.postEvent(change, event));
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       logger.atSevere().withCause(e).log("Failed to dispatch event");
     }
   }
@@ -532,7 +513,7 @@ public class StreamEventsApiListener
       event.deleter = accountAttributeSupplier(ev.getWho());
 
       dispatcher.run(d -> d.postEvent(change, event));
-    } catch (OrmException e) {
+    } catch (StorageException e) {
       logger.atSevere().withCause(e).log("Failed to dispatch event");
     }
   }

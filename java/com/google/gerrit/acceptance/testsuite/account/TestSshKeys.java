@@ -19,7 +19,7 @@ import static java.nio.charset.StandardCharsets.US_ASCII;
 
 import com.google.gerrit.acceptance.SshEnabled;
 import com.google.gerrit.common.Nullable;
-import com.google.gerrit.reviewdb.client.Account;
+import com.google.gerrit.entities.Account;
 import com.google.gerrit.server.account.VersionedAuthorizedKeys;
 import com.google.gerrit.server.ssh.SshKeyCache;
 import com.google.inject.Inject;
@@ -55,14 +55,14 @@ public class TestSshKeys {
   public KeyPair getKeyPair(com.google.gerrit.acceptance.TestAccount account) throws Exception {
     checkState(sshEnabled, "Requested SSH key pair, but SSH is disabled");
     checkState(
-        account.username != null,
+        account.username() != null,
         "Requested SSH key pair for account %s, but username is not set",
-        account.id);
+        account.id());
 
-    String username = account.username;
+    String username = account.username();
     KeyPair keyPair = sshKeyPairs.get(username);
     if (keyPair == null) {
-      keyPair = createKeyPair(account.id, username, account.email);
+      keyPair = createKeyPair(account.id(), username, account.email());
       sshKeyPairs.put(username, keyPair);
     }
     return keyPair;

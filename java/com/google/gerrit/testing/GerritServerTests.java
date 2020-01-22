@@ -14,46 +14,36 @@
 
 package com.google.gerrit.testing;
 
-import com.google.gerrit.server.notedb.MutableNotesMigration;
+import com.google.gerrit.acceptance.config.ConfigAnnotationParser;
+import com.google.gerrit.acceptance.config.GerritConfig;
+import com.google.gerrit.acceptance.config.GerritConfigs;
 import org.eclipse.jgit.lib.Config;
 import org.junit.Rule;
 import org.junit.rules.TestRule;
-import org.junit.runner.Description;
 import org.junit.runner.RunWith;
 import org.junit.runners.model.Statement;
 
 @RunWith(ConfigSuite.class)
-public class GerritServerTests extends GerritBaseTests {
+public class GerritServerTests {
   @ConfigSuite.Parameter public Config config;
-
   @ConfigSuite.Name private String configName;
-
-  protected MutableNotesMigration notesMigration;
 
   @Rule
   public TestRule testRunner =
-      new TestRule() {
-        @Override
-        public Statement apply(Statement base, Description description) {
-          return new Statement() {
-            @Override
-            public void evaluate() throws Throwable {
-              beforeTest();
-              try {
-                base.evaluate();
-              } finally {
-                afterTest();
-              }
-            }
-          };
+      (base, description) -> {
+        GerritConfig gerritConfig = description.getAnnotation(GerritConfig.class);
+        if (gerritConfig != null) {
+          config = ConfigAnnotationParser.parse(config, gerritConfig);
         }
+        GerritConfigs gerritConfigs = description.getAnnotation(GerritConfigs.class);
+        if (gerritConfigs != null) {
+          config = ConfigAnnotationParser.parse(config, gerritConfigs);
+        }
+        return new Statement() {
+          @Override
+          public void evaluate() throws Throwable {
+            base.evaluate();
+          }
+        };
       };
-
-  public void beforeTest() throws Exception {
-    notesMigration = NoteDbMode.newNotesMigrationFromEnv();
-  }
-
-  public void afterTest() {
-    NoteDbMode.resetFromEnv(notesMigration);
-  }
 }

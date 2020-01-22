@@ -15,15 +15,16 @@
 package com.google.gerrit.acceptance.api.group;
 
 import static com.google.common.truth.Truth.assertWithMessage;
+import static com.google.gerrit.server.group.testing.InternalGroupSubject.internalGroups;
 import static com.google.gerrit.truth.ListSubject.assertThat;
 import static com.google.gerrit.truth.OptionalSubject.assertThat;
 
 import com.google.common.collect.ImmutableSet;
-import com.google.gerrit.common.errors.NoSuchGroupException;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.exceptions.NoSuchGroupException;
 import com.google.gerrit.extensions.api.GerritApi;
 import com.google.gerrit.extensions.common.GroupInfo;
 import com.google.gerrit.extensions.restapi.RestApiException;
-import com.google.gerrit.reviewdb.client.AccountGroup;
 import com.google.gerrit.server.ServerInitiated;
 import com.google.gerrit.server.account.GroupCache;
 import com.google.gerrit.server.group.InternalGroup;
@@ -35,7 +36,6 @@ import com.google.gerrit.server.query.group.InternalGroupQuery;
 import com.google.gerrit.testing.InMemoryTestEnvironment;
 import com.google.gerrit.truth.ListSubject;
 import com.google.gerrit.truth.OptionalSubject;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import java.io.IOException;
@@ -57,7 +57,7 @@ public class GroupIndexerIT {
   @Test
   public void indexingUpdatesTheIndex() throws Exception {
     AccountGroup.UUID groupUuid = createGroup("users");
-    AccountGroup.UUID subgroupUuid = new AccountGroup.UUID("contributors");
+    AccountGroup.UUID subgroupUuid = AccountGroup.uuid("contributors");
     updateGroupWithoutCacheOrIndex(
         groupUuid,
         newGroupUpdate()
@@ -74,7 +74,7 @@ public class GroupIndexerIT {
   public void indexCannotBeCorruptedByStaleCache() throws Exception {
     AccountGroup.UUID groupUuid = createGroup("verifiers");
     loadGroupToCache(groupUuid);
-    AccountGroup.UUID subgroupUuid = new AccountGroup.UUID("contributors");
+    AccountGroup.UUID subgroupUuid = AccountGroup.uuid("contributors");
     updateGroupWithoutCacheOrIndex(
         groupUuid,
         newGroupUpdate()
@@ -102,7 +102,7 @@ public class GroupIndexerIT {
   @Test
   public void reindexingStaleGroupUpdatesTheIndex() throws Exception {
     AccountGroup.UUID groupUuid = createGroup("users");
-    AccountGroup.UUID subgroupUuid = new AccountGroup.UUID("contributors");
+    AccountGroup.UUID subgroupUuid = AccountGroup.uuid("contributors");
     updateGroupWithoutCacheOrIndex(
         groupUuid,
         newGroupUpdate()
@@ -139,7 +139,7 @@ public class GroupIndexerIT {
 
   private AccountGroup.UUID createGroup(String name) throws RestApiException {
     GroupInfo group = gApi.groups().create(name).get();
-    return new AccountGroup.UUID(group.id);
+    return AccountGroup.uuid(group.id);
   }
 
   private void reloadGroupToCache(AccountGroup.UUID groupUuid) {
@@ -157,17 +157,17 @@ public class GroupIndexerIT {
 
   private void updateGroupWithoutCacheOrIndex(
       AccountGroup.UUID groupUuid, InternalGroupUpdate groupUpdate)
-      throws OrmException, NoSuchGroupException, IOException, ConfigInvalidException {
+      throws NoSuchGroupException, IOException, ConfigInvalidException {
     groupsUpdate.updateGroupInNoteDb(groupUuid, groupUpdate);
   }
 
   private static OptionalSubject<InternalGroupSubject, InternalGroup> assertThatGroup(
       Optional<InternalGroup> updatedGroup) {
-    return assertThat(updatedGroup, InternalGroupSubject::assertThat);
+    return assertThat(updatedGroup, internalGroups());
   }
 
   private static ListSubject<InternalGroupSubject, InternalGroup> assertThatGroups(
       List<InternalGroup> parentGroups) {
-    return assertThat(parentGroups, InternalGroupSubject::assertThat);
+    return assertThat(parentGroups, internalGroups());
   }
 }

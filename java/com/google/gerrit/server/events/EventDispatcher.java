@@ -14,11 +14,10 @@
 
 package com.google.gerrit.server.events;
 
-import com.google.gerrit.reviewdb.client.Branch;
-import com.google.gerrit.reviewdb.client.Change;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.BranchNameKey;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.permissions.PermissionBackendException;
-import com.google.gwtorm.server.OrmException;
 
 /** Interface for posting (dispatching) Events */
 public interface EventDispatcher {
@@ -27,10 +26,9 @@ public interface EventDispatcher {
    *
    * @param change The change that the event is related to
    * @param event The event to post
-   * @throws OrmException on failure to post the event due to DB error
    * @throws PermissionBackendException on failure of permission checks
    */
-  void postEvent(Change change, ChangeEvent event) throws OrmException, PermissionBackendException;
+  void postEvent(Change change, ChangeEvent event) throws PermissionBackendException;
 
   /**
    * Post a stream event that is related to a branch
@@ -39,7 +37,7 @@ public interface EventDispatcher {
    * @param event The event to post
    * @throws PermissionBackendException on failure of permission checks
    */
-  void postEvent(Branch.NameKey branchName, RefEvent event) throws PermissionBackendException;
+  void postEvent(BranchNameKey branchName, RefEvent event) throws PermissionBackendException;
 
   /**
    * Post a stream event that is related to a project.
@@ -56,8 +54,7 @@ public interface EventDispatcher {
    * specific postEvent methods for those use cases.
    *
    * @param event The event to post.
-   * @throws OrmException on failure to post the event due to DB error
    * @throws PermissionBackendException on failure of permission checks
    */
-  void postEvent(Event event) throws OrmException, PermissionBackendException;
+  void postEvent(Event event) throws PermissionBackendException;
 }

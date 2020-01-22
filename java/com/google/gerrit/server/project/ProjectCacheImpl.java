@@ -24,14 +24,19 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.index.project.ProjectIndexer;
 import com.google.gerrit.lifecycle.LifecycleModule;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.metrics.Description;
+import com.google.gerrit.metrics.Description.Units;
+import com.google.gerrit.metrics.MetricMaker;
+import com.google.gerrit.metrics.Timer0;
 import com.google.gerrit.server.cache.CacheModule;
 import com.google.gerrit.server.config.AllProjectsName;
 import com.google.gerrit.server.config.AllUsersName;
 import com.google.gerrit.server.git.GitRepositoryManager;
+import com.google.gerrit.server.logging.Metadata;
 import com.google.gerrit.server.logging.TraceContext;
 import com.google.gerrit.server.logging.TraceContext.TraceTimer;
 import com.google.inject.Inject;
@@ -90,6 +95,7 @@ public class ProjectCacheImpl implements ProjectCache {
   private final Lock listLock;
   private final ProjectCacheClock clock;
   private final Provider<ProjectIndexer> indexer;
+  private final Timer0 guessRelevantGroupsLatency;
 
   @Inject
   ProjectCacheImpl(
@@ -98,7 +104,8 @@ public class ProjectCacheImpl implements ProjectCache {
       @Named(CACHE_NAME) LoadingCache<String, ProjectState> byName,
       @Named(CACHE_LIST) LoadingCache<ListKey, ImmutableSortedSet<Project.NameKey>> list,
       ProjectCacheClock clock,
-      Provider<ProjectIndexer> indexer) {
+      Provider<ProjectIndexer> indexer,
+      MetricMaker metricMaker) {
     this.allProjectsName = allProjectsName;
     this.allUsersName = allUsersName;
     this.byName = byName;
@@ -106,6 +113,13 @@ public class ProjectCacheImpl implements ProjectCache {
     this.listLock = new ReentrantLock(true /* fair */);
     this.clock = clock;
     this.indexer = indexer;
+
+    this.guessRelevantGroupsLatency =
+        metricMaker.newTimer(
+            "group/guess_relevant_groups_latency",
+            new Description("Latency for guessing relevant groups")
+                .setCumulative()
+                .setUnit(Units.NANOSECONDS));
   }
 
   @Override
@@ -235,20 +249,22 @@ public class ProjectCacheImpl implements ProjectCache {
 
   @Override
   public Set<AccountGroup.UUID> guessRelevantGroupUUIDs() {
-    return all().stream()
-        .map(n -> byName.getIfPresent(n.get()))
-        .filter(Objects::nonNull)
-        .flatMap(p -> p.getConfig().getAllGroupUUIDs().stream())
-        // getAllGroupUUIDs shouldn't really return null UUIDs, but harden
-        // against them just in case there is a bug or corner case.
-        .filter(id -> id != null && id.get() != null)
-        .collect(toSet());
+    try (Timer0.Context ignored = guessRelevantGroupsLatency.start()) {
+      return all().stream()
+          .map(n -> byName.getIfPresent(n.get()))
+          .filter(Objects::nonNull)
+          .flatMap(p -> p.getConfig().getAllGroupUUIDs().stream())
+          // getAllGroupUUIDs shouldn't really return null UUIDs, but harden
+          // against them just in case there is a bug or corner case.
+          .filter(id -> id != null && id.get() != null)
+          .collect(toSet());
+    }
   }
 
   @Override
   public ImmutableSortedSet<Project.NameKey> byName(String pfx) {
-    Project.NameKey start = new Project.NameKey(pfx);
-    Project.NameKey end = new Project.NameKey(pfx + Character.MAX_VALUE);
+    Project.NameKey start = Project.nameKey(pfx);
+    Project.NameKey end = Project.nameKey(pfx + Character.MAX_VALUE);
     try {
       // Right endpoint is exclusive, but U+FFFF is a non-character so no project ends with it.
       return list.get(ListKey.ALL).subSet(start, end);
@@ -262,21 +278,29 @@ public class ProjectCacheImpl implements ProjectCache {
     private final ProjectState.Factory projectStateFactory;
     private final GitRepositoryManager mgr;
     private final ProjectCacheClock clock;
+    private final ProjectConfig.Factory projectConfigFactory;
 
     @Inject
-    Loader(ProjectState.Factory psf, GitRepositoryManager g, ProjectCacheClock clock) {
+    Loader(
+        ProjectState.Factory psf,
+        GitRepositoryManager g,
+        ProjectCacheClock clock,
+        ProjectConfig.Factory projectConfigFactory) {
       projectStateFactory = psf;
       mgr = g;
       this.clock = clock;
+      this.projectConfigFactory = projectConfigFactory;
     }
 
     @Override
     public ProjectState load(String projectName) throws Exception {
-      try (TraceTimer timer = TraceContext.newTimer("Loading project %s", projectName)) {
+      try (TraceTimer timer =
+          TraceContext.newTimer(
+              "Loading project", Metadata.builder().projectName(projectName).build())) {
         long now = clock.read();
-        Project.NameKey key = new Project.NameKey(projectName);
+        Project.NameKey key = Project.nameKey(projectName);
         try (Repository git = mgr.openRepository(key)) {
-          ProjectConfig cfg = new ProjectConfig(key);
+          ProjectConfig cfg = projectConfigFactory.create(key);
           cfg.load(key, git);
 
           ProjectState state = projectStateFactory.create(cfg);

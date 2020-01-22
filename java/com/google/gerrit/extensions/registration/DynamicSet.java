@@ -137,7 +137,7 @@ public class DynamicSet<T> implements Iterable<T> {
   }
 
   public static <T> DynamicSet<T> emptySet() {
-    return new DynamicSet<>(Collections.<AtomicReference<Extension<T>>>emptySet());
+    return new DynamicSet<>(Collections.emptySet());
   }
 
   private final CopyOnWriteArrayList<AtomicReference<Extension<T>>> items;
@@ -169,10 +169,8 @@ public class DynamicSet<T> implements Iterable<T> {
 
   public Iterable<Extension<T>> entries() {
     final Iterator<AtomicReference<Extension<T>>> itr = items.iterator();
-    return new Iterable<Extension<T>>() {
-      @Override
-      public Iterator<Extension<T>> iterator() {
-        return new Iterator<Extension<T>>() {
+    return () ->
+        new Iterator<Extension<T>>() {
           private Extension<T> next;
 
           @Override
@@ -201,8 +199,6 @@ public class DynamicSet<T> implements Iterable<T> {
             throw new UnsupportedOperationException();
           }
         };
-      }
-    };
   }
 
   /**
@@ -266,12 +262,9 @@ public class DynamicSet<T> implements Iterable<T> {
     final AtomicReference<Extension<T>> ref =
         new AtomicReference<>(new Extension<>(pluginName, item));
     items.add(ref);
-    return new RegistrationHandle() {
-      @Override
-      public void remove() {
-        if (ref.compareAndSet(ref.get(), null)) {
-          items.remove(ref);
-        }
+    return () -> {
+      if (ref.compareAndSet(ref.get(), null)) {
+        items.remove(ref);
       }
     };
   }

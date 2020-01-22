@@ -16,15 +16,15 @@ package com.google.gerrit.server.restapi.change;
 
 import com.google.common.base.Joiner;
 import com.google.common.collect.Lists;
+import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.PatchSet;
 import com.google.gerrit.extensions.registration.DynamicMap;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.ChildCollection;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.ResourceNotFoundException;
 import com.google.gerrit.extensions.restapi.RestView;
-import com.google.gerrit.reviewdb.client.PatchSet;
-import com.google.gerrit.reviewdb.client.RevId;
-import com.google.gerrit.reviewdb.server.ReviewDb;
+import com.google.gerrit.git.ObjectIds;
 import com.google.gerrit.server.PatchSetUtil;
 import com.google.gerrit.server.change.ChangeResource;
 import com.google.gerrit.server.change.RevisionResource;
@@ -34,21 +34,20 @@ import com.google.gerrit.server.permissions.ChangePermission;
 import com.google.gerrit.server.permissions.PermissionBackend;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gerrit.server.project.ProjectCache;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
-import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import java.io.IOException;
+import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.revwalk.RevCommit;
 
 @Singleton
 public class Revisions implements ChildCollection<ChangeResource, RevisionResource> {
   private final DynamicMap<RestView<RevisionResource>> views;
-  private final Provider<ReviewDb> dbProvider;
   private final ChangeEditUtil editUtil;
   private final PatchSetUtil psUtil;
   private final PermissionBackend permissionBackend;
@@ -57,13 +56,11 @@ public class Revisions implements ChildCollection<ChangeResource, RevisionResour
   @Inject
   Revisions(
       DynamicMap<RestView<RevisionResource>> views,
-      Provider<ReviewDb> dbProvider,
       ChangeEditUtil editUtil,
       PatchSetUtil psUtil,
       PermissionBackend permissionBackend,
       ProjectCache projectCache) {
     this.views = views;
-    this.dbProvider = dbProvider;
     this.editUtil = editUtil;
     this.psUtil = psUtil;
     this.permissionBackend = permissionBackend;
@@ -82,12 +79,11 @@ public class Revisions implements ChildCollection<ChangeResource, RevisionResour
 
   @Override
   public RevisionResource parse(ChangeResource change, IdString id)
-      throws ResourceNotFoundException, AuthException, OrmException, IOException,
-          PermissionBackendException {
+      throws ResourceNotFoundException, AuthException, IOException, PermissionBackendException {
     if (id.get().equals("current")) {
-      PatchSet ps = psUtil.current(dbProvider.get(), change.getNotes());
+      PatchSet ps = psUtil.current(change.getNotes());
       if (ps != null && visible(change)) {
-        return RevisionResource.createNonCachable(change, ps);
+        return RevisionResource.createNonCacheable(change, ps);
       }
       throw new ResourceNotFoundException(id);
     }
@@ -114,7 +110,6 @@ public class Revisions implements ChildCollection<ChangeResource, RevisionResour
       permissionBackend
           .user(change.getUser())
           .change(change.getNotes())
-          .database(dbProvider)
           .check(ChangePermission.READ);
       return projectCache.checkedGet(change.getProject()).statePermitsRead();
     } catch (AuthException e) {
@@ -123,52 +118,52 @@ public class Revisions implements ChildCollection<ChangeResource, RevisionResour
   }
 
   private List<RevisionResource> find(ChangeResource change, String id)
-      throws OrmException, IOException, AuthException {
+      throws IOException, AuthException {
     if (id.equals("0") || id.equals("edit")) {
       return loadEdit(change, null);
     } else if (id.length() < 6 && id.matches("^[1-9][0-9]{0,4}$")) {
       // Legacy patch set number syntax.
       return byLegacyPatchSetId(change, id);
-    } else if (id.length() < 4 || id.length() > RevId.LEN) {
+    } else if (id.length() < 4 || id.length() > ObjectIds.STR_LEN) {
       // Require a minimum of 4 digits.
       // Impossibly long identifier will never match.
       return Collections.emptyList();
     } else {
       List<RevisionResource> out = new ArrayList<>();
-      for (PatchSet ps : psUtil.byChange(dbProvider.get(), change.getNotes())) {
-        if (ps.getRevision() != null && ps.getRevision().get().startsWith(id)) {
+      for (PatchSet ps : psUtil.byChange(change.getNotes())) {
+        if (ObjectIds.matchesAbbreviation(ps.commitId(), id)) {
           out.add(new RevisionResource(change, ps));
         }
       }
       // Not an existing patch set on a change, but might be an edit.
-      if (out.isEmpty() && id.length() == RevId.LEN) {
-        return loadEdit(change, new RevId(id));
+      if (out.isEmpty() && ObjectId.isId(id)) {
+        return loadEdit(change, ObjectId.fromString(id));
       }
       return out;
     }
   }
 
-  private List<RevisionResource> byLegacyPatchSetId(ChangeResource change, String id)
-      throws OrmException {
-    PatchSet ps =
-        psUtil.get(
-            dbProvider.get(),
-            change.getNotes(),
-            new PatchSet.Id(change.getId(), Integer.parseInt(id)));
+  private List<RevisionResource> byLegacyPatchSetId(ChangeResource change, String id) {
+    PatchSet ps = psUtil.get(change.getNotes(), PatchSet.id(change.getId(), Integer.parseInt(id)));
     if (ps != null) {
       return Collections.singletonList(new RevisionResource(change, ps));
     }
     return Collections.emptyList();
   }
 
-  private List<RevisionResource> loadEdit(ChangeResource change, RevId revid)
+  private List<RevisionResource> loadEdit(ChangeResource change, @Nullable ObjectId commitId)
       throws AuthException, IOException {
     Optional<ChangeEdit> edit = editUtil.byChange(change.getNotes(), change.getUser());
     if (edit.isPresent()) {
-      PatchSet ps = new PatchSet(new PatchSet.Id(change.getId(), 0));
-      RevId editRevId = new RevId(ObjectId.toString(edit.get().getEditCommit()));
-      ps.setRevision(editRevId);
-      if (revid == null || editRevId.equals(revid)) {
+      RevCommit editCommit = edit.get().getEditCommit();
+      PatchSet ps =
+          PatchSet.builder()
+              .id(PatchSet.id(change.getId(), 0))
+              .commitId(editCommit)
+              .uploader(change.getUser().getAccountId())
+              .createdOn(new Timestamp(editCommit.getCommitterIdent().getWhen().getTime()))
+              .build();
+      if (commitId == null || editCommit.equals(commitId)) {
         return Collections.singletonList(new RevisionResource(change, ps, edit));
       }
     }

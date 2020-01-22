@@ -14,8 +14,8 @@
 
 package com.google.gerrit.server.change;
 
+import com.google.gerrit.entities.BranchNameKey;
 import com.google.gerrit.extensions.client.SubmitType;
-import com.google.gerrit.reviewdb.client.Branch;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
@@ -29,7 +29,7 @@ public interface MergeabilityCache {
         Ref intoRef,
         SubmitType submitType,
         String mergeStrategy,
-        Branch.NameKey dest,
+        BranchNameKey dest,
         Repository repo) {
       throw new UnsupportedOperationException("Mergeability checking disabled");
     }
@@ -46,7 +46,7 @@ public interface MergeabilityCache {
       Ref intoRef,
       SubmitType submitType,
       String mergeStrategy,
-      Branch.NameKey dest,
+      BranchNameKey dest,
       Repository repo);
 
   Boolean getIfPresent(ObjectId commit, Ref intoRef, SubmitType submitType, String mergeStrategy);

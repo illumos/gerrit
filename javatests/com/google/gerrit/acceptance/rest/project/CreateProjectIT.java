@@ -19,7 +19,10 @@ import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.common.truth.Truth8.assertThat;
 import static com.google.gerrit.acceptance.rest.project.ProjectAssert.assertProjectInfo;
 import static com.google.gerrit.acceptance.rest.project.ProjectAssert.assertProjectOwners;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allowCapability;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.capabilityKey;
 import static com.google.gerrit.server.project.ProjectConfig.PROJECT_CONFIG;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.common.collect.ImmutableList;
@@ -27,10 +30,16 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.google.common.net.HttpHeaders;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
-import com.google.gerrit.acceptance.GerritConfig;
 import com.google.gerrit.acceptance.RestResponse;
 import com.google.gerrit.acceptance.UseLocalDisk;
+import com.google.gerrit.acceptance.config.GerritConfig;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.common.data.GlobalCapability;
+import com.google.gerrit.entities.AccountGroup;
+import com.google.gerrit.entities.BooleanProjectConfig;
+import com.google.gerrit.entities.Project;
+import com.google.gerrit.entities.RefNames;
 import com.google.gerrit.extensions.api.projects.ConfigInfo;
 import com.google.gerrit.extensions.api.projects.ConfigInput;
 import com.google.gerrit.extensions.api.projects.ProjectInput;
@@ -42,12 +51,9 @@ import com.google.gerrit.extensions.restapi.ResourceConflictException;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.UnprocessableEntityException;
 import com.google.gerrit.extensions.restapi.Url;
-import com.google.gerrit.reviewdb.client.AccountGroup;
-import com.google.gerrit.reviewdb.client.BooleanProjectConfig;
-import com.google.gerrit.reviewdb.client.Project;
-import com.google.gerrit.reviewdb.client.RefNames;
 import com.google.gerrit.server.group.SystemGroupBackend;
 import com.google.gerrit.server.project.ProjectState;
+import com.google.inject.Inject;
 import java.util.Collections;
 import java.util.Optional;
 import java.util.Set;
@@ -70,6 +76,9 @@ import org.eclipse.jgit.treewalk.TreeWalk;
 import org.junit.Test;
 
 public class CreateProjectIT extends AbstractDaemonTest {
+  @Inject private ProjectOperations projectOperations;
+  @Inject private RequestScopeOperations requestScopeOperations;
+
   @Test
   public void createProjectHttp() throws Exception {
     String newProjectName = name("newProject");
@@ -82,7 +91,7 @@ public class CreateProjectIT extends AbstractDaemonTest {
     // for more extensive coverage of the LabelTypeInfo.
     assertThat(p.labels).hasSize(1);
 
-    ProjectState projectState = projectCache.get(new Project.NameKey(newProjectName));
+    ProjectState projectState = projectCache.get(Project.nameKey(newProjectName));
     assertThat(projectState).isNotNull();
     assertProjectInfo(projectState.getProject(), p);
     assertHead(newProjectName, "refs/heads/master");
@@ -117,7 +126,7 @@ public class CreateProjectIT extends AbstractDaemonTest {
         Future<RestResponse> r1 = executor.submit(createProjectFoo);
         Future<RestResponse> r2 = executor.submit(createProjectFoo);
         assertThat(ImmutableList.of(r1.get().getStatusCode(), r2.get().getStatusCode()))
-            .containsAllOf(HttpStatus.SC_CREATED, HttpStatus.SC_CONFLICT);
+            .containsAtLeast(HttpStatus.SC_CREATED, HttpStatus.SC_CONFLICT);
       }
     } finally {
       executor.shutdown();
@@ -158,7 +167,7 @@ public class CreateProjectIT extends AbstractDaemonTest {
     String newProjectName = name("newProject");
     ProjectInfo p = gApi.projects().create(newProjectName).get();
     assertThat(p.name).isEqualTo(newProjectName);
-    ProjectState projectState = projectCache.get(new Project.NameKey(newProjectName));
+    ProjectState projectState = projectCache.get(Project.nameKey(newProjectName));
     assertThat(projectState).isNotNull();
     assertProjectInfo(projectState.getProject(), p);
     assertHead(newProjectName, "refs/heads/master");
@@ -171,7 +180,7 @@ public class CreateProjectIT extends AbstractDaemonTest {
     String newProjectName = name("newProject");
     ProjectInfo p = gApi.projects().create(newProjectName + ".git").get();
     assertThat(p.name).isEqualTo(newProjectName);
-    ProjectState projectState = projectCache.get(new Project.NameKey(newProjectName));
+    ProjectState projectState = projectCache.get(Project.nameKey(newProjectName));
     assertThat(projectState).isNotNull();
     assertProjectInfo(projectState.getProject(), p);
     assertHead(newProjectName, "refs/heads/master");
@@ -182,7 +191,7 @@ public class CreateProjectIT extends AbstractDaemonTest {
     String newProjectName = name("newProject");
     ProjectInfo p = gApi.projects().create(newProjectName + "/").get();
     assertThat(p.name).isEqualTo(newProjectName);
-    ProjectState projectState = projectCache.get(new Project.NameKey(newProjectName));
+    ProjectState projectState = projectCache.get(Project.nameKey(newProjectName));
     assertThat(projectState).isNotNull();
     assertProjectInfo(projectState.getProject(), p);
     assertHead(newProjectName, "refs/heads/master");
@@ -193,7 +202,7 @@ public class CreateProjectIT extends AbstractDaemonTest {
     String newProjectName = name("newProject/newProject");
     ProjectInfo p = gApi.projects().create(newProjectName).get();
     assertThat(p.name).isEqualTo(newProjectName);
-    ProjectState projectState = projectCache.get(new Project.NameKey(newProjectName));
+    ProjectState projectState = projectCache.get(Project.nameKey(newProjectName));
     assertThat(projectState).isNotNull();
     assertProjectInfo(projectState.getProject(), p);
     assertHead(newProjectName, "refs/heads/master");
@@ -212,7 +221,7 @@ public class CreateProjectIT extends AbstractDaemonTest {
     in.requireChangeId = InheritableBoolean.TRUE;
     ProjectInfo p = gApi.projects().create(in).get();
     assertThat(p.name).isEqualTo(newProjectName);
-    Project project = projectCache.get(new Project.NameKey(newProjectName)).getProject();
+    Project project = projectCache.get(Project.nameKey(newProjectName)).getProject();
     assertProjectInfo(project, p);
     assertThat(project.getDescription()).isEqualTo(in.description);
     assertThat(project.getConfiguredSubmitType()).isEqualTo(in.submitType);
@@ -238,7 +247,7 @@ public class CreateProjectIT extends AbstractDaemonTest {
     in.name = childName;
     in.parent = parentName;
     gApi.projects().create(in);
-    Project project = projectCache.get(new Project.NameKey(childName)).getProject();
+    Project project = projectCache.get(Project.nameKey(childName)).getProject();
     assertThat(project.getParentName()).isEqualTo(in.parent);
   }
 
@@ -261,12 +270,12 @@ public class CreateProjectIT extends AbstractDaemonTest {
     in.owners.add(
         Integer.toString(
             groupCache
-                .get(new AccountGroup.NameKey("Administrators"))
+                .get(AccountGroup.nameKey("Administrators"))
                 .orElse(null)
                 .getId()
                 .get())); // by ID
     gApi.projects().create(in);
-    ProjectState projectState = projectCache.get(new Project.NameKey(newProjectName));
+    ProjectState projectState = projectCache.get(Project.nameKey(newProjectName));
     Set<AccountGroup.UUID> expectedOwnerIds = Sets.newHashSetWithExpectedSize(3);
     expectedOwnerIds.add(SystemGroupBackend.ANONYMOUS_USERS);
     expectedOwnerIds.add(SystemGroupBackend.REGISTERED_USERS);
@@ -319,22 +328,31 @@ public class CreateProjectIT extends AbstractDaemonTest {
 
   @Test
   public void createProjectWithCapability() throws Exception {
-    allowGlobalCapabilities(SystemGroupBackend.REGISTERED_USERS, GlobalCapability.CREATE_PROJECT);
+    projectOperations
+        .allProjectsForUpdate()
+        .add(
+            allowCapability(GlobalCapability.CREATE_PROJECT)
+                .group(SystemGroupBackend.REGISTERED_USERS))
+        .update();
     try {
-      setApiUser(user);
+      requestScopeOperations.setApiUser(user.id());
       ProjectInput in = new ProjectInput();
       in.name = name("newProject");
       ProjectInfo p = gApi.projects().create(in).get();
       assertThat(p.name).isEqualTo(in.name);
     } finally {
-      removeGlobalCapabilities(
-          SystemGroupBackend.REGISTERED_USERS, GlobalCapability.CREATE_PROJECT);
+      projectOperations
+          .allProjectsForUpdate()
+          .remove(
+              capabilityKey(GlobalCapability.CREATE_PROJECT)
+                  .group(SystemGroupBackend.REGISTERED_USERS))
+          .update();
     }
   }
 
   @Test
   public void createProjectWithoutCapability_Forbidden() throws Exception {
-    setApiUser(user);
+    requestScopeOperations.setApiUser(user.id());
     ProjectInput in = new ProjectInput();
     in.name = name("newProject");
     assertCreateFails(in, AuthException.class);
@@ -351,17 +369,26 @@ public class CreateProjectIT extends AbstractDaemonTest {
   public void createProjectWithCreateProjectCapabilityAndParentNotVisible() throws Exception {
     Project parent = projectCache.get(allProjects).getProject();
     parent.setState(com.google.gerrit.extensions.client.ProjectState.HIDDEN);
-    allowGlobalCapabilities(SystemGroupBackend.REGISTERED_USERS, GlobalCapability.CREATE_PROJECT);
+    projectOperations
+        .allProjectsForUpdate()
+        .add(
+            allowCapability(GlobalCapability.CREATE_PROJECT)
+                .group(SystemGroupBackend.REGISTERED_USERS))
+        .update();
     try {
-      setApiUser(user);
+      requestScopeOperations.setApiUser(user.id());
       ProjectInput in = new ProjectInput();
       in.name = name("newProject");
       ProjectInfo p = gApi.projects().create(in).get();
       assertThat(p.name).isEqualTo(in.name);
     } finally {
       parent.setState(com.google.gerrit.extensions.client.ProjectState.ACTIVE);
-      removeGlobalCapabilities(
-          SystemGroupBackend.REGISTERED_USERS, GlobalCapability.CREATE_PROJECT);
+      projectOperations
+          .allProjectsForUpdate()
+          .remove(
+              capabilityKey(GlobalCapability.CREATE_PROJECT)
+                  .group(SystemGroupBackend.REGISTERED_USERS))
+          .update();
     }
   }
 
@@ -443,13 +470,13 @@ public class CreateProjectIT extends AbstractDaemonTest {
   }
 
   private void assertHead(String projectName, String expectedRef) throws Exception {
-    try (Repository repo = repoManager.openRepository(new Project.NameKey(projectName))) {
+    try (Repository repo = repoManager.openRepository(Project.nameKey(projectName))) {
       assertThat(repo.exactRef(Constants.HEAD).getTarget().getName()).isEqualTo(expectedRef);
     }
   }
 
   private void assertEmptyCommit(String projectName, String... refs) throws Exception {
-    Project.NameKey projectKey = new Project.NameKey(projectName);
+    Project.NameKey projectKey = Project.nameKey(projectName);
     try (Repository repo = repoManager.openRepository(projectKey);
         RevWalk rw = new RevWalk(repo);
         TreeWalk tw = new TreeWalk(rw.getObjectReader())) {
@@ -465,13 +492,12 @@ public class CreateProjectIT extends AbstractDaemonTest {
 
   private void assertCreateFails(ProjectInput in, Class<? extends RestApiException> errType)
       throws Exception {
-    exception.expect(errType);
-    gApi.projects().create(in);
+    assertThrows(errType, () -> gApi.projects().create(in));
   }
 
   private Optional<String> readProjectConfig(String projectName) throws Exception {
-    try (Repository repo = repoManager.openRepository(new Project.NameKey(projectName))) {
-      TestRepository<?> tr = new TestRepository<>(repo);
+    try (Repository repo = repoManager.openRepository(Project.nameKey(projectName));
+        TestRepository<Repository> tr = new TestRepository<>(repo)) {
       RevWalk rw = tr.getRevWalk();
       Ref ref = repo.exactRef(RefNames.REFS_CONFIG);
       if (ref == null) {

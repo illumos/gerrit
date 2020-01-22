@@ -15,10 +15,11 @@
 package com.google.gerrit.acceptance.rest.change;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.TruthJUnit.assume;
+import static com.google.common.truth.Truth.assertWithMessage;
+import static com.google.gerrit.acceptance.testsuite.project.TestProjectUpdate.allow;
 import static com.google.gerrit.server.group.SystemGroupBackend.REGISTERED_USERS;
+import static com.google.gerrit.testing.GerritJUnit.assertThrows;
 import static java.util.Objects.requireNonNull;
-import static java.util.concurrent.TimeUnit.SECONDS;
 
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Sets;
@@ -26,33 +27,23 @@ import com.google.common.truth.IterableSubject;
 import com.google.gerrit.acceptance.AbstractDaemonTest;
 import com.google.gerrit.acceptance.NoHttpd;
 import com.google.gerrit.acceptance.PushOneCommit;
+import com.google.gerrit.acceptance.UseClockStep;
+import com.google.gerrit.acceptance.testsuite.project.ProjectOperations;
+import com.google.gerrit.acceptance.testsuite.request.RequestScopeOperations;
 import com.google.gerrit.common.data.Permission;
 import com.google.gerrit.extensions.api.changes.HashtagsInput;
 import com.google.gerrit.extensions.common.ChangeMessageInfo;
 import com.google.gerrit.extensions.restapi.AuthException;
 import com.google.gerrit.extensions.restapi.BadRequestException;
-import com.google.gerrit.testing.TestTimeUtil;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.BeforeClass;
+import com.google.inject.Inject;
 import org.junit.Test;
 
 @NoHttpd
+@UseClockStep
 public class HashtagsIT extends AbstractDaemonTest {
-  @Before
-  public void before() {
-    assume().that(notesMigration.readChanges()).isTrue();
-  }
+  @Inject private ProjectOperations projectOperations;
 
-  @BeforeClass
-  public static void setTimeForTesting() {
-    TestTimeUtil.resetWithClockStep(1, SECONDS);
-  }
-
-  @AfterClass
-  public static void restoreTime() {
-    TestTimeUtil.useSystemTime();
-  }
+  @Inject private RequestScopeOperations requestScopeOperations;
 
   @Test
   public void getNoHashtags() throws Exception {
@@ -81,9 +72,9 @@ public class HashtagsIT extends AbstractDaemonTest {
   public void addInvalidHashtag() throws Exception {
     PushOneCommit.Result r = createChange();
 
-    exception.expect(BadRequestException.class);
-    exception.expectMessage("hashtags may not contain commas");
-    addHashtags(r, "invalid,hashtag");
+    BadRequestException thrown =
+        assertThrows(BadRequestException.class, () -> addHashtags(r, "invalid,hashtag"));
+    assertThat(thrown).hasMessageThat().contains("hashtags may not contain commas");
   }
 
   @Test
@@ -260,17 +251,20 @@ public class HashtagsIT extends AbstractDaemonTest {
   @Test
   public void addHashtagWithoutPermissionNotAllowed() throws Exception {
     PushOneCommit.Result r = createChange();
-    setApiUser(user);
-    exception.expect(AuthException.class);
-    exception.expectMessage("edit hashtags not permitted");
-    addHashtags(r, "MyHashtag");
+    requestScopeOperations.setApiUser(user.id());
+    AuthException thrown = assertThrows(AuthException.class, () -> addHashtags(r, "MyHashtag"));
+    assertThat(thrown).hasMessageThat().contains("edit hashtags not permitted");
   }
 
   @Test
   public void addHashtagWithPermissionAllowed() throws Exception {
     PushOneCommit.Result r = createChange();
-    grant(project, "refs/heads/master", Permission.EDIT_HASHTAGS, false, REGISTERED_USERS);
-    setApiUser(user);
+    projectOperations
+        .project(project)
+        .forUpdate()
+        .add(allow(Permission.EDIT_HASHTAGS).ref("refs/heads/master").group(REGISTERED_USERS))
+        .update();
+    requestScopeOperations.setApiUser(user.id());
     addHashtags(r, "MyHashtag");
     assertThatGet(r).containsExactly("MyHashtag");
     assertMessage(r, "Hashtag added: MyHashtag");
@@ -307,7 +301,7 @@ public class HashtagsIT extends AbstractDaemonTest {
   private ChangeMessageInfo getLastMessage(PushOneCommit.Result r) throws Exception {
     ChangeMessageInfo lastMessage =
         Iterables.getLast(gApi.changes().id(r.getChange().getId().get()).get().messages, null);
-    assertThat(lastMessage).named(lastMessage.message).isNotNull();
+    assertWithMessage(lastMessage.message).that(lastMessage).isNotNull();
     return lastMessage;
   }
 }

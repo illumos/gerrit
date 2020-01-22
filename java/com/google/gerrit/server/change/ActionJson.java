@@ -29,11 +29,9 @@ import com.google.gerrit.extensions.registration.DynamicSet;
 import com.google.gerrit.extensions.restapi.RestView;
 import com.google.gerrit.extensions.webui.PrivateInternals_UiActionDescription;
 import com.google.gerrit.extensions.webui.UiAction;
-import com.google.gerrit.reviewdb.client.Change.Status;
 import com.google.gerrit.server.CurrentUser;
 import com.google.gerrit.server.extensions.webui.UiActions;
 import com.google.gerrit.server.notedb.ChangeNotes;
-import com.google.gwtorm.server.OrmException;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -71,7 +69,7 @@ public class ActionJson {
     this.userProvider = userProvider;
   }
 
-  public Map<String, ActionInfo> format(RevisionResource rsrc) throws OrmException {
+  public Map<String, ActionInfo> format(RevisionResource rsrc) {
     ChangeInfo changeInfo = null;
     RevisionInfo revisionInfo = null;
     List<ActionVisitor> visitors = visitors();
@@ -98,7 +96,7 @@ public class ActionJson {
   }
 
   public RevisionInfo addRevisionActions(
-      @Nullable ChangeInfo changeInfo, RevisionInfo to, RevisionResource rsrc) throws OrmException {
+      @Nullable ChangeInfo changeInfo, RevisionInfo to, RevisionResource rsrc) {
     List<ActionVisitor> visitors = visitors();
     if (!visitors.isEmpty()) {
       if (changeInfo != null) {
@@ -138,6 +136,7 @@ public class ActionJson {
     copy._number = changeInfo._number;
     copy.requirements = changeInfo.requirements;
     copy.revertOf = changeInfo.revertOf;
+    copy.submissionId = changeInfo.submissionId;
     copy.starred = changeInfo.starred;
     copy.stars = changeInfo.stars;
     copy.submitted = changeInfo.submitted;
@@ -145,6 +144,8 @@ public class ActionJson {
     copy.unresolvedCommentCount = changeInfo.unresolvedCommentCount;
     copy.workInProgress = changeInfo.workInProgress;
     copy.id = changeInfo.id;
+    copy.cherryPickOfChange = changeInfo.cherryPickOfChange;
+    copy.cherryPickOfPatchSet = changeInfo.cherryPickOfPatchSet;
     return copy;
   }
 
@@ -180,8 +181,7 @@ public class ActionJson {
     // The followup action is a client-side only operation that does not
     // have a server side handler. It must be manually registered into the
     // resulting action map.
-    Status status = notes.getChange().getStatus();
-    if (status.isOpen() || status.equals(Status.MERGED)) {
+    if (!notes.getChange().isAbandoned()) {
       UiAction.Description descr = new UiAction.Description();
       PrivateInternals_UiActionDescription.setId(descr, "followup");
       PrivateInternals_UiActionDescription.setMethod(descr, "POST");

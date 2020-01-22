@@ -18,8 +18,10 @@ limitations under the License.
 <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
 <title>gr-repo-branch-picker</title>
 
-<script src="../../../bower_components/webcomponentsjs/webcomponents-lite.min.js"></script>
-<script src="../../../bower_components/web-component-tester/browser.js"></script>
+<script src="/bower_components/webcomponentsjs/custom-elements-es5-adapter.js"></script>
+
+<script src="/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+<script src="/bower_components/web-component-tester/browser.js"></script>
 <link rel="import" href="../../../test/common-test-setup.html"/>
 <link rel="import" href="gr-repo-branch-picker.html">
 
@@ -124,8 +126,9 @@ limitations under the License.
             });
       });
 
-      test('does not query when repo is unset', () => {
-        return element._getRepoBranchesSuggestions('')
+      test('does not query when repo is unset', done => {
+        element
+            ._getRepoBranchesSuggestions('')
             .then(() => {
               assert.isFalse(element.$.restAPI.getRepoBranches.called);
               element.repo = 'gerrit';
@@ -133,6 +136,7 @@ limitations under the License.
             })
             .then(() => {
               assert.isTrue(element.$.restAPI.getRepoBranches.called);
+              done();
             });
       });
     });

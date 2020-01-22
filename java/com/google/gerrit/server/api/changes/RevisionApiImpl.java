@@ -20,6 +20,8 @@ import static com.google.gerrit.server.api.ApiUtil.asRestApiException;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.MultimapBuilder.ListMultimapBuilder;
+import com.google.gerrit.common.Nullable;
+import com.google.gerrit.entities.PatchSetApproval;
 import com.google.gerrit.extensions.api.changes.ChangeApi;
 import com.google.gerrit.extensions.api.changes.Changes;
 import com.google.gerrit.extensions.api.changes.CherryPickInput;
@@ -42,6 +44,7 @@ import com.google.gerrit.extensions.common.CherryPickChangeInfo;
 import com.google.gerrit.extensions.common.CommentInfo;
 import com.google.gerrit.extensions.common.CommitInfo;
 import com.google.gerrit.extensions.common.DescriptionInput;
+import com.google.gerrit.extensions.common.DiffInfo;
 import com.google.gerrit.extensions.common.EditInfo;
 import com.google.gerrit.extensions.common.FileInfo;
 import com.google.gerrit.extensions.common.Input;
@@ -53,8 +56,6 @@ import com.google.gerrit.extensions.restapi.BinaryResult;
 import com.google.gerrit.extensions.restapi.IdString;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestModifyView;
-import com.google.gerrit.reviewdb.client.PatchSetApproval;
-import com.google.gerrit.reviewdb.server.ReviewDb;
 import com.google.gerrit.server.ApprovalsUtil;
 import com.google.gerrit.server.account.AccountDirectory.FillOptions;
 import com.google.gerrit.server.account.AccountLoader;
@@ -71,6 +72,7 @@ import com.google.gerrit.server.restapi.change.Files;
 import com.google.gerrit.server.restapi.change.Fixes;
 import com.google.gerrit.server.restapi.change.GetCommit;
 import com.google.gerrit.server.restapi.change.GetDescription;
+import com.google.gerrit.server.restapi.change.GetFixPreview;
 import com.google.gerrit.server.restapi.change.GetMergeList;
 import com.google.gerrit.server.restapi.change.GetPatch;
 import com.google.gerrit.server.restapi.change.GetRelated;
@@ -126,6 +128,7 @@ class RevisionApiImpl implements RevisionApi {
   private final ListRevisionComments listComments;
   private final ListRobotComments listRobotComments;
   private final ApplyFix applyFix;
+  private final GetFixPreview getFixPreview;
   private final Fixes fixes;
   private final ListRevisionDrafts listDrafts;
   private final CreateDraftComment createDraft;
@@ -144,7 +147,6 @@ class RevisionApiImpl implements RevisionApi {
   private final PutDescription putDescription;
   private final GetDescription getDescription;
   private final ApprovalsUtil approvalsUtil;
-  private final Provider<ReviewDb> db;
   private final AccountLoader.Factory accountLoaderFactory;
 
   @Inject
@@ -170,6 +172,7 @@ class RevisionApiImpl implements RevisionApi {
       ListRevisionComments listComments,
       ListRobotComments listRobotComments,
       ApplyFix applyFix,
+      GetFixPreview getFixPreview,
       Fixes fixes,
       ListRevisionDrafts listDrafts,
       CreateDraftComment createDraft,
@@ -188,7 +191,6 @@ class RevisionApiImpl implements RevisionApi {
       PutDescription putDescription,
       GetDescription getDescription,
       ApprovalsUtil approvalsUtil,
-      Provider<ReviewDb> db,
       AccountLoader.Factory accountLoaderFactory,
       @Assisted RevisionResource r) {
     this.repoManager = repoManager;
@@ -213,6 +215,7 @@ class RevisionApiImpl implements RevisionApi {
     this.robotComments = robotComments;
     this.listRobotComments = listRobotComments;
     this.applyFix = applyFix;
+    this.getFixPreview = getFixPreview;
     this.fixes = fixes;
     this.listDrafts = listDrafts;
     this.createDraft = createDraft;
@@ -230,7 +233,6 @@ class RevisionApiImpl implements RevisionApi {
     this.putDescription = putDescription;
     this.getDescription = getDescription;
     this.approvalsUtil = approvalsUtil;
-    this.db = db;
     this.accountLoaderFactory = accountLoaderFactory;
     this.revision = r;
   }
@@ -245,12 +247,6 @@ class RevisionApiImpl implements RevisionApi {
   }
 
   @Override
-  public void submit() throws RestApiException {
-    SubmitInput in = new SubmitInput();
-    submit(in);
-  }
-
-  @Override
   public void submit(SubmitInput in) throws RestApiException {
     try {
       submit.apply(revision, in);
@@ -260,40 +256,19 @@ class RevisionApiImpl implements RevisionApi {
   }
 
   @Override
-  public BinaryResult submitPreview() throws RestApiException {
-    return submitPreview("zip");
-  }
-
-  @Override
   public BinaryResult submitPreview(String format) throws RestApiException {
     try {
       submitPreview.setFormat(format);
-      return submitPreview.apply(revision);
+      return submitPreview.apply(revision).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot get submit preview", e);
     }
   }
 
   @Override
-  public void publish() throws RestApiException {
-    throw new UnsupportedOperationException("draft workflow is discontinued");
-  }
-
-  @Override
-  public void delete() throws RestApiException {
-    throw new UnsupportedOperationException("draft workflow is discontinued");
-  }
-
-  @Override
-  public ChangeApi rebase() throws RestApiException {
-    RebaseInput in = new RebaseInput();
-    return rebase(in);
-  }
-
-  @Override
   public ChangeApi rebase(RebaseInput in) throws RestApiException {
     try {
-      return changes.id(rebase.apply(revision, in)._number);
+      return changes.id(rebase.apply(revision, in).value()._number);
     } catch (Exception e) {
       throw asRestApiException("Cannot rebase ps", e);
     }
@@ -312,7 +287,7 @@ class RevisionApiImpl implements RevisionApi {
   @Override
   public ChangeApi cherryPick(CherryPickInput in) throws RestApiException {
     try {
-      return changes.id(cherryPick.apply(revision, in)._number);
+      return changes.id(cherryPick.apply(revision, in).value()._number);
     } catch (Exception e) {
       throw asRestApiException("Cannot cherry pick", e);
     }
@@ -321,7 +296,7 @@ class RevisionApiImpl implements RevisionApi {
   @Override
   public CherryPickChangeInfo cherryPickAsInfo(CherryPickInput in) throws RestApiException {
     try {
-      return cherryPick.apply(revision, in);
+      return cherryPick.apply(revision, in).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot cherry pick", e);
     }
@@ -366,7 +341,7 @@ class RevisionApiImpl implements RevisionApi {
   @Override
   public MergeableInfo mergeable() throws RestApiException {
     try {
-      return mergeable.apply(revision);
+      return mergeable.apply(revision).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot check mergeability", e);
     }
@@ -376,7 +351,7 @@ class RevisionApiImpl implements RevisionApi {
   public MergeableInfo mergeableOtherBranches() throws RestApiException {
     try {
       mergeable.setOtherBranches(true);
-      return mergeable.apply(revision);
+      return mergeable.apply(revision).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot check mergeability", e);
     }
@@ -384,17 +359,7 @@ class RevisionApiImpl implements RevisionApi {
 
   @SuppressWarnings("unchecked")
   @Override
-  public Map<String, FileInfo> files() throws RestApiException {
-    try {
-      return (Map<String, FileInfo>) listFiles.apply(revision).value();
-    } catch (Exception e) {
-      throw asRestApiException("Cannot retrieve files", e);
-    }
-  }
-
-  @SuppressWarnings("unchecked")
-  @Override
-  public Map<String, FileInfo> files(String base) throws RestApiException {
+  public Map<String, FileInfo> files(@Nullable String base) throws RestApiException {
     try {
       return (Map<String, FileInfo>) listFiles.setBase(base).apply(revision).value();
     } catch (Exception e) {
@@ -440,7 +405,7 @@ class RevisionApiImpl implements RevisionApi {
   @Override
   public Map<String, List<CommentInfo>> comments() throws RestApiException {
     try {
-      return listComments.apply(revision);
+      return listComments.apply(revision).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot retrieve comments", e);
     }
@@ -449,7 +414,7 @@ class RevisionApiImpl implements RevisionApi {
   @Override
   public Map<String, List<RobotCommentInfo>> robotComments() throws RestApiException {
     try {
-      return listRobotComments.apply(revision);
+      return listRobotComments.apply(revision).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot retrieve robot comments", e);
     }
@@ -467,7 +432,7 @@ class RevisionApiImpl implements RevisionApi {
   @Override
   public Map<String, List<CommentInfo>> drafts() throws RestApiException {
     try {
-      return listDrafts.apply(revision);
+      return listDrafts.apply(revision).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot retrieve drafts", e);
     }
@@ -488,6 +453,15 @@ class RevisionApiImpl implements RevisionApi {
       return applyFix.apply(fixes.parse(revision, IdString.fromDecoded(fixId)), null).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot apply fix", e);
+    }
+  }
+
+  @Override
+  public Map<String, DiffInfo> getFixPreview(String fixId) throws RestApiException {
+    try {
+      return getFixPreview.apply(fixes.parse(revision, IdString.fromDecoded(fixId))).value();
+    } catch (Exception e) {
+      throw asRestApiException("Cannot get fix preview", e);
     }
   }
 
@@ -516,7 +490,7 @@ class RevisionApiImpl implements RevisionApi {
       // Reread change to pick up new notes refs.
       return changes
           .id(revision.getChange().getId().get())
-          .revision(revision.getPatchSet().getId().get())
+          .revision(revision.getPatchSet().id().get())
           .draft(id);
     } catch (Exception e) {
       throw asRestApiException("Cannot create draft", e);
@@ -544,7 +518,7 @@ class RevisionApiImpl implements RevisionApi {
   @Override
   public BinaryResult patch() throws RestApiException {
     try {
-      return getPatch.apply(revision);
+      return getPatch.apply(revision).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot get patch", e);
     }
@@ -553,7 +527,7 @@ class RevisionApiImpl implements RevisionApi {
   @Override
   public BinaryResult patch(String path) throws RestApiException {
     try {
-      return getPatch.setPath(path).apply(revision);
+      return getPatch.setPath(path).apply(revision).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot get patch", e);
     }
@@ -571,7 +545,7 @@ class RevisionApiImpl implements RevisionApi {
   @Override
   public SubmitType submitType() throws RestApiException {
     try {
-      return getSubmitType.apply(revision);
+      return getSubmitType.apply(revision).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot get submit type", e);
     }
@@ -580,16 +554,16 @@ class RevisionApiImpl implements RevisionApi {
   @Override
   public SubmitType testSubmitType(TestSubmitRuleInput in) throws RestApiException {
     try {
-      return testSubmitType.apply(revision, in);
+      return testSubmitType.apply(revision, in).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot test submit type", e);
     }
   }
 
   @Override
-  public List<TestSubmitRuleInfo> testSubmitRule(TestSubmitRuleInput in) throws RestApiException {
+  public TestSubmitRuleInfo testSubmitRule(TestSubmitRuleInput in) throws RestApiException {
     try {
-      return testSubmitRule.get().apply(revision, in);
+      return testSubmitRule.get().apply(revision, in).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot test submit rule", e);
     }
@@ -615,7 +589,7 @@ class RevisionApiImpl implements RevisionApi {
   @Override
   public RelatedChangesInfo related() throws RestApiException {
     try {
-      return getRelated.apply(revision);
+      return getRelated.apply(revision).value();
     } catch (Exception e) {
       throw asRestApiException("Cannot get related changes", e);
     }
@@ -627,21 +601,20 @@ class RevisionApiImpl implements RevisionApi {
         ListMultimapBuilder.treeKeys().arrayListValues().build();
     try {
       Iterable<PatchSetApproval> approvals =
-          approvalsUtil.byPatchSet(
-              db.get(), revision.getNotes(), revision.getPatchSet().getId(), null, null);
+          approvalsUtil.byPatchSet(revision.getNotes(), revision.getPatchSet().id(), null, null);
       AccountLoader accountLoader =
           accountLoaderFactory.create(
               EnumSet.of(
                   FillOptions.ID, FillOptions.NAME, FillOptions.EMAIL, FillOptions.USERNAME));
       for (PatchSetApproval approval : approvals) {
-        String label = approval.getLabel();
+        String label = approval.label();
         ApprovalInfo info =
             new ApprovalInfo(
-                approval.getAccountId().get(),
-                Integer.valueOf(approval.getValue()),
+                approval.accountId().get(),
+                Integer.valueOf(approval.value()),
                 null,
-                approval.getTag(),
-                approval.getGranted());
+                approval.tag().orElse(null),
+                approval.granted());
         accountLoader.put(info);
         result.get(label).add(info);
       }
@@ -665,7 +638,11 @@ class RevisionApiImpl implements RevisionApi {
 
   @Override
   public String description() throws RestApiException {
-    return getDescription.apply(revision);
+    try {
+      return getDescription.apply(revision).value();
+    } catch (Exception e) {
+      throw asRestApiException("Cannot get description", e);
+    }
   }
 
   @Override

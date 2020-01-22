@@ -1,9 +1,13 @@
+:linkattrs:
 = Gerrit Code Review: Developer Setup
 
-To build a developer instance, you'll need link:https://bazel.build/[Bazel] to
+To build a developer instance, you'll need link:https://bazel.build/[Bazel,role=external,window=_blank] to
 compile the code.
 
-== Getting the Source
+== Git Setup
+
+[[clone]]
+=== Getting the Source
 
 Create a new client workspace:
 
@@ -12,101 +16,36 @@ Create a new client workspace:
   cd gerrit
 ----
 
-The `--recursive` option is needed on `git clone` to ensure that
-the core plugins, which are included as git submodules, are also
-cloned.
+The `--recurse-submodules` option is needed on `git clone` to ensure that the
+core plugins, which are included as git submodules, are also cloned.
+
+=== Switching between branches
+
+When using `git checkout` without `--recurse-submodules` to switch between
+branches, submodule revisions are not altered, which can result in:
+
+*  Incorrect or unneeded plugin revisions.
+*  Missing plugins.
+
+After you switch branches, ensure that you have the correct versions of
+the submodules.
+
+CAUTION: If you store Eclipse or IntelliJ project files in the Gerrit source
+directories, do *_not_* run `git clean -fdx`. Doing so may remove untracked files and damage your project. For more information, see
+link:https://git-scm.com/docs/git-clean[git-clean,role=external,window=_blank].
+
+Run the following:
+
+----
+  git submodule update
+  git clean -ffd
+----
 
 [[compile_project]]
 == Compiling
 
 For details, see <<dev-bazel#,Building with Bazel>>.
 
-== Configuring Eclipse
-
-To use the Eclipse IDE for development, see
-link:dev-eclipse.html[Eclipse Setup].
-
-To configure the Eclipse workspace with Bazel, see
-link:dev-bazel.html#eclipse[Eclipse integration with Bazel].
-
-== Configuring IntelliJ IDEA
-
-See <<dev-intellij#,IntelliJ Setup>> for details.
-
-== MacOS
-
-On MacOS, ensure that "Java for MacOS X 10.5 Update 4" (or higher) is installed
-and that `JAVA_HOME` is set to the
-link:install.html#Requirements[required Java version].
-
-Java installations can typically be found in
-"/System/Library/Frameworks/JavaVM.framework/Versions".
-
-To check the installed version of Java, open a terminal window and run:
-
-`java -version`
-
-[[init]]
-== Site Initialization
-
-After you compile the project <<compile_project,(above)>>, run the Gerrit
-`init`
-command to create a test site:
-
-----
-  $(bazel info output_base)/external/local_jdk/bin/java \
-     -jar bazel-bin/gerrit.war init -d ../gerrit_testsite
-----
-
-[[special_bazel_java_version]]
-NOTE: You must use the same Java version that Bazel used for the build, which
-is available at `$(bazel info output_base)/external/local_jdk/bin/java`.
-
-During initialization, change two settings from the defaults:
-
-*  To ensure the development instance is not externally accessible, change the
-listen addresses from '*' to 'localhost'.
-*  To allow yourself to create and act as arbitrary test accounts on your
-development instance, change the auth type from 'OPENID' to 'DEVELOPMENT_BECOME_ANY_ACCOUNT'.
-
-After initializing the test site, Gerrit starts serving in the background. A
-web browser displays the Start page.
-
-On the Start page, you can:
-
-.  Log in as the account you created during the initialization process.
-.  Register additional accounts.
-.  Create projects.
-
-To shut down the daemon, run:
-
-----
-  ../gerrit_testsite/bin/gerrit.sh stop
-----
-
-
-[[localdev]]
-== Working with the Local Server
-
-To create more accounts on your development instance:
-
-.  Click 'become' in the upper right corner.
-.  Select 'Switch User'.
-.  Register a new account.
-
-Use the `ssh` protocol to clone from and push to the local server. For
-example, to clone a repository that you've created through the admin
-interface, run:
-
-----
-git clone ssh://username@localhost:29418/projectname
-----
-
-To create changes as users of Gerrit would, run:
-
-----
-git push origin HEAD:refs/for/master
-----
 
 == Testing
 
@@ -123,6 +62,92 @@ shut down.
 For instructions on running the acceptance tests with Bazel,
 see <<dev-bazel#tests,Running Unit Tests with Bazel>>.
 
+
+== Local server
+
+[[init]]
+=== Site Initialization
+
+After you compile the project <<compile_project,(above)>>, run the Gerrit
+`init`
+command to create a test site:
+
+----
+  export GERRIT_SITE=~/gerrit_testsite
+  $(bazel info output_base)/external/local_jdk/bin/java \
+      -jar bazel-bin/gerrit.war init --batch --dev -d $GERRIT_SITE
+----
+
+[[special_bazel_java_version]]
+NOTE: You must use the same Java version that Bazel used for the build, which
+is available at `$(bazel info output_base)/external/local_jdk/bin/java`.
+
+This command takes two parameters:
+
+* `--batch` assigns default values to several Gerrit configuration
+    options. To learn more about these options, see
+    link:config-gerrit.html[Configuration].
+* `--dev` configures the Gerrit server to use the authentication
+  option, `DEVELOPMENT_BECOME_ANY_ACCOUNT`, which enables you to
+  switch between different users to explore how Gerrit works. To learn more
+  about setting up Gerrit for development, see
+  link:dev-readme.html[Gerrit Code Review: Developer Setup].
+
+After initializing the test site, Gerrit starts serving in the background. A
+web browser displays the Start page.
+
+On the Start page, you can:
+
+.  Log in as the account you created during the initialization process.
+.  Register additional accounts.
+.  Create projects.
+
+To shut down the daemon, run:
+
+----
+  $GERRIT_SITE/bin/gerrit.sh stop
+----
+
+
+[[localdev]]
+=== Working with the Local Server
+
+To create more accounts on your development instance:
+
+.  Click 'become' in the upper right corner.
+.  Select 'Switch User'.
+.  Register a new account.
+.  link:user-upload.html#ssh[Configure your SSH key].
+
+Use the `ssh` protocol to clone from and push to the local server. For
+example, to clone a repository that you've created through the admin
+interface, run:
+
+----
+git clone ssh://username@localhost:29418/projectname
+----
+
+To use the `HTTP` protocol, run:
+
+----
+git clone http://username@localhost:8080/projectname
+----
+
+The default password for user `admin` is `secret`. You can regenerate a
+password in the UI under User Settings -- HTTP credentials. The password can be
+stored locally to avoid retyping it:
+
+----
+git config --global credential.helper store
+git pull
+----
+
+To create changes as users of Gerrit would, run:
+
+----
+git push origin HEAD:refs/for/master
+----
+
 [[run_daemon]]
 === Running the Daemon
 
@@ -131,7 +156,7 @@ copying to the test site:
 
 ----
   $(bazel info output_base)/external/local_jdk/bin/java \
-     -jar bazel-bin/gerrit.war daemon -d ../gerrit_testsite \
+     -jar bazel-bin/gerrit.war daemon -d $GERRIT_SITE \
      --console-log
 ----
 
@@ -163,7 +188,7 @@ To start the Inspector, add the '-s' option to the daemon start command:
 
 ----
   $(bazel info output_base)/external/local_jdk/bin/java \
-     -jar bazel-bin/gerrit.war daemon -d ../gerrit_testsite -s
+     -jar bazel-bin/gerrit.war daemon -d $GERRIT_SITE -s
 ----
 
 NOTE: To learn why using `java -jar` isn't sufficient, see
@@ -187,48 +212,24 @@ interfaces (including HTTP and SSH) are available.
 CAUTION: When using the Inspector, be careful not to modify the internal state
 of the system.
 
-=== Querying the database
 
-The embedded H2 database can be queried and updated from the command line. If
-the daemon is not running, run:
+== Setup for backend developers
 
-----
-  $(bazel info output_base)/external/local_jdk/bin/java \
-     -jar bazel-bin/gerrit.war gsql -d ../gerrit_testsite -s
-----
+=== Configuring Eclipse
 
-NOTE: To learn why using `java -jar` isn't sufficient, see
-<<special_bazel_java_version,this explanation>>.
+To use the Eclipse IDE for development, see
+link:dev-eclipse.html[Eclipse Setup].
 
-Alternatively, if the daemon is running and the database is in use, use an
-administrator user account to connect over SSH:
+To configure the Eclipse workspace with Bazel, see
+link:dev-bazel.html#eclipse[Eclipse integration with Bazel].
 
-----
-  ssh -p 29418 user@localhost gerrit gsql
-----
+=== Configuring IntelliJ IDEA
 
+See <<dev-intellij#,IntelliJ Setup>> for details.
 
-== Switching between branches
+== Setup for frontend developers
+See link:https://gerrit.googlesource.com/gerrit/+/master/polygerrit-ui/README.md[Frontend Developer Setup].
 
-When using `git checkout` without `--recurse-submodules` to switch between
-branches, submodule revisions are not altered, which can result in:
-
-*  Incorrect or unneeded plugin revisions.
-*  Missing plugins.
-
-After you switch branches, ensure that you have the correct versions of
-the submodules.
-
-CAUTION: If you store Eclipse or IntelliJ project files in the Gerrit source
-directories, do *_not_* run `git clean -fdx`. Doing so may remove untracked files and damage your project. For more information, see
-link:https://git-scm.com/docs/git-clean[git-clean].
-
-Run the following:
-
-----
-  git submodule update
-  git clean -ffd
-----
 
 GERRIT
 ------

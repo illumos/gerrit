@@ -16,17 +16,17 @@ package com.google.gerrit.server.git;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.extensions.proto.ProtoTruth.assertThat;
-import static com.google.gerrit.server.cache.testing.SerializedClassSubject.assertThatSerializedClass;
+import static com.google.gerrit.proto.testing.SerializedClassSubject.assertThatSerializedClass;
 
 import com.google.common.collect.ImmutableMap;
-import com.google.gerrit.reviewdb.client.Project;
+import com.google.gerrit.entities.Project;
 import com.google.gerrit.server.cache.proto.Cache.TagSetHolderProto;
 import org.junit.Test;
 
 public class TagSetHolderTest {
   @Test
   public void serializerWithTagSet() throws Exception {
-    TagSetHolder holder = new TagSetHolder(new Project.NameKey("project"));
+    TagSetHolder holder = new TagSetHolder(Project.nameKey("project"));
     holder.setTagSet(new TagSet(holder.getProjectName()));
 
     byte[] serialized = TagSetHolder.Serializer.INSTANCE.serialize(holder);
@@ -45,7 +45,7 @@ public class TagSetHolderTest {
 
   @Test
   public void serializerWithoutTagSet() throws Exception {
-    TagSetHolder holder = new TagSetHolder(new Project.NameKey("project"));
+    TagSetHolder holder = new TagSetHolder(Project.nameKey("project"));
 
     byte[] serialized = TagSetHolder.Serializer.INSTANCE.serialize(holder);
     assertThat(TagSetHolderProto.parseFrom(serialized))

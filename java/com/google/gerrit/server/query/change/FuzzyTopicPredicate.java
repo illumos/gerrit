@@ -17,12 +17,12 @@ package com.google.gerrit.server.query.change;
 import static com.google.gerrit.server.index.change.ChangeField.FUZZY_TOPIC;
 
 import com.google.common.collect.Iterables;
+import com.google.gerrit.entities.Change;
+import com.google.gerrit.exceptions.StorageException;
 import com.google.gerrit.index.query.Predicate;
 import com.google.gerrit.index.query.QueryParseException;
-import com.google.gerrit.reviewdb.client.Change;
 import com.google.gerrit.server.index.change.ChangeIndex;
 import com.google.gerrit.server.index.change.IndexedChangeQuery;
-import com.google.gwtorm.server.OrmException;
 
 public class FuzzyTopicPredicate extends ChangeIndexPredicate {
   protected final ChangeIndex index;
@@ -33,7 +33,7 @@ public class FuzzyTopicPredicate extends ChangeIndexPredicate {
   }
 
   @Override
-  public boolean match(ChangeData cd) throws OrmException {
+  public boolean match(ChangeData cd) {
     Change change = cd.change();
     if (change == null) {
       return false;
@@ -43,12 +43,15 @@ public class FuzzyTopicPredicate extends ChangeIndexPredicate {
       return false;
     }
     try {
-      Predicate<ChangeData> thisId = new LegacyChangeIdPredicate(cd.getId());
+      Predicate<ChangeData> thisId =
+          index.getSchema().useLegacyNumericFields()
+              ? new LegacyChangeIdPredicate(cd.getId())
+              : new LegacyChangeIdStrPredicate(cd.getId());
       Iterable<ChangeData> results =
           index.getSource(and(thisId, this), IndexedChangeQuery.oneResult()).read();
       return !Iterables.isEmpty(results);
     } catch (QueryParseException e) {
-      throw new OrmException(e);
+      throw new StorageException(e);
     }
   }
 
