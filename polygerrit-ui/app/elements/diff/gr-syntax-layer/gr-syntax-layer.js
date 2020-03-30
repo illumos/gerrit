@@ -299,7 +299,8 @@
             });
           }));
       return this._processPromise
-          .finally(() => { this._processPromise = null; });
+          .catch(() => { this._processPromise = null; })
+          .then(() => { this._processPromise = null; });
     },
 
     /**

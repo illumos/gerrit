@@ -179,7 +179,8 @@ limitations under the License.
                         {bubbles: true, composed: true}));
                   }));
           return this._cancelableRenderPromise
-              .finally(() => { this._cancelableRenderPromise = null; })
+              .catch(() => { this._cancelableRenderPromise = null; })
+              .then(() => { this._cancelableRenderPromise = null; })
               // Mocca testing does not like uncaught rejections, so we catch
               // the cancels which are expected and should not throw errors in
               // tests.

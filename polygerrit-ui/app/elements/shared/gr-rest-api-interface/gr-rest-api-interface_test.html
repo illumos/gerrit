@@ -380,7 +380,14 @@ limitations under the License.
       element.addEventListener('server-error', serverErrorStub);
       const authErrorStub = sandbox.stub();
       element.addEventListener('auth-error', authErrorStub);
-      element._restApiHelper.fetchJSON({url: '/bar'}).finally(r => {
+      element._restApiHelper.fetchJSON({url: '/bar'}).then(r => {
+        flush(() => {
+          assert.isTrue(authErrorStub.called);
+          assert.isFalse(serverErrorStub.called);
+          assert.isFalse(element._cache.has('/accounts/self/detail'));
+          done();
+        });
+      }).catch(r => {
         flush(() => {
           assert.isTrue(authErrorStub.called);
           assert.isFalse(serverErrorStub.called);
@@ -399,7 +406,14 @@ limitations under the License.
       element.addEventListener('server-error', serverErrorStub);
       const authErrorStub = sandbox.stub();
       element.addEventListener('auth-error', authErrorStub);
-      element._restApiHelper.fetchJSON({url: '/bar'}).finally(r => {
+      element._restApiHelper.fetchJSON({url: '/bar'}).then(r => {
+        flush(() => {
+          assert.isTrue(authErrorStub.called);
+          assert.isFalse(serverErrorStub.called);
+          assert.isFalse(element._cache.has('/accounts/self/detail'));
+          done();
+        });
+      }).catch(r => {
         flush(() => {
           assert.isTrue(authErrorStub.called);
           assert.isFalse(serverErrorStub.called);
